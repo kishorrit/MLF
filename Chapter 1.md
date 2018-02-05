@@ -79,7 +79,7 @@ X = np.array([[0,1,0],
               [1,1,1],
               [0,1,1]])
 
-y = np.array([[0,1,1,0]])
+y = np.array([[0,1,1,0]]).T
 ```
 
 We can define the sigmoid activation function as a Python function.
@@ -118,8 +118,202 @@ out:
 ```
 This looks nothing like our desired output $y$ at all! Clearly, our regressor is representing _some_ function, but it is quite far away from the function we want. To better approximate our desired function, we have to tweak the weights $W$ and the bias $b$ to get better results.
 
+### Optimizing model parameters
+
+We already saw that we need to tweak the weights and biases, collectively called parameters, of our model to arrive at a closer approximation of our desired function. In other words, we need to look through the space of possible functions that can be represented by our model to find a function $\hat f$ that matches our desired function $f$ as close as possible. But how would we know how close we are? In fact, since we do not know $f$, we can not directly know how close our hypothesis $\hat f$ is to $f$. But we can measure how well $\hat f$'s outputs match the output of $f$. The expected outputs of $f$ given $X$ are the labels $y$. So we can try to approximate $f$ by finding a function $\hat f$ whose outputs are also $y$ given $X$.
+
+We know that:
+$$f(X) = y$$
+And:
+$$\hat f(X) = \hat y$$
+So we can try to find $f$ by optimizing:
+
+$$\underset{\hat f \in S}{\text{minimize }} D(y,\hat y)$$
+
+NOTE TO EDITOR: I HAVE PROBABLY USED THE WRONG SYMBOL FOR THE FUNCTION SPACE HERE. I COULDN'T FIND A UNIVERSALLY USED ONE THAT WOULD FIT HERE.
+
+Where $S$ is the space of functions that can be represented by our model and D is the distance function which we use to evaluate how close $\hat y$ and $y$ are. 
+
+Note that this approach makes a crucial assumption: That our data $X$ and labels $y$ represent our desired function $f$. This is not always the case. When our data contains systematic biases, we might gain a function that fits our data well, but that is different from the one we wanted. An example comes from human resource management: Imagine you are trying to build a model that predicts whether an employee should be promoted. As training data you use promotion decisions made by human HRM managers. As these managers might be biased, women still are still a minority in boardrooms, your function would also be biased. You'd end up with a function mirroring or even amplifying human biases rather than a function predicting who should be promoted. It is a commonly made mistake to believe that a neural network will find the intuitive function we are looking for. **A neural network will find the function that best fits the data with no regard to whether that is the desired function.**
+
+### Measuring model loss
+We already saw that we optimize parameters by minimizing some distance function $D$. This distance function, also called loss function, is the performance measure under which we evaluate possible functions. In this case, our problem is a binary classification problem, so we will use the binary cross entropy loss:
+$$D_{BCE}(y,\hat y) = -\frac{1}{N} \sum_{i = i}^N[y_i  log(\hat y_i) + (1-y_i)log(1-\hat y_i)]$$
+
+Let's go through this step by step.
+ 
+ 1. $D_{BCE}(y,\hat y)$ is the distance function for binary cross entropy loss.
+ 
+ 
+ 2. $-\frac{1}{N} \sum_{i=1}^N$ The loss over a batch of N examples is the average loss of all examples. 
+ 
+ 
+ 3. $y_i * \log \hat y_i$ This part of the loss only comes into play if the true value, $y_i$ is 1. If $y_i$ is 1, we want $\hat y_i$ to be as close to 1 as possible, to achieve a low loss.
+ 
+ 
+ 4. $(1-y_i)\log(1-\hat y_i)$ This part of the loss comes into play if $y_i$ is 0. If so, we want $\hat y_i$ to be close to 0 as well.
+
+In Python this loss function is implemented as follows:
+```python
+def bce_loss(y,y_hat):
+  N = y.shape[0]
+  loss = -1/N * (y*np.log(y_hat) + (1 - y)*np.log(1-y_hat))
+  return loss 
+```
+The output `A` of our logistic regressor is equal $\hat y$ so we can calculate the binary cross entropy loss as follows:
+```python
+loss = bce_loss(y,A)
+print(loss)
+```
+```
+out: 
+0.82232258208779863
+```
+This is quite a high loss, so we should now see how we can improve our model.
+
 ### Gradient descent
+Now that we know what we judge our candidate models $\hat f$ by, how do we tweak the parameters to obtain better models. The most popular optimization algorithm for neural networks is called gradient descent. 
 
-We already saw that we need to tweak the weights and biases, collectively called parameters, of our model to arrive at a closer approximation of our desired function. In other words, we need to look through the space of possible functions that can be represented by our model to find a function $\hat f$ that matches our desired function $f$ as close as possible.
+Imagine you are on a mountain forrest on a hike. You have lost the track and are now in the woods trying to find home to the valley. Since there are so many trees, you can not see the valley, you can only see the ground under you. How would you find your way down? One sensible approach would be to follow the slope of the mountain. Where the slope goes downwards, you go. This is the same as a gradient descent algorithm does. The loss function is the mountain and to get to a low loss, the algorithm follows the slope, that is the derivative, of the loss function. When we walk down the mountain, we are updating our location coordinates. The algorithm updates the parameters of the neural network.
 
+SOME GRAD DESCENT IMAGE GOES HERE 
 
+Gradient descent requires that the loss function has a derivative with respect to the parameters that we want to optimize. This works fine for most supervised learning problems but things become more difficult when we want to tackle problems for which there is no obvious derivative. Gradient descent can also only optimize the parameters, weights and biases of our model. It can not optimize how many layers our model has or which activation functions it should use since there is no way to compute the gradient with respect to model topology. These settings which can not be optimized by gradient descent are called **hyper-parameters** and are usually set by humans.
+
+### Backpropagation 
+
+To update the parameters, we need to calculate the derivative of the loss function with respect to the weights and biases. If you imagine the parameters of our models like the geo coordinates in our mountain analogy, calculating the loss derivative with respect to a parameter is like checking the mountain slope in the direction north to see whether you should go north or south.
+
+![Backprop Regressor](./assets/backprop_reg.png)
+Note: to keep things simple, we refer to the derivative of the loss function to any variable as $d$variable. For example we write the derivative of the loss function with respect to the weights as $dW$.
+
+To calculate the gradient with respect to different parameters of our model, we can make use of the chain rule. You might remember the chain rule as:
+
+$$(f(g(x)))' = g(x)' * f'(g(x))$$
+
+Sometimes also written as:
+$$\frac{dy}{dx} = \frac{dy}{du} \frac{du}{dx}$$
+
+What the chain rule basically says is that if you want to take the derivative through a number of nested functions you multiply the derivative of the inner function with the derivative of the outer function. This is useful since neural networks, and our logistic regressor, are nested functions. The input goes through the linear step, a function of input, weights and biases. The output of the linear step, $z$ goes through the activation function.
+
+So when we compute the loss derivative with respect to weights and bias, we first compute the loss derivative with respect to the output of the linear step $z$, and use it to compute the $dW$. In code it looks like this:
+```python
+dz = (A - y)
+
+dW = 1/N * np.dot(X.T,dz)
+
+db = 1/N * np.sum(dz,axis=0,keepdims=True)     
+```
+
+### Parameter updates
+Now we have the gradients, how do we improve our model? Or, to stay with our mountain analogy, now that we know that the mountain goes up in the North direction and up in the East direction, where do we go? To the South and to the West of course! Mathematically speaking, we go in the opposite direction than the gradient. If the gradient is positive with respect to a parameter, speak the slope is upward, we reduce the parameter. If it is negative, speak downward sloping, we increase it. When our slope is steeper, we move our gradient more.
+
+The update rule for a parameter p then goes like:
+$$p = p - \alpha * dp$$
+
+Where $p$ is a model parameter (either a weight or a bias), $dp$ is the loss derivative with respect to $p$ and $\alpha$ is the **learning rate**. The learning rate is something like the gas pedal in a car. It sets how much we want to apply the gradient updates. It is one of those hyper parameters that we have to set manually. We will discuss it in the next chapter.
+
+In code, our parameter updates look like this:
+```python 
+alpha = 1
+W -= alpha * dW
+b -= alpha * db
+```
+
+### Putting it all together
+You have now seen all parts needed to train a neural network. We will train a 1 layer neural network, also called logistic regressor or logit model:
+
+First we import numpy and define the data
+```python 
+import numpy as np
+np.random.seed(1)
+
+X = np.array([[0,1,0],
+              [1,0,0],
+              [1,1,1],
+              [0,1,1]])
+
+y = np.array([[0,1,1,0]]).T
+```
+Then we define the sigmoid activation function and loss function:
+```python 
+def sigmoid(x):
+    return 1/(1+np.exp(-x))
+
+def bce_loss(y,y_hat):
+    N = y.shape[0]
+    loss = -1/N * np.sum((y*np.log(y_hat) + (1 - y)*np.log(1-y_hat)))
+    return loss 
+```
+
+We randomly initialize our model:
+
+```python 
+W = 2*np.random.random((3,1)) - 1
+b = 0
+```
+
+We also need to set some hyper parameters. The first one is alpha which we will just set to 1 here. The second one is the number of times we want to run the training process, also called the number of epochs we want to run.
+```python 
+alpha = 1
+epochs = 20
+```
+Since it is used in the training loop, it is useful to define the number of samples in our data. We also define an empty array to keep track of the models losses over time:
+```python 
+N = y.shape[0]
+losses = []
+```
+Now we come to the main trainings loop:
+```python
+for i in range(epochs):
+    # Forward pass
+    z = X.dot(W) + b 
+    A = sigmoid(z)
+    
+    # Calculate loss
+    loss = bce_loss(y,A)
+    print('Epoch:',i,'Loss:',loss)
+    losses.append(loss)
+    
+    # Calculate derivatives
+    dz = (A - y)
+    dW = 1/N * np.dot(X.T,dz)
+    db = 1/N * np.sum(dz,axis=0,keepdims=True)    
+    
+    # Parameter updates
+    W -= alpha * dW
+    b -= alpha * db
+```
+When we run this we get the following output: 
+```
+out: 
+Epoch: 0 Loss: 0.822322582088
+Epoch: 1 Loss: 0.722897448125
+Epoch: 2 Loss: 0.646837651208
+Epoch: 3 Loss: 0.584116122241
+Epoch: 4 Loss: 0.530908161024
+Epoch: 5 Loss: 0.48523717872
+Epoch: 6 Loss: 0.445747750118
+Epoch: 7 Loss: 0.411391164148
+Epoch: 8 Loss: 0.381326093762
+Epoch: 9 Loss: 0.354869998127
+Epoch: 10 Loss: 0.331466036109
+Epoch: 11 Loss: 0.310657702141
+Epoch: 12 Loss: 0.292068863232
+Epoch: 13 Loss: 0.275387990352
+Epoch: 14 Loss: 0.260355695915
+Epoch: 15 Loss: 0.246754868981
+Epoch: 16 Loss: 0.234402844624
+Epoch: 17 Loss: 0.22314516463
+Epoch: 18 Loss: 0.21285058467
+Epoch: 19 Loss: 0.203407060401
+```
+You can see that the loss steadily decreases. We can plot the loss to give it a closer look:
+```python 
+import matplotlib.pyplot as plt
+plt.plot(losses)
+plt.xlabel('epoch')
+plt.ylabel('loss')
+plt.show()
+```
+![Loss](./assets/loss_reg.png)
