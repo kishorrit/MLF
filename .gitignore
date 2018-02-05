@@ -1,0 +1,17 @@
+MANIFEST
+build
+dist
+_build
+docs/gh-pages
+docs/config_options.rst
+*.py[co]
+__pycache__
+*.egg-info
+*~
+*.bak
+.ipynb_checkpoints
+.tox
+.DS_Store
+\#*#
+.#*
+.coverage
