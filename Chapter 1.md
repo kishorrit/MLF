@@ -366,6 +366,122 @@ db1 = np.sum(dz1, axis=0)
 
 Note that while the size of our input and outputs are determined by your problem, you can freely choose the size of your hidden layer. This is another hyper parameter you can tweak. We will look at the specifics of hidden layer sizes in chapter two.
 
+# A brief introduction to Keras
+Keras is a high level neural network API which can run on top on TensorFlow. TensorFlow is a library for dataflow programming which basically means it can run the operations needed for a neural network in a highly optimized way. It is thus much faster and easier to use. Keras acts as an interface to TensorFlow, making it easy to build even more complex neural networks. In the rest of the book, we will work with Keras to build our neural nets. 
+
+## Installing Keras
+Keras can be installed via the pip package manager. Most python distributions come with pip pre-installed. If yours does not have pip, you can see how to install pip on your system at https://pip.pypa.io/en/stable/installing/
+
+### Install TensorFlow
+Before installing Keras, we need to install TensorFlow.
+You can install TensorFlow by opening a terminal window and entering:
+```
+$ sudo pip3 install tensorflow
+```
+This will install TensorFlow with CPU support. For installation instructions on AWS or Google Cloud servers with GPUs, see this books code repository.
+
+### Installing Keras
+After you have installed TensorFlow, you can install Keras in the same way:
+```
+$ sudo pip3 install keras
+```
+
+Keras will now automatically use the TensorFlow backend.
+
+## Importing Keras 
+When importing Keras, we usually just import the modules we will use. In this case, we need two types of layers: The `Dense` layer is the plain layer which we have gotten to know in this chapter. The `Activation` layer allows us to add an activation function. We can import them like this:
+
+```Python 
+from keras.layers import Dense, Activation
+```
+
+Keras offers two kinds of ways to build models. The sequential and the functional API. The sequential API is easier to use and allows more rapid building of models so we will use it in most of the book. In later chapters we will take a look at the functional API as well. We can access the sequential API like this:
+```Python 
+from keras.models import Sequential
+```
+
+## A two layer model in Keras 
+Building a neural network in the sequential API works as follows:
+
+### Stacking layers
+First, we create an empty sequential model with no layers:
+```Python
+model = Sequential()
+```
+Then we can add layers to this model just like stacking a layer cake with `model.add()`. For the first layer, we have to specify the input dimensions of the layer. In our case, the data has two features, the coordinates of the point. We can add a hidden layer with hidden layer size 3 like this: 
+
+```Python 
+model.add(Dense(3,input_dim=2))
+```
+Note how we nest the functions: Inside `model.add()` we specify the `Dense` layer. The positional argument is the size of the layer. This `Dense` layer now only does the linear step. To add a tanh activation function, we call:
+
+```Python 
+model.add(Activation('tanh'))
+```
+
+We add the linear step and the activation function of the output layer in the same way:
+```Python 
+model.add(Dense(1))
+model.add(Activation('sigmoid'))
+```
+
+To get an overview of all the layers we have in our model now we can call: 
+```Python
+model.summary()
+```
+
+```
+out: 
+Layer (type)                 Output Shape              Param #   
+=================================================================
+dense_3 (Dense)              (None, 3)                 9         
+_________________________________________________________________
+activation_3 (Activation)    (None, 3)                 0         
+_________________________________________________________________
+dense_4 (Dense)              (None, 1)                 4         
+_________________________________________________________________
+activation_4 (Activation)    (None, 1)                 0         
+=================================================================
+Total params: 13
+Trainable params: 13
+Non-trainable params: 0
+_________________________________________________________________
+```
+You can see the layers listed nicely including their output shape and the number of parameters the layer has. The `None` in the output shape means that the layer has no fixed input size in that dimension and will accept whatever we feed it. In our case, it means the layer will accept any amount of samples. In pretty much every network you will see that the input dimension on the first dimension is variable like this to accommodate different amounts of samples.
+
+### Compiling the model 
+
+Before we can start training the model we have to specify how exactly we want to train the model. Most importantly we need to specify which optimizer  and which loss function we want to use. The simple optimizer we have used so far is called 'Stochastic Gradient Descent' or SGD, for more optimizers, see chapter 2. The loss function we use for this binary classification problem is called 'binary crossentropy'. We can also specify which metrics we want to track during training. In our case, accuracy would be interesting to track, or just 'acc' to keep it short.
+
+```Python 
+model.compile(optimizer='sgd',loss='binary_crossentropy',metrics=['acc'])
+```
+
+### Training the model 
+Now we are ready to run the training process:
+```Python  
+history = model.fit(X,y,epochs=900)
+```
+This will train the model for 900 iterations, also called 'epochs'. The output should look something like this:
+``` 
+Epoch 1/900
+200/200 [==============================] - 0s 543us/step - 
+loss: 0.6840 - acc: 0.5900
+Epoch 2/900
+200/200 [==============================] - 0s 60us/step - 
+loss: 0.6757 - acc: 0.5950
+
+...
+
+Epoch 899/900
+200/200 [==============================] - 0s 90us/step - 
+loss: 0.2900 - acc: 0.8800
+Epoch 900/900
+200/200 [==============================] - 0s 87us/step - 
+loss: 0.2901 - acc: 0.8800
+```
+Over the course of this book we will add more bells and whistles to these methods.
+
 # Exercises
 In the code for this chapter you will find an implementation of a two layer neural network both in Python as well as in excel. Expand it to three layers.
 

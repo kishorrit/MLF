@@ -37,7 +37,7 @@ The data has 11 fields:
 - isFraud: Whether the transaction was fraudulent.
 - isFlaggedFraud: Whether the old system flagged the transaction as fraud.
 
-Overall, there are about 6.3 million transactions in our dataset.
+Overall, there are about 6.3 million transactions in our dataset. As fraud occurs only in transfers or cash outs, all other transactions were dropped, leaving about 2.8 million examples to work with.
 
 See E. A. Lopez-Rojas , A. Elmir, and S. Axelsson., 2016, "PaySim: A financial mobile money simulator for fraud detection" for more information on the data.
 
@@ -61,9 +61,30 @@ Shipping a poor model is often better than not shipping anything. A heuristic th
 
 It is good practice to first develop a heuristic. If this heuristic meets the basic requirements of the task it can be shipped. The heuristic then becomes the baseline that any other approach has to beat. Next, efforts should be directed to build a feature based model. As soon as this model beats the heuristic, it can be shipped. Feature based models often deliver pretty decent performance on structured data tasks which affords the company the time to undertake the long and expensive task of building an end to end model. Once the end to end model beats the feature based model it can be shipped as well.
 
+# The ML software stack
+
+In this chapter, we will be using a range of different libraries that are commonly used in machine learning. Our stack consists of:
+- **Numpy** numpy adds support for large, multidimensional arrays as well as a large collection of mathematical functions.
+- **Pandas** is a library for data manipulation and analysis. It is sort of like 'Excel but in Python' as it offers data structures to handle tables and tools to manipulate them.
+- **SciKit Learn** is a machine learning library offering a wide range of algorithms and utilities.
+- **TensorFlow** is a dataflow programming library which enables working with neural networks.
+- **Keras** is a neural network library that can act as a simplified interface to TensorFlow.
+- **Matplotlib** is a plotting library.
+- **Jupyter** is a development environment. All code examples in this book is available in Jupyter Notebooks.
+
+Most of this book is dedicated to working with Keras. However, this chapter makes extensive use of all other libraries as well. The goal is less to teach all the tips and tricks of all the libraries, but to show how they integrate into the process of creating a predictive model.
+
 # Evaluating a simple heuristic 
 Let's start by defining a simple heuristic and measuring how well it does:
 > Heuristic: Any transaction whos type is TRANSFER and amount is over $200,000 is fraudulent. All others are not. 
+
+## Making predictions with the heuristic 
+We will make predictions using our heuristic over the entire training set to get an idea of how well this heuristic does.
+```Python
+df['Fraud_Heuristic'] = np.where(((df['type'] == 'TRANSFER') & 
+                                  (df['amount'] > 200000)),1,0)
+```
+The line above creates a new column 'Fraud_Heuristic' and assigns a value of 1 in rows where the type is TRANSFER and the amount is more than 200,000. You can see how such a simple metric could be quickly deployed as it is only a few lines of code.
 
 ## The F1 score
 We need a common metric to evaluate all of our models on. In the last chapter we used accuracy. However, there are much fewer fraudulent transactions than there are genuine ones. A model that classifies all transactions as genuine can have a very high accuracy. A metric that is designed to deal with such skewed distribution is the F1 score. The F1 score considers true and false positives and negatives:
@@ -82,7 +103,136 @@ $$recall = \frac{TP}{TP + FN}$$
 The F1 score is the harmonic mean of the two measures:
 $$F_1 = 2 * \frac{precision * recall}{precision + recall}$$
 
-To compute this metric in Python, we can use the metrics module of scikit learn, or sklearn for short. Sklearn is a popular library which has many useful machine learning tools, including a wide array of metrics
+To compute this metric in Python, we can use the metrics module of scikit learn, or sklearn for short. 
 ```Python
 from sklearn.metrics import f1_score
 ```
+
+Given the predictions we made above, we can now easily compute the F1 score:
+```Python
+f1_score(y_pred=df['Fraud_Heuristic'],y_true=df['isFraud'])
+```
+```
+out: 0.013131315551742895
+```
+
+What this number exactly means is a bit harder to interpret than what accuracy means. In this case it is the harmonic mean of the share of correctly caught frauds over everything labeled as a fraud and the share of correctly caught frauds over all frauds. 
+
+## Evaluation with a confusion matrix
+A more qualitative and interpretable way of evaluating a model is a confusion matrix. As the name suggests, it shows how our classifier confuses classes. See the code appendix for the ``plot_confusion_matrix`` function.
+```Python
+from sklearn.metrics import confusion_matrix
+cm = confusion_matrix(y_pred=df['Fraud_Heuristic'],y_true=df['isFraud'])
+plot_confusion_matrix(cm,['Genuine','Fraud'])
+```
+
+![Confusion Matrix](./assets/confusion.png)
+
+Of the 2,770,409 examples in our dataset, 2,355,826 were correctly classified as genuine. But 406,370 were falsely classified as fraud. In fact, only 2,740 examples were correctly classified as fraud. If our heuristic classified a transaction as fraudulent, it was genuine in 99.3% of the cases. Only 34.2% of frauds get caught. All this information is incorporated into the f1 score, but it is easier to read from a confusion matrix. The reason we use both is that it is good to have a single number which tells us which model is better but also a more graphical insight into how the model is better.
+
+Our heuristic performs quite poorly. In the next sections we will see if we can do better.
+
+# Feature engineering
+The objective of feature engineering is to exploit qualitative insight by humans to create better ML models. The human engineer usually uses three sources of insight: Intuition, expert domain knowledge and statistical analysis. Many times, it is possible to come up with some features for a problem just from intuition. In our fraud case, it seems intuitive that fraudsters will create new accounts for their schemes and won't use the bank account they pay for their groceries with. Domain experts can use their extensive knowledge of the problem to come up with more of such intuitions. They know better how fraudsters behave and can craft features that indicate such behavior. All these intuitions are then usually confirmed by statistical analysis. Sometimes, it is also possible to discover features from statistical analysis. Thorough statistical analysis might turn up some quirks which can be turned into predictive features. But engineers have to beware of the **data trap**. The predictive features found in the data might only exist in the data. Any dataset will spit out some predictive feature if wrangled long enough. For features found in statistical analysis, it is important to establish a **qualitative rationale** of why this statistical predictive feature exist and should exist outside of the dataset as well.
+
+The goal of this section is not to show all feature engineering that could be done on this dataset, but just to highlight the three approaches and how they can be turned into features.
+
+## Feature from intuition: Fraudsters don't sleep
+Without knowing much about fraud, intuitively fraudsters are shady people that operate in the dark. Genuine transactions will intuitively happen mostly during the day as people sleep at night. The time steps in our dataset represent one hour so we can get the time of the day by taking the remainder of a division by 24:
+```Python
+df['hour'] = df['step'] % 24
+```
+We can next count the number of fraudulent and genuine transactions at different times:
+```Python
+frauds = []
+genuine = []
+for i in range(24):
+    f = len(df[(df['hour'] == i) & (df['isFraud'] == 1)])
+    g = len(df[(df['hour'] == i) & (df['isFraud'] == 0)])
+    frauds.append(f)
+    genuine.append(g)
+```
+Finally, we can plot the share of genuine and fraudulent transactions over the day:
+```Python
+fig, ax = plt.subplots(figsize=(10,6))
+ax.plot(genuine/np.sum(genuine), label='Genuine')
+ax.plot(frauds/np.sum(frauds),dashes=[5, 2], label='Fraud')
+plt.xticks(np.arange(24))
+legend = ax.legend(loc='upper center', shadow=True)
+```
+![Fraud over time](./assets/time.png)
+We can clearly see that there are much fewer genuine transactions at night while fraudulent behavior continues over time. To be sure that the night is a time where we can hope to catch fraud we can also plot the number of fraudulent transactions as a share of all transactions:
+```Python
+fig, ax = plt.subplots(figsize=(10,6))
+ax.plot(np.divide(frauds,np.add(genuine,frauds)), label='Share of fraud')
+plt.xticks(np.arange(24))
+legend = ax.legend(loc='upper center', shadow=True)
+```
+![Share of frauds](./assets/time_comp.png)
+At around 5am, over 60% of all transactions seem to be fraudulent. The time of the day is a good feature to catch fraud.
+
+## Expert insight: Transfer, than cash out 
+The description of the dataset comes with a description of the expected behavior of fraudsters: First they transfer money to a bank account they control. Than they cash out at an ATM. We can check if there are fraudulent transfer destinations that are the origin of fraudulent cash outs:
+```Python
+dfFraudTransfer = df[(df.isFraud == 1) & (df.type == 'TRANSFER')]
+dfFraudCashOut = df[(df.isFraud == 1) & (df.type == 'CASH_OUT')]
+dfFraudTransfer.nameDest.isin(dfFraudCashOut.nameOrig).any()
+```
+```
+out: False
+```
+There seem to be no fraudulent transfers that are the origin of fraudulent cash outs. The behavior expected by the experts is not visible in our data. This could mean that fraudsters behave differetly now, or that our data does not capture the behavior. Either way, we can not use this insight for predictive modeling here.
+
+## Statistical quirks: Errors in balances 
+Close examination of the data shows that there are some transactions for which the old and the new balance of the destination is zero, although the transaction amount is not zero. This is odd, so we might want to investigate if this kind of oddity yields predictive power. We can calculate the share of fraudulent transactions with this property:
+```Python
+dfOdd = df[(df.oldBalanceDest == 0) & 
+           (df.newBalanceDest == 0) & 
+           (df.amount)]
+
+len(dfOdd[(df.isFraud == 1)]) / len(dfOdd)
+```
+```
+out: 0.7046398891966759
+```
+70% of such odd transactions are fraudulent, so this quirk seems to be a good feature as well. However, it is important to ask how this quirk got into our data in the first place. One possibility would be that the transactions never come through. This could happen for a number of reasons: There might be another fraud prevention system in place that blocks the transactions, or the origin of the destination has insufficient funds. We have no way of verifying the first option from the data, but we can check on the second:
+```Python
+len(dfOdd[(dfOdd.oldBalanceOrig <= dfOdd.amount)]) / len(dfOdd)
+```
+```
+out: 0.8966412742382271
+```
+Close to 90% of the odd transactions have insufficient funds. We can now construct a rationale in which fraudsters try to drain a bank account of all its funds more often than regular people. This rationale is needed to avoid the data trap. Once established, the rationale has to be constantly scrutinized. In this case, it fails to explain 10% of the odd transactions. If this number rises, it could hurt the performance of our model in production.
+
+# Preparing the data for Keras
+In chapter 1 we have seen that neural networks only take numbers as imputs. Not not all information in our table are numbers. So we have to prepare the data for Keras to meaningfully work with it:
+## Types of statistical data
+There are three types of data: 
+- **Nominal** data comes in discrete categories which can not be ordered. In our case, the type of transfer is a nominal variable. There are four discrete types but it does not make sense to put them in any order. 'TRANSFER' can not be 'more' than 'CASH_OUT'. They are just separate categories.
+- **Ordinal** data is also discrete categories but they can be ordered. For example if coffee comes in sizes large, medium or small, those are distinct categories, but they can be compared. Large is more than small. 
+
+- **Numerical** data can be ordered but we can also perform mathematical operations on it. An example in our data is the amount. We can compare amounts, but we can also subtract them or add them up.
+
+Nominal and ordinal data are both **categorical data**, as they describe discrete categories.
+
+Numerical data works fine with neural networks out of the box. Categorical data needs special treatment. 
+
+## Ways of preparing categorical data for neural networks
+There are three ways of preparing categorical data:
+
+### One Hot Encoding
+The most often used method to encode categorical data is called 'one hot'. In one hot encoding, we create a new variable, a so called **dummy variable** for each category. We then set the dummy variable to 1 if the transaction is member of a certain category and to zero otherwise:
+
+**Categorical**
+|Transaction|Type|
+|-----------|----|
+|1|TRANSFER|
+|2|CASH_OUT|
+|3|TRANSFER|
+
+**One Hot**
+|Transaction|Type_TRANSFER|Type_CASH_OUT|
+|-----------|-------------|-------------|
+|1|1|0|
+|2|0|1|
+|3|1|0|
