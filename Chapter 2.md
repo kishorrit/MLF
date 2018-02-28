@@ -217,10 +217,9 @@ Nominal and ordinal data are both **categorical data**, as they describe discret
 
 Numerical data works fine with neural networks out of the box. Categorical data needs special treatment. 
 
-## Ways of preparing categorical data for neural networks
 There are three ways of preparing categorical data:
 
-### One Hot Encoding
+## One Hot Encoding
 The most often used method to encode categorical data is called 'one hot'. In one hot encoding, we create a new variable, a so called **dummy variable** for each category. We then set the dummy variable to 1 if the transaction is member of a certain category and to zero otherwise:
 
 **Categorical**
@@ -236,3 +235,28 @@ The most often used method to encode categorical data is called 'one hot'. In on
 |1|1|0|
 |2|0|1|
 |3|1|0|
+
+Pandas offers a function to create dummy variables out of the box. Before however, it makes sense to add 'Type_' in front of all actual transaction types. The dummy variables will be named after the name of the category, by adding 'Type_' to the beginning we know that these dummy variables indicate the type.
+
+```Python 
+df['type'] = 'Type_' + df['type'].astype(str)
+```
+This line does three things. `df['type'].astype(str)` converts all entries in the 'type' column to strings. Then the prefix 'Type_' is added by combining the strings. This new column of combined strings then replaces the original 'type' column.
+
+We can now get the dummy variables.
+```Python
+dummies = pd.get_dummies(df['type'])
+```
+Note that the `get_dummies()` function creates a new dataframe. We now have to attach this dataframe to the main dataframe:
+```Python
+df = pd.concat([df,dummies],axis=1)
+```
+`concat()` concentates two dataframes. We concentate along axis 1 to add the dataframe as new columns. Now that the dummy variables are in our main dataframe, we can remove the original column:
+
+```Python
+del df['type']
+```
+And, voila, we turned our categorical variable into something a neural network can work with.
+
+## Entity embeddings
+This section makes use of embeddings and the Keras functional API, which both get introduced in chapter 5. It is best to work through chapter 5 first, before returning here.
