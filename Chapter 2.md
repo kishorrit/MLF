@@ -217,7 +217,7 @@ Nominal and ordinal data are both **categorical data**, as they describe discret
 
 Numerical data works fine with neural networks out of the box. Categorical data needs special treatment. 
 
-There are three ways of preparing categorical data:
+There are two ways of preparing categorical data:
 
 ## One Hot Encoding
 The most often used method to encode categorical data is called 'one hot'. In one hot encoding, we create a new variable, a so called **dummy variable** for each category. We then set the dummy variable to 1 if the transaction is member of a certain category and to zero otherwise:
@@ -259,4 +259,334 @@ del df['type']
 And, voila, we turned our categorical variable into something a neural network can work with.
 
 ## Entity embeddings
-This section makes use of embeddings and the Keras functional API, which both get introduced in chapter 5. It is best to work through chapter 5 first, before returning here.
+This section makes use of embeddings and the Keras functional API, which both get introduced in chapter 5. It is best to work through chapter 5 first, before returning here. The following sections of the book will use one hot encodings so you do not need to worry about understanding these parts right now.
+
+When dealing with text in chapter 5, we saw that embeddings are an extremely useful tool. Not only do they reduce the number of dimensions needed for encoding over one-hot encoding and thus decrease memory usage. They also reduce sparsity in the input activations, which helps reduce overfitting and they can encode semantic meanings as vectors. The same advantages that made embeddings useful for text make them useful for categorical data.
+
+### Tokenizing categories
+Just as with text, we have to tokenize inputs before feeding them into the embeddings layer. To do so, we have to create a mapping dictionary that maps categories to a token:
+```Python
+map_dict = {}
+for token, value in enumerate(df['type'].unique()):
+    map_dict[value] = token   
+```
+This code loops over all unique type categories while counting up. The first category gets the token 0, the second 1, etc. Our map_dict looks like this:
+```
+{'CASH_IN': 4, 'CASH_OUT': 2, 'DEBIT': 3, 'PAYMENT': 0, 'TRANSFER': 1}
+```
+
+We can now apply this mapping to our dataframe:
+```Python
+df["type"].replace(map_dict, inplace=True)
+```
+All types will now be replaced by their token.
+
+We have to deal with the non categorical values in our dataframe separately. We can create a list of columns that are not the type and not the target like this:
+
+```Python
+other_cols = [c for c in df.columns if ((c != 'type') and (c != 'isFraud'))]
+```
+### Creating input models
+Our model will have two inputs: One for the types with an embedding layer, and one for all other, non categorical variables. To later easily combine them, we keep track of their inputs and outputs with two arrays:
+
+```Python
+inputs = []
+outputs = []
+```
+The model that acts as in input for the type receives a one dimensional input and parses it through an embedding layer. The outputs of the embedding layer are then reshaped into flat arrays.
+```Python
+num_types = len(df['type'].unique())
+type_embedding_dim = 3
+
+type_in = Input(shape=(1,))
+type_embedding = Embedding(num_types,type_embedding_dim,input_length=1)(type_in)
+type_out = Reshape(target_shape=(type_embedding_dim,))(type_embedding)
+
+type_model = Model(type_in,type_out)
+
+inputs.append(type_in)
+outputs.append(type_out)
+```
+The type embeddings have 3 layers here. This is an arbitrary choice and experimentation with different numbers of dimensions might improve results.
+
+For all other inputs we also create an input. It has as many dimensions as there are non-categorical variables and consists of a single dense layer with no activation function. The dense layer is optional, the inputs could also be directly parsed into the head model. More layers could also be added.
+```Python
+num_rest = len(other_cols)
+
+rest_in = Input(shape = (num_rest,))
+rest_out = Dense(16)(rest_in)
+
+rest_model = Model(rest_in,rest_out)
+
+inputs.append(rest_in)
+outputs.append(rest_out)
+```
+
+Now that we have created the two input models, we can concentate. On top of the two concentated inputs we will build our head model.
+```Python
+concatenated = Concatenate()(outputs)
+``` 
+
+Now we can build and compile the overall model:
+```Python
+x = Dense(16)(concatenated)
+x = Activation('sigmoid')(x)
+x = Dense(1)(concatenated)
+model_out = Activation('sigmoid')(x)
+
+merged_model = Model(inputs, model_out)
+merged_model.compile(loss='binary_crossentropy', 
+                     optimizer='adam', 
+                     metrics=['accuracy'])
+```
+
+### Training the model
+To train a model with multiple inputs, we need to provide a list of X values for each input. So we first split up our dataframe:
+```Python
+types = df['type']
+rest = df[other_cols]
+target = df['isFraud']
+```
+And then train the model by providing a list of the two inputs and the target:
+```Python
+history = merged_model.fit([types.values,rest.values],target.values, 
+                           epochs = 1, batch_size = 128)
+                           
+```
+```
+out: 
+Epoch 1/1
+6362620/6362620 [==============================] - 78s 12us/step - 
+loss: 0.0208 - acc: 0.9987
+```
+# Creating predictive models with Keras
+Our data now contains the following columns:
+```
+'amount', 
+'oldBalanceOrig', 
+'newBalanceOrig', 
+'oldBalanceDest',
+'newBalanceDest', 
+'isFraud', 
+'isFlaggedFraud', 
+'type_CASH_OUT',
+'type_TRANSFER', 
+'isNight'
+```
+All data is prepared so we can use it for creating a model. 
+
+## Extract the target 
+In order to train, a neural network needs a target. In our case `isFraud` is the target, so we have to separate it from the rest of the data. 
+
+```Python
+y_df = df['isFraud']
+x_df = df.drop('isFraud',axis=1)
+```
+The first step only returns the `isFraud` column and assigns it to `y_df`. The second step returns all columns but `isFraud` and assigns it to `x_df`.
+
+We also need to convert our data from pandas `DataFrame` to numpy arrays. Pandas `DataFrame` is built on top of numpy arrays but comes with lots of extra bells and whistles that make all the preprocessing we did earlier possible. For training a neural net however, we just need the underlying data.
+```Python
+y = y_df.values
+X = x_df.values
+```
+## Create a test set 
+When we train our model, we run the risk of **overfitting**. Overfitting means our model memorizes the x y mapping in our training dataset, but does not find the function that describes the true relationship between x and y. This is problematic because once we run our model **out of sample**, speak on data not in our training set, it might do very poorly. To prevent this, we create a so called **test set**. The test set is a hold out dataset and we only use it to evaluate our model once we think it is doing fairly well to see how well it performs on data it has not seen yet. The test set is usually randomly sampled from the total data. SciKit Learn offers a convenient function to do this:
+```Python
+from sklearn.model_selection import train_test_split
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, 
+                                                    test_size=0.33, 
+                                                    random_state=42)
+```
+`train_test_split` will randomly assign rows to either train or test set. You can specify the `test_size`, the share of data that goes into the test set (here 33%), as well as a random state. Assigning the `random_state` makes sure that while the process is pseudo random, it will always return the same split, which makes our work more reproducible. 
+
+## Create a validation set 
+Each time we test our model with our test set, we occur a bit of **information leakage**. The developer of the model, thats you, will use the information from the test to create a better model. Thus, the developer might overfit the test set, too. We don't want to use the test set too often, but it is still useful to measure out of sample performance frequently. To this end, we create a **validation set**, also called dev set. We can do this the same way we created the test set, by just splitting the training data again:
+```Python
+X_train, X_test, y_train, y_test = train_test_split(X_train, y_train, 
+                                                    test_size=0.1, 
+                                                    random_state=42)
+```
+
+## Oversample the training data 
+Remember that only a tiny fraction transactions was actually fraudulent and that a model always classifying transactions as genuine would have very high accuracy? To make sure we train our model on the true relationships, we can **oversample** the training data. This means, we add frauds to our dataset until we have the same amount of fraudulent as genuine transactions. A useful library for this kind of task is `imblearn`, which includes a `SMOTE` function. SMOTE, Synthetic Minority Over-sampling Technique, is a clever way of oversampling that tries to create new samples while maintaining the same decision boundaries for the classes.
+
+```Python
+sm = SMOTE(random_state=42)
+X_train_res, y_train_res = sm.fit_sample(X_train, y_train)
+```
+
+## Building the model 
+Now it is finally time to build a neural network! Like in chapter 1, we import the required Keras modules:
+```Python
+from keras.models import Sequential
+from keras.layers import Dense, Activation
+```
+In practice, many structured data problems require very low learning rates. To set the learning rate for the gradient descent optimizer, we also need to import the optimizer:
+```Python
+from keras.optimizers import SGD
+```
+### Create a simple baseline
+Before getting into fancy models, it is wise to start with a simple logistic regression baseline, to make sure that our model actually trains.
+```Python
+model = Sequential()
+model.add(Dense(1, input_dim=9))
+model.add(Activation('sigmoid'))
+```
+Here you see a logistic regressor, which is the same as a 1 layer neural network.
+
+```Python 
+model.compile(loss='binary_crossentropy',
+              optimizer=SGD(lr=1e-5), 
+              metrics=['acc'])
+```
+Here, we compile the model. Instead of just passing `'sgd'` to specify the optimizer, we create a custom instance of SGD in which we set the learning rate to 0.00001. Tracking accuracy is not needed, since we evaluate our models by the f1 score, but it still reveals some interesting behavior.
+
+```Python
+model.fit(X_train_res,y_train_res,
+          epochs=5, 
+          batch_size=256, 
+          validation_data=(X_val,y_val))
+```
+
+Notice how we pass the validation data to Keras. We create a tuple in which we store the data. We train for 5 epochs:
+```out:
+Train on 3331258 samples, validate on 185618 samples
+Epoch 1/5
+3331258/3331258 [==============================] - 20s 6us/step - loss: 3.3568 - acc: 0.7900 - val_loss: 3.4959 - val_acc: 0.7807
+Epoch 2/5
+3331258/3331258 [==============================] - 20s 6us/step - loss: 3.0356 - acc: 0.8103 - val_loss: 2.9473 - val_acc: 0.8151
+Epoch 3/5
+3331258/3331258 [==============================] - 20s 6us/step - loss: 2.4450 - acc: 0.8475 - val_loss: 0.9431 - val_acc: 0.9408
+Epoch 4/5
+3331258/3331258 [==============================] - 20s 6us/step - loss: 2.3416 - acc: 0.8541 - val_loss: 1.0552 - val_acc: 0.9338
+Epoch 5/5
+3331258/3331258 [==============================] - 20s 6us/step - loss: 2.3336 - acc: 0.8546 - val_loss: 0.8829 - val_acc: 0.9446
+
+```
+
+Notice a few things here: First, we train on about 3.3 million samples. This is more than the data we initially had. The sudden increase comes from oversampling. Second, the trainings accuracy is significantly lower than the validation accuracy. This is because the traing set is balanced while validation set is not. A model classifying everything as genuine would have over 99% accuracy on the validation set but just 50% accuracy on the trainings set. 
+
+We can now make predictions on our test set to evaluate the baseline:
+```Python
+y_pred = model.predict(X_test)
+```
+Before evaluating our baseline, we need to turn the probabilities given by our model into absolute predictions. We classify everything that has a fraud probability above 50% to be a fraud:
+```Python
+y_pred[y_pred > 0.5] = 1
+y_pred[y_pred < 0.5] = 0
+```
+
+Our f1 score is already significantly better than it was for the heuristic: 
+```Python
+f1_score(y_pred=y_pred,y_true=y_test)
+```
+```
+out: 0.054384286716408395
+```
+
+By plotting the confusion matrix we can see that our model has indeed improved over the heuristic:
+```Python
+cm = confusion_matrix(y_pred=y_pred,y_true=y_test)
+plot_confusion_matrix(cm,['Genuine','Fraud'], normalize=False)
+```
+![Log reg confusion matrix](./assets/log_reg_cm.png)
+
+### Building more complex models 
+After we have created a simple baseline, we can go on to more complex models 
+This is just an example of a two layer network:
+```Python
+model = Sequential()
+model.add(Dense(16,input_dim=9))
+model.add(Activation('tanh'))
+model.add(Dense(1))
+model.add(Activation('sigmoid'))
+
+model.compile(loss='binary_crossentropy',optimizer=SGD(lr=1e-5), metrics=['acc'])
+
+model.fit(X_train_res,y_train_res,
+          epochs=5, batch_size=256, 
+          validation_data=(X_val,y_val))
+          
+y_pred = model.predict(X_test)
+
+y_pred[y_pred > 0.5] = 1
+y_pred[y_pred < 0.5] = 0
+```
+We again benchmark by the f1 score 
+```Python
+f1_score(y_pred=y_pred,y_true=y_test)
+```
+```
+out: 0.087220701988752675
+```
+The more complex model does better in this case.
+
+# A brief primer on tree based methods
+No chapter on structured data would be complete without mentioning tree based methods, like random forests or XGBoost. In the realm of predictive modeling for structured data, tree based methods are very successful. However, they do not well on more advanced tasks, like image recognition or sequence to sequence modeling, which is why the rest of the book does not deal with them. It is worth knowing them, however.
+
+## A simple decision tree
+The basic idea behind tree based methods is the decision tree. Decision trees split up data to create the maximum difference in outcome. Lets assume for a second that our `isNight` feature is the greatest predictor of fraud. A decision tree would split our dataset by whether the transactions happened at night or not. For all nightly transactions, it would then look for the next best predictor of fraud, and it does the same for all day transactions. 
+Sklearn has a handy decision tree module:
+```Python
+from sklearn.tree import DecisionTreeClassifier
+dtree=DecisionTreeClassifier()
+dtree.fit(X_train,y_train)
+```
+
+The resulting tree looks like this:
+![Tree](./assets/fraud_tree.png)
+
+Simple decision trees can give a lot of insight into data. Here you see for example, that the most important feature seems to be the old balance of the origin.
+
+## A random forrest
+A random forest is a collection of decision trees. It is trained by taking subsets of the training data and training decision trees on those subsets. Often, those subsets do not include all features of the training data. After many trees are created, their predictions are averaged to create the final prediction. The idea is that errors of the trees are not correlated, so that using many trees cancels out the error.
+
+```Python
+from sklearn.ensemble import  RandomForestClassifier
+
+rf = RandomForestClassifier(n_estimators=10,n_jobs=-1)
+rf.fit(X_train_res,y_train_res)
+```
+Notice two things here: First, random forrests have far fewer knobs to tune than neural networks. In this case, we just specify the number of estimators, speak, the number of trees we would like our forrest to have. The `n_jobs` argument tells the random forrest how many trees we would like to train in parallel. -1 stands for 'as many as there are CPU cores'.
+
+```Predict 
+y_pred = rf.predict(X_test)
+f1_score(y_pred=y_pred,y_true=y_test)
+```
+```
+out: 0.8749502190362406
+```
+The random forrest does an order of magnitude better than the neural net. Its confusion plot shows that the random forrest significantly reduced the number of false positives.
+![RF CM](./assets/rf_cm.png)
+
+## XGBoost
+XGBoost stands for Xtreme Gradient Boosting. The idea behind gradient boosting is to train a decision tree, and then to train a second decision tree on the errors of the first decision tree. This way, many layers of decision trees can be added that slowly reduce the total model error. XGBoost is a popular library that implements this very efficiently.
+
+Gradient boosting classifiers can be created and trained just like random forrests from sklearn:
+```Python
+import xgboost as xgb
+
+booster = xgb.XGBClassifier(n_jobs=-1)
+booster = booster.fit(X_train,y_train)
+```
+
+```Python
+y_pred = booster.predict(X_test)
+f1_score(y_pred=y_pred,y_true=y_test)
+```
+```
+out: 0.85572959604286891
+```
+The gradient booster does about equally well as random forrest on this task. A common approach is to take both a random forrest and a gradient booster and to average the results to get an even better model.
+
+The bulk of machine learnings jobs in business today is done on relatively simple structured data. Random forests and gradient boosting are therefore the standard tools that most practitioners use. The value generation does not come from carefully tweaking the model or coming up with cool architectures, but from massaging the data and creating good features. However, as tasks get more complex and more semantic understanding of unstructured data is needed, these tools fail.
+
+# End to end modeling
+Our current approach relies on engineered features. An alternative is **end to end** (E2E) modeling. In E2E modeling, raw, unstructured data about a transaction would be used. This could include the description text made in a transfer, video feeds from cameras monitoring the cash machine or other sources of data. E2E is often more successful than feature engineering provided that you have enough data available. It can take millions of examples to properly train an E2E model, but often it is the only way to gain acceptable results. Especially, when it is hard to codify the rules for something. Humans can recognize things in images well but it is hard to come up with exact rules that distinguish things. This is where E2E gets to shine. In our dataset, we do not have access to more data, but the rest of the book demos various E2E models.
+
+# Exercises
+Visit Kaggle.com and search for a competition that has structured data. One example is the Titanic competition. Create a new Kernel, do some feature engineering and try to build a predictive model. How much can you improve by investing time into feature engineering versus model tweaking? Can you think of an end to end approach for the problem?
+
+# Summary
+In this book, we have taken a structured data problem from raw data to strong predictive models. We have learned about heuristics, feature engineering and end to end modeling. We have seen the value of clear evaluation metrics and baselines.
