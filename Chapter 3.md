@@ -381,6 +381,291 @@ Our model achieves about 98% validation accuracy. Pretty nice!
 
 # More bells and whistles for our neural network 
 
+## Momentum
+Earlier, we motivated gradient descent as someone trying to find the way down a hill by just following the slope of the floor. Momentum can be motivated with an analogy to physics, where a ball is rolling down the same hill. A small bump in the hill would not make the ball roll in a completely different direction. The ball has some momentum, meaning that its movement gets influenced by its previous movement. The same can be added to gradient descent.
+
+Instead of directly updating the model parameters with their gradient we update them with the exponentially weighted moving average. We can also motivate this from statistics: To avoid that we update our parameter with an outlier gradient, we take the moving average, which will smoothen out outliers and capture the general direction of the gradient.
+
+![Momentum](./assets/momentum.png)
+
+The exponentially weighted moving average is a clever mathematical trick to compute a moving average without having to memorize a set of previous values. The exponentially weighted average $V$ of some value $\theta$ would be:
+
+$$V_{t} = \beta * V_{t-1} + (1 - \beta) * \theta_t $$
+
+A beta value of 0.9 would mean that 90% of the mean come from previous moving average $V_{t-1}$ and 10% come from the new value $\theta_t$. 
+
+Using momentum makes learning more robust. We can augment the standard stochastic gradient descent optimizer in Keras with momentum by setting a value for beta: 
+```Python 
+from keras.optimizers import SGD
+momentum_optimizer = SGD(lr=0.01, momentum=0.9)
+```
+This little code snippet creates a SGD optimizer with a learning rate of 0.01 and a beta value of 0.9. We can use it when we compile our model:
+```Python 
+model.compile(optimizer=momentum_optimizer,
+              loss='sparse_categorical_crossentropy',
+              metrics=['acc'])
+```
+
+## The adam optimizer
+Kingma, D. P., & Ba, J. L. (2015)'s adam (adaptive momentum estimation) optimizer is another way to make gradient descent work better that has shown very good results and has therefore become a standard choice for many practitioners. We used it for MNIST for example. First it computes the exponentially weighted average of the gradients, just like a momentum optimizer does: 
+
+$$ V_{dW} = \beta_1 * V_{dW} + (1 - \beta_1) * dW $$
+
+But then it also computes the exponentially weighted average of the squared gradients:
+
+$$S_{dW} = \beta_2 * S_{dW} + (1 - \beta_2) * dW^2$$
+It then updates the model parameters like this:
+
+$$ W = W - \alpha * \frac{V_{dW}}{\sqrt{S_{dW}} + \epsilon}$$
+Where $\epsilon$ is a very small number to avoid division by zero.
+
+This division by the root of squared gradients reduces the update speed when gradients are very large. This stabilizes learning as the learning algorithm does not get thrown off track by outliers as much. Together with adam, we got a new hyper parameter. Instead of having just one momentum factor $\beta$ we now have two, $\beta_1$ and $\beta_2$. The recommended values for $\beta_1$ and $\beta_2$ are 0.9 and 0.999 respectively. We can use adam in keras like this:
+
+```Python 
+from keras.optimizers import adam
+
+adam_optimizer=adam(lr=0.1,
+                beta_1=0.9, 
+                beta_2=0.999, 
+                epsilon=1e-08)
+
+model.compile(optimizer=adam_optimizer,
+              loss='sparse_categorical_crossentropy',
+              metrics=['acc'])
+```
+
+As you have seen earlier, we can also compile the model by just passing the string `'adam'` as an optimizer. In this case Keras will create an adam optimizer for us and choose the recommended values.
+
+## Regularization
+Regularization is a technique to avoid overfitting. Overfitting is when the model fits the training data too well and does not generalize well to dev or test data.
+
+### L2 Regularization
+One popular technique to counter this is L2 regularization. L2 regularization adds the sum of squared weights to the loss function like this:
+
+$$L_{Regularized}(W) = L(W) + \frac{\lambda}{2N} \sum W^2$$
+
+Where $N$ is the number of training examples, and $\lambda$ is the regularization hyper parameter that influences how much we want to regularize.
+
+Adding this regularization to the loss function means that high weights increase losses and the algorithm is incentivized to reduce weights. Small weights (around zero) mean that the neural network relies less on them. Therefore, a regularized algorithm will rely less on every single feature and every single node activation and will have a more holistic view, taking into account many features and activations. This will prevent the algorithm from overfitting. A common value for $\lambda$ is around 0.01.
+
+### L1 Regularization
+L1 regularization is very similar to L2 regularization but instead of adding the sum of squares it adds the sum of absolute values:
+
+$$L_{Regularized}(W) = L(W) + \frac{\lambda}{2N}\sum||W||$$
+In practice it is often a bit experimental which of the two works best, the difference is not very large.
+
+### Regularization in Keras
+In Keras, regularizers that are applied to the weights are called kernel_regularizer, regularizers that are applied to the bias are called bias_regularizer. You can also apply regularization directly to the activation of the nodes to prevent them from being activated very strongly with activity_regularizer. Let's add some L2 regularization to our network:
+
+``` Python 
+from keras.regularizers import l2
+
+model = Sequential()
+
+
+model.add(Conv2D(6,3,input_shape=img_shape, kernel_regularizer=l2(0.01)))
+
+model.add(Activation('relu'))
+
+model.add(MaxPool2D(2))
+
+model.add(Conv2D(12,3,activity_regularizer=l2(0.01)))
+
+model.add(Activation('relu'))
+
+model.add(MaxPool2D(2))
+
+model.add(Flatten())
+
+model.add(Dense(10,bias_regularizer=l2(0.01)))
+
+model.add(Activation('softmax'))
+``` 
+Setting a `kernel_regularizer` as done in the first convolutional layer in Keras means regularizing weights. Setting a `bias_regularizer` regularizes the bias and setting an `activity_regularizer` regularizes the output activations of a layer. Note that in this example, the regularizers are set to show them off, but they actually harm performance here. As you can see from the training results above, our network is not actually overfitting, so setting regularizers harms performance here and the model underfits. It reaches about 87% validation accuracy:
+``` Python 
+model.compile(loss='sparse_categorical_crossentropy', 
+              optimizer = 'adam', 
+              metrics=['acc'])
+              
+history = model.fit(x_train,
+                    y_train,
+                    batch_size=32,
+                    epochs=10,
+                    validation_data=(x_test,y_test))
+```
+
+```
+Train on 60000 samples, validate on 10000 samples
+Epoch 1/10
+60000/60000 [==============================] - 22s 374us/step - loss: 7707.2773 - acc: 0.6556 - val_loss: 55.7280 - val_acc: 0.7322
+Epoch 2/10
+60000/60000 [==============================] - 21s 344us/step - loss: 20.5613 - acc: 0.7088 - val_loss: 6.1601 - val_acc: 0.6771
+Epoch 3/10
+60000/60000 [==============================] - 19s 323us/step - loss: 3.6656 - acc: 0.6576 - val_loss: 2.3230 - val_acc: 0.6651
+Epoch 4/10
+60000/60000 [==============================] - 20s 335us/step - loss: 1.9728 - acc: 0.6883 - val_loss: 1.7181 - val_acc: 0.7354
+Epoch 5/10
+60000/60000 [==============================] - 21s 343us/step - loss: 1.5655 - acc: 0.7618 - val_loss: 1.4479 - val_acc: 0.7945
+Epoch 6/10
+60000/60000 [==============================] - 19s 323us/step - loss: 1.3464 - acc: 0.8130 - val_loss: 1.5671 - val_acc: 0.7855
+Epoch 7/10
+60000/60000 [==============================] - 19s 322us/step - loss: 1.2079 - acc: 0.8388 - val_loss: 1.0932 - val_acc: 0.8545
+Epoch 8/10
+60000/60000 [==============================] - 19s 318us/step - loss: 1.1168 - acc: 0.8517 - val_loss: 1.2081 - val_acc: 0.8444
+Epoch 9/10
+60000/60000 [==============================] - 20s 335us/step - loss: 1.0269 - acc: 0.8597 - val_loss: 0.9990 - val_acc: 0.8463
+Epoch 10/10
+60000/60000 [==============================] - 20s 329us/step - loss: 0.9231 - acc: 0.8650 - val_loss: 0.8309 - val_acc: 0.8749
+```
+
+Notice that the model achieves a higher accuracy on the validation than on the training set. A clear sign of underfitting.
+
+## Dropout
+As the original paper title gives away, Dropout is "A Simple Way to Prevent Neural Networks from Overfitting". And it works by randomly removing nodes from the neural network:
+
+![Dropout](./assets/dropout.png)
+KISHOR: THIS GRAPHIC IS FROM THE ORIGINAL DROPOUT PAPER, IS IT OKAY TO USE OR SHOULD I REPLICATE SUCH A GRPAHIC?
+
+With dropout, each node has a small probability of having it's activation set to zero. This means that the learning algorithm can no longer rely heavily on single nodes, much like in L2 and L1 regularization. Dropout therefore also has a regularizing effect.
+
+In Keras, dropout is a new type of layer. It is put after the activations you want to apply dropout to. It passes on activations, but sometimes it sets them to zero, achieving the same effect as dropout in the cells directly:
+
+```Python 
+from keras.layers import Dropout
+model = Sequential()
+
+
+model.add(Conv2D(6,3,input_shape=img_shape))
+model.add(Activation('relu'))
+model.add(MaxPool2D(2))
+
+model.add(Dropout(0.2))
+
+model.add(Conv2D(12,3))
+model.add(Activation('relu'))
+model.add(MaxPool2D(2))
+
+model.add(Dropout(0.2))
+
+model.add(Flatten())
+
+model.add(Dense(10,bias_regularizer=l2(0.01)))
+
+model.add(Activation('softmax'))
+``` 
+
+A dropout value of 0.5 is considered a good choice if overfitting is a serious problem. Values over 0.5 are not very helpful as the network would only have too few values to work with. In this case we chose a dropout value of 0.2, meaning that each cell has a 20% chance to be set to zero. Note that dropout is used after pooling. 
+
+```Python 
+model.compile(loss='sparse_categorical_crossentropy', 
+              optimizer = 'adam', 
+              metrics=['acc'])
+              
+history = model.fit(x_train,
+                    y_train,
+                    batch_size=32,
+                    epochs=10,
+                    validation_data=(x_test,y_test))
+```
+```
+Train on 60000 samples, validate on 10000 samples
+Epoch 1/10
+60000/60000 [==============================] - 22s 371us/step - loss: 5.6472 - acc: 0.6039 - val_loss: 0.2495 - val_acc: 0.9265
+Epoch 2/10
+60000/60000 [==============================] - 21s 356us/step - loss: 0.2920 - acc: 0.9104 - val_loss: 0.1253 - val_acc: 0.9627
+Epoch 3/10
+60000/60000 [==============================] - 20s 333us/step - loss: 0.1891 - acc: 0.9406 - val_loss: 0.0819 - val_acc: 0.9753
+Epoch 4/10
+60000/60000 [==============================] - 20s 333us/step - loss: 0.1551 - acc: 0.9514 - val_loss: 0.0730 - val_acc: 0.9782
+Epoch 5/10
+60000/60000 [==============================] - 20s 336us/step - loss: 0.1367 - acc: 0.9574 - val_loss: 0.0728 - val_acc: 0.9767
+Epoch 6/10
+60000/60000 [==============================] - 20s 337us/step - loss: 0.1245 - acc: 0.9609 - val_loss: 0.0690 - val_acc: 0.9775
+Epoch 7/10
+60000/60000 [==============================] - 20s 336us/step - loss: 0.1178 - acc: 0.9629 - val_loss: 0.0571 - val_acc: 0.9822
+Epoch 8/10
+60000/60000 [==============================] - 21s 342us/step - loss: 0.1180 - acc: 0.9637 - val_loss: 0.0612 - val_acc: 0.9803
+Epoch 9/10
+60000/60000 [==============================] - 20s 339us/step - loss: 0.1095 - acc: 0.9655 - val_loss: 0.0533 - val_acc: 0.9841
+Epoch 10/10
+60000/60000 [==============================] - 21s 344us/step - loss: 0.1064 - acc: 0.9662 - val_loss: 0.0545 - val_acc: 0.9835
+```
+The low dropout value creates nice results. But again the network does better on the validation than training set, a clear sign of underfitting. Note that dropout is only applied at training time. When the model is used for predictions, dropout does not do anything.
+
+## Batchnorm
+Batchnorm, short for batch normalization is a technique 'normalizing' input data to a layer batch wise. Each batch, batchnorm computes the mean and standard deviation of the data and applies a transformation so that the mean is zero and the standard deviation is one. This makes training easier because the loss surface becomes more 'round'. Different means and standard deviations along different input dimensions would mean that the network would have to learn a more complicated function. We can make this easier by applying batchnorm.
+
+![Batchnorm](./assets/batchnorm.png)
+
+In Keras, batchnorm is a new layer as well.
+
+```Python 
+from keras.layers import BatchNormalization
+
+
+model = Sequential()
+
+
+model.add(Conv2D(6,3,input_shape=img_shape))
+model.add(Activation('relu'))
+model.add(MaxPool2D(2))
+
+model.add(BatchNormalization())
+
+model.add(Conv2D(12,3))
+model.add(Activation('relu'))
+model.add(MaxPool2D(2))
+
+model.add(BatchNormalization())
+
+model.add(Flatten())
+
+model.add(Dense(10,bias_regularizer=l2(0.01)))
+
+model.add(Activation('softmax'))
+```
+```Python 
+model.compile(loss='sparse_categorical_crossentropy', 
+              optimizer = 'adam', 
+              metrics=['acc'])
+              
+history = model.fit(x_train,
+      y_train,
+      batch_size=32,
+      epochs=10,
+      validation_data=(x_test,y_test))
+```
+
+``` 
+Train on 60000 samples, validate on 10000 samples
+Epoch 1/10
+60000/60000 [==============================] - 25s 420us/step - loss: 0.2229 - acc: 0.9328 - val_loss: 0.0775 - val_acc: 0.9768
+Epoch 2/10
+60000/60000 [==============================] - 26s 429us/step - loss: 0.0744 - acc: 0.9766 - val_loss: 0.0668 - val_acc: 0.9795
+Epoch 3/10
+60000/60000 [==============================] - 25s 419us/step - loss: 0.0587 - acc: 0.9820 - val_loss: 0.0569 - val_acc: 0.9819
+Epoch 4/10
+60000/60000 [==============================] - 26s 428us/step - loss: 0.0495 - acc: 0.9845 - val_loss: 0.0544 - val_acc: 0.9835
+Epoch 5/10
+60000/60000 [==============================] - 26s 427us/step - loss: 0.0450 - acc: 0.9857 - val_loss: 0.0528 - val_acc: 0.9830
+Epoch 6/10
+60000/60000 [==============================] - 29s 492us/step - loss: 0.0404 - acc: 0.9870 - val_loss: 0.0509 - val_acc: 0.9839
+Epoch 7/10
+60000/60000 [==============================] - 29s 480us/step - loss: 0.0378 - acc: 0.9880 - val_loss: 0.0475 - val_acc: 0.9849
+Epoch 8/10
+60000/60000 [==============================] - 41s 683us/step - loss: 0.0350 - acc: 0.9887 - val_loss: 0.0493 - val_acc: 0.9858
+Epoch 9/10
+60000/60000 [==============================] - 39s 652us/step - loss: 0.0331 - acc: 0.9896 - val_loss: 0.0521 - val_acc: 0.9828
+Epoch 10/10
+60000/60000 [==============================] - 26s 432us/step - loss: 0.0314 - acc: 0.9897 - val_loss: 0.0518 - val_acc: 0.9843
+```
+
+Batchnorm often accelerates training by making it easier. You can see how accuracy jumps up in the first epoch already:
+
+![Batchnorm Training](./assets/batchnorm_training.png)
+
+Batchnorm also has a mildly regularizing effect. Extreme values are often overfit to and batchnorm reduces extreme values, similar to activity regularization. All this makes batchnorm an extremely popular tool in computer vision.
+
 # Working with pre-trained models
 
 # Using OpenCV for image preprocessing
