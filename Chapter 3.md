@@ -666,7 +666,410 @@ Batchnorm often accelerates training by making it easier. You can see how accura
 
 Batchnorm also has a mildly regularizing effect. Extreme values are often overfit to and batchnorm reduces extreme values, similar to activity regularization. All this makes batchnorm an extremely popular tool in computer vision.
 
+# Loading larger image datasets into Keras
+In the case of MNIST, we loaded all 60,000 images of the training set and all 10,000 images of the validation set into memory. Having all data in memory is certainly fast, but not feasible once datasets get very big. We need a way to load data as it is needed, and not all in advance. 
+
+## A brief guide to Python Generators and yield 
+The weapon of choice is a Python generator. A generator works is a function that behaves like an iterator. An iterator in Python is something that we can iterate over by calling `next`. This will give us the next item from the generator. Think of the fibonacci series for example. The fibonacci series is an infinite series in which each element is the sum of the two previous elements. So the fibonacci series goes like this: 0,1,2,3,5,8,13... Imagine we wanted to iterate over this fibonacci series and get the next element in the series whenever needed. We could implement a generator for like this:
+
+```Python 
+def fibonacci_generator():
+  a = 0
+  b = 1
+  while True:
+    yield a
+    a, b = b, a + b
+```
+To use a generator, we first have to get the generator instance:
+```Python 
+fib_gen = fibonacci_generator()
+```
+We can then get values from the generator:
+```Python 
+next(fib_gen)
+```
+```
+out: 
+0
+```
+If we call `next` again, we get the next value of the series:
+```Python 
+next(fib_gen)
+```
+```
+out: 
+1
+```
+And the next after that:
+```Python 
+next(fib_gen)
+```
+```
+out: 
+1
+```
+Then we'd get 2, 3, 5 and so on.
+Notice two things here: There is an infinite loop in the function since we use `while True`. This loop will go on forever and using an infinite loop would usually be a bad idea, however, in a generator which is supposed to generate an infinite amount of values, it is very common. Second, notice the `yield` statement. Usual Python functions use the `return` keyword. 'return' returns values and ends the function. `yield` returns values but only pauses the function. Once `next` is called again, the function keeps running until it encounters the next `yield` keyword. If a `return` keyword or the end of the function is encountered, a `StopIteration` is raised. This signals that the iterator is exhausted. Generators are often used to load images as needed. 
+
+## The Keras image generator 
+After this little theory interlude, it is time to tackle a new computer vision challenge. In the next sections we will work with the plant seedlings dataset of the university of Aarhus. See Giselsson, Thomas Mosgaard and Dyrmann, Mads and Jorgensen, Rasmus Nyholm and Jensen, Peter Kryger and Midtiby, Henrik Skov, 2017 'A Public Image Database for Benchmark of Plant Seedling Classification Algorithms' for more details on the dataset. Although plant classification is not a common problem in finance, the dataset lends itself to demonstrate many common computer vision techniques and is availeble under an open domain license. Readers who wish to test their knowledge on a more relevant dataset should take a look at the State Farm Distracted Driver dataset as well as the Planet: Understanding the Amazon from Space dataset. For more information see the exercises section of this chapter.
+
+To follow these code samples, download the data from https://storage.googleapis.com/aibootcamp/data/plants.zip and unzip it so that it is in a folder called 'test' and 'train' in your working directory.
+
+Keras comes with an image data generator that can load files from disk out of the box.
+```Python 
+from keras.preprocessing.image import ImageDataGenerator
+``` 
+To obtain a generator reading from files, we first have to specify the generator. Keras `ImageDataGenerator` offers a range of image augumentation tools, but we will only make use of the rescaling function. Rescaling multiplies all values in an image with a constant. Most common image formats, the color values range from 0 to 255, so we want to rescale by 1 / 255:
+
+```Python 
+imgen = ImageDataGenerator(rescale=1/255)
+``` 
+This however, is not yet the generator that loads the images for us. The `ImageDataGenerator` class offers a range of generators, that can be created by calling functions on it. To obtain a generator loading files we have to call `flow_from_directory`. We have to specify the directory Keras should use, the batch size we would like (32) as well as the target size the images should be resized to (150 by 150 pixels).
+```Python 
+generator = imgen.flow_from_directory('Segmented',
+                                      batch_size=32,
+                                      target_size=(150, 150))
+``` 
+```
+out:
+Found 4750 images belonging to 12 classes.
+```
+How did Keras find the images and how does it know which classes the images belong to? Keras generator expects the following folder structure:
+
+- Root 
+  - Class 0
+    - img 
+    - img 
+    - ... 
+  - Class 1
+    - img
+    - img 
+    - ...
+  - Class 2
+    - ...
+    
+With Pythons `os` module we can find all the folders in `'Segmented'`
+
+```Python 
+os.listdir('Segmented')
+```
+```
+out: 
+['Small-flowered Cranesbill',
+ 'Sugar beet',
+ 'Common Chickweed',
+ 'Scentless Mayweed',
+ 'Fat Hen',
+ 'Common wheat',
+ 'Charlock',
+ 'Cleavers',
+ 'Black-grass',
+ 'Maize',
+ 'Loose Silky-bent',
+ 'Shepherd’s Purse']
+```
+And in fact, there are 12 subfolders all containing images. The Keras generator will automatically yield the targets as one-hot encoded vectors.
+
+## Separating validation data
+Before we train, we need to split our dataset into training and validation data. We will use Pythons `os` module to do the actual file moving and the `tqdm` library to keep track of the operation.
+
+```Python 
+import os
+from tqdm import tqdm
+```
+Our data is in a folder called `'Segmented'`. We want to create a validation set, so we need to create a new folder for the validation data.
+
+``` Python 
+root_dir = 'Segmented'
+target_root = 'Validation'
+
+if not os.path.isdir(target_root):
+  os.mkdir(target_root)
+```
+
+`os.path.isdir` checks if a path is an existing directory. `os.mkdir` creates a directory. Note that all paths are relative to the working directory of the notebook. Now it is time to create our validation set. To this end, we will move 12 pictures of every plant into the validation set.
+
+```Python 
+for plant in tqdm(os.listdir(root_dir)):
+  plant_path = os.path.join(root_dir,plant)
+  target_plant_path = os.path.join(target_root,plant)
+  
+  if not os.path.isdir(target_plant_path):
+    os.mkdir(target_plant_path)
+    
+    
+  files = os.listdir(plant_path)
+  for i in range(12):
+    source_path = os.path.join(plant_path,files[i])
+    dest_path = os.path.join(target_plant_path,files[i])
+    os.rename(source_path,dest_path)
+``` 
+`os.listdir` lists all content in a folder. So for our root folder it will list all the plant directories. By wrapping this list we are looping over in the `tqdm` function we automatically create a progress bar for our for loop. We will use `tqdm` on various occasions throughout this book and get a deeper understanding of it, but for now all you have to remember is that it is an easy way to create progress bars. Once we have a subfolder, the name of a plant, we create a source and target directory for that plant. If there is no subfolder with the plants name in our validation set we create one with `os.mkdir`. We then obtain a list of all files in the plant directory. We loop over 12 of them and move them to the validation set. Moving files in Python is done with `os.rename`. 
+
+## Training from a Generator 
+To train a model from a data generator, we need to use the `model.fit_generator` function. In this section, we will train a logistic regressor to recognize plants. Starting of with such a simple model is a good sanity check and baseline. 
+
+We expect such a simple model to perform poorly. If it does not, we know that there is something wrong with our dataset. Sometimes, just a few pixels, or the general brightness or color of the image give away the class. A classic example of this is the story of the tanks in the forrest. The story goes that the US army wanted to train a computer vision system to detect tanks in a forest. They contracted a few researchers and supplied them with images of tanks. The researchers then went out and snapped some pictures of plain forest without tanks. Their model trained well and so they began testing their detector on real life tanks. To their surprise, it did not work. After much searching, they found out that the tank images all were taken on cloudy days while their plain forest images were taken on sunny days. Their neural network had learned to spot cloudy days, with dim and grey lightning, not tanks. Detecting dim light is much easier than detecting tanks, and to make sure that we don't have such 'giveaways' in our dataset, we should sanity check with a very simple model and hope it does poorly. This simple model will also serve as a baseline. Every more advanced model will have to show it is better than the very simple model.
+
+To define the logistic regressor we first need to flatten the input, as the images are three dimensional blocks (height, width, 3 color channels) while logistic regression works on flat vectors.
+```Python 
+from keras.layers import Flatten,Dense, Activation
+from keras.models import Sequential
+
+model = Sequential()
+model.add(Flatten(input_shape=(150,150,3)))
+model.add(Dense(12))
+model.add(Activation('softmax'))
+```
+Since our generator generate one hot encoded targets we can use `'categorical_crossentropy'` loss. Since this is the simple baseline we use plain stochastic gradient descent as an optimizer.
+```Python 
+model.compile(loss='categorical_crossentropy',
+              optimizer='sgd', 
+              metrics = ['acc'])
+``` 
+
+Before we start training, we need to set up our image data generators. We can use the same basic `ImageDataGenerator` but with two different `flow_from_directory`, specifying two different paths:
+
+```Python 
+train_generator = imgen.flow_from_directory('Segmented',
+                                            batch_size=32, target_size=(150,150))
+                                            
+```
+```
+out: 
+Found 5515 images belonging to 12 classes.
+```
+
+```Python 
+validation_generator = imgen.flow_from_directory('Validation',
+                                                 batch_size=32, 
+                                                 target_size=(150,150))
+                                            
+```
+```
+out: 
+Found 144 images belonging to 12 classes.
+```
+And now to the training! To train models on generators in Keras we use `model.fit_generator`
+```Python
+model.fit_generator(train_generator,
+                    epochs=10,
+                    steps_per_epoch= 5515 // 32, 
+                    validation_data=validation_generator, 
+                    validation_steps= 144//32)
+```
+
+We first have to specify the generator we want to train on. Note that the generator generates data as well as targets. As usual, we also have to specify the number of epochs we want to train. What is new that we have to let keras know how many steps per epoch we want to train. Since generators never stop outputting data, how long one complete run over the dataset is. There are 5515 images in our training set and our generator yields batches of 32 samples so we need to divide 5512 by 32 to see how many times we have to call the generator to run over the data set once. Since steps can only be integer numbers, we have to use an integer division. 5515 does not cleanly divide by 32 so Keras will not do an actual complete run over the dataset, but the small inaccuracy does not matter very much. The same has to be done to specify the validation generator and the steps the validation generator has to take.
+
+```
+out:
+Epoch 1/10
+172/172 [==============================] - 20s 119ms/step - loss: 1.9489 - acc: 0.3598 - val_loss: 1.7644 - val_acc: 0.3984
+Epoch 2/10
+172/172 [==============================] - 20s 119ms/step - loss: 1.5784 - acc: 0.5182 - val_loss: 1.6448 - val_acc: 0.4688
+Epoch 3/10
+172/172 [==============================] - 21s 119ms/step - loss: 1.4138 - acc: 0.5751 - val_loss: 1.6180 - val_acc: 0.4531
+Epoch 4/10
+172/172 [==============================] - 21s 119ms/step - loss: 1.2930 - acc: 0.6238 - val_loss: 1.4567 - val_acc: 0.5156
+Epoch 5/10
+172/172 [==============================] - 20s 117ms/step - loss: 1.1999 - acc: 0.6509 - val_loss: 1.4917 - val_acc: 0.4844
+Epoch 6/10
+172/172 [==============================] - 20s 116ms/step - loss: 1.1256 - acc: 0.6824 - val_loss: 1.3618 - val_acc: 0.5391
+Epoch 7/10
+172/172 [==============================] - 20s 118ms/step - loss: 1.0701 - acc: 0.7043 - val_loss: 1.3135 - val_acc: 0.5781
+Epoch 8/10
+172/172 [==============================] - 20s 117ms/step - loss: 1.0045 - acc: 0.7278 - val_loss: 1.3783 - val_acc: 0.5625
+Epoch 9/10
+172/172 [==============================] - 20s 118ms/step - loss: 0.9629 - acc: 0.7388 - val_loss: 1.2864 - val_acc: 0.5938
+Epoch 10/10
+172/172 [==============================] - 20s 114ms/step - loss: 0.9257 - acc: 0.7542 - val_loss: 1.3282 - val_acc: 0.5469
+```
+
+Out model achieves a bit more than 54% accuracy on the validation set. Not a terribly good value, so there seems to be no giveaway features in the images. The model also overfits, since it achieves over 75% accuracy on the training set. 
+
 # Working with pre-trained models
+
+Training large computer vision models is hard and computationally expensive. Therefore, it is common to use models that were originally trained for another purpose and fine-tune them for a new purpose. In this section we will fine tune VGG16 originally trained on Image-Net. The Image-Net competition is an annual computer vision competition. The Image-Net dataset consists of millions of images of real world objects, from dogs to planes. Reasearchers compete to build the most accurate models. Image-Net has driven much progress in computer vision and the models built for Image-Net are a popular basis to fine tune models from. VGG16 is a model architecture developed by the visual geometry group at Oxford university. It consists of a convolutional part and a classification part. We will use the convolutional part only and add our own classification part that can classify plants. VGG16 can be downloaded via Keras:
+```Python 
+from keras.applications.vgg16 import VGG16
+vgg_model = VGG16(include_top=False,input_shape=(150,150,3))
+```
+```
+out: 
+Downloading data from https://github.com/fchollet/deep-learning-models/releases/download/v0.1/vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5
+58892288/58889256 [==============================] - 5s 0us/step
+``` 
+
+When downloading the data we want to let Keras know we do not want to include the top (the classification part), and the desired input shape. If we do not specify the input shape, the model will accept any image size but it will not be possible to add `Dense` layers on top.
+```Python 
+vgg_model.summary()
+```
+```
+out: 
+_________________________________________________________________
+Layer (type)                 Output Shape              Param #   
+=================================================================
+input_1 (InputLayer)         (None, 150, 150, 3)       0         
+_________________________________________________________________
+block1_conv1 (Conv2D)        (None, 150, 150, 64)      1792      
+_________________________________________________________________
+block1_conv2 (Conv2D)        (None, 150, 150, 64)      36928     
+_________________________________________________________________
+block1_pool (MaxPooling2D)   (None, 75, 75, 64)        0         
+_________________________________________________________________
+block2_conv1 (Conv2D)        (None, 75, 75, 128)       73856     
+_________________________________________________________________
+block2_conv2 (Conv2D)        (None, 75, 75, 128)       147584    
+_________________________________________________________________
+block2_pool (MaxPooling2D)   (None, 37, 37, 128)       0         
+_________________________________________________________________
+block3_conv1 (Conv2D)        (None, 37, 37, 256)       295168    
+_________________________________________________________________
+block3_conv2 (Conv2D)        (None, 37, 37, 256)       590080    
+_________________________________________________________________
+block3_conv3 (Conv2D)        (None, 37, 37, 256)       590080    
+_________________________________________________________________
+block3_pool (MaxPooling2D)   (None, 18, 18, 256)       0         
+_________________________________________________________________
+block4_conv1 (Conv2D)        (None, 18, 18, 512)       1180160   
+_________________________________________________________________
+block4_conv2 (Conv2D)        (None, 18, 18, 512)       2359808   
+_________________________________________________________________
+block4_conv3 (Conv2D)        (None, 18, 18, 512)       2359808   
+_________________________________________________________________
+block4_pool (MaxPooling2D)   (None, 9, 9, 512)         0         
+_________________________________________________________________
+block5_conv1 (Conv2D)        (None, 9, 9, 512)         2359808   
+_________________________________________________________________
+block5_conv2 (Conv2D)        (None, 9, 9, 512)         2359808   
+_________________________________________________________________
+block5_conv3 (Conv2D)        (None, 9, 9, 512)         2359808   
+_________________________________________________________________
+block5_pool (MaxPooling2D)   (None, 4, 4, 512)         0         
+=================================================================
+Total params: 14,714,688
+Trainable params: 14,714,688
+Non-trainable params: 0
+_________________________________________________________________
+``` 
+As you can see, the VGG model is very large with over 14 million trainable parameters. It consists of `Conv2D` and `MaxPooling2D` layers which we already learned about when working on MNIST. There are two different ways we can proceed from here: 1) Add layers and build a new model or 2) preprocess all images through the pertained model and then train a new model.
+
+## Modifying VGG16
+In this section, we will add layers on top of the VGG16 model and then train the new, big model. We do not want to retrain all those convolutional layers that have been trained already however. So we first need to 'freeze' all the layers in VGG16:
+```Python 
+for layer in vgg_model.layers:
+  layer.trainable = False
+``` 
+Keras downloads VGG as a functional API model. We will learn about the functional API later, now we just want to use the Sequential API which is easier. We can convert a model to the functional API like this:
+```Python 
+finetune = Sequential(layers = vgg_model.layers)
+``` 
+
+This creates a new model called `finetune` which works just like a normal Sequential model now. Note that converting models to the Sequential API only works if the model can actually be expressed in the Sequential API. Some more complex models can not be converted. Adding layers to our model is now simple: 
+```Python 
+finetune.add(Flatten())
+finetune.add(Dense(12))
+finetune.add(Activation('softmax'))
+```
+If we look at the summary for this model we see that only our newly added layers are trainable:
+```Python 
+finetune.summary()
+```
+```
+out: 
+
+_________________________________________________________________
+Layer (type)                 Output Shape              Param #   
+=================================================================
+input_1 (InputLayer)         (None, 150, 150, 3)       0         
+_________________________________________________________________
+block1_conv1 (Conv2D)        (None, 150, 150, 64)      1792      
+_________________________________________________________________
+block1_conv2 (Conv2D)        (None, 150, 150, 64)      36928     
+_________________________________________________________________
+block1_pool (MaxPooling2D)   (None, 75, 75, 64)        0         
+_________________________________________________________________
+block2_conv1 (Conv2D)        (None, 75, 75, 128)       73856     
+_________________________________________________________________
+block2_conv2 (Conv2D)        (None, 75, 75, 128)       147584    
+_________________________________________________________________
+block2_pool (MaxPooling2D)   (None, 37, 37, 128)       0         
+_________________________________________________________________
+block3_conv1 (Conv2D)        (None, 37, 37, 256)       295168    
+_________________________________________________________________
+block3_conv2 (Conv2D)        (None, 37, 37, 256)       590080    
+_________________________________________________________________
+block3_conv3 (Conv2D)        (None, 37, 37, 256)       590080    
+_________________________________________________________________
+block3_pool (MaxPooling2D)   (None, 18, 18, 256)       0         
+_________________________________________________________________
+block4_conv1 (Conv2D)        (None, 18, 18, 512)       1180160   
+_________________________________________________________________
+block4_conv2 (Conv2D)        (None, 18, 18, 512)       2359808   
+_________________________________________________________________
+block4_conv3 (Conv2D)        (None, 18, 18, 512)       2359808   
+_________________________________________________________________
+block4_pool (MaxPooling2D)   (None, 9, 9, 512)         0         
+_________________________________________________________________
+block5_conv1 (Conv2D)        (None, 9, 9, 512)         2359808   
+_________________________________________________________________
+block5_conv2 (Conv2D)        (None, 9, 9, 512)         2359808   
+_________________________________________________________________
+block5_conv3 (Conv2D)        (None, 9, 9, 512)         2359808   
+_________________________________________________________________
+block5_pool (MaxPooling2D)   (None, 4, 4, 512)         0         
+_________________________________________________________________
+flatten_2 (Flatten)          (None, 8192)              0         
+_________________________________________________________________
+dense_2 (Dense)              (None, 12)                98316     
+_________________________________________________________________
+activation_2 (Activation)    (None, 12)                0         
+=================================================================
+Total params: 14,813,004
+Trainable params: 98,316
+Non-trainable params: 14,714,688
+_________________________________________________________________
+``` 
+We can train this model the same way we trained the logistic regressor before.
+
+```Python 
+finetune.compile(loss='categorical_crossentropy',
+                 optimizer='adam', 
+                 metrics = ['acc'])
+                 
+finetune.fit_generator(train_generator,
+                   epochs=10,
+                   steps_per_epoch= 5515 // 32, 
+                   validation_data=validation_generator, 
+                   validation_steps= 144//32)
+```
+```
+out: 
+Epoch 1/10
+172/172 [==============================] - 37s 213ms/step - loss: 0.9413 - acc: 0.6919 - val_loss: 0.6368 - val_acc: 0.8203
+Epoch 2/10
+172/172 [==============================] - 33s 192ms/step - loss: 0.4226 - acc: 0.8760 - val_loss: 0.6180 - val_acc: 0.7266
+Epoch 3/10
+172/172 [==============================] - 33s 192ms/step - loss: 0.3155 - acc: 0.9110 - val_loss: 0.4838 - val_acc: 0.8359
+Epoch 4/10
+172/172 [==============================] - 33s 192ms/step - loss: 0.2367 - acc: 0.9379 - val_loss: 0.4599 - val_acc: 0.8672
+Epoch 5/10
+172/172 [==============================] - 33s 192ms/step - loss: 0.1881 - acc: 0.9540 - val_loss: 0.4915 - val_acc: 0.8359
+Epoch 6/10
+172/172 [==============================] - 33s 193ms/step - loss: 0.1596 - acc: 0.9601 - val_loss: 0.4529 - val_acc: 0.8438
+Epoch 7/10
+172/172 [==============================] - 33s 191ms/step - loss: 0.1288 - acc: 0.9722 - val_loss: 0.4028 - val_acc: 0.8828
+Epoch 8/10
+172/172 [==============================] - 33s 191ms/step - loss: 0.1059 - acc: 0.9789 - val_loss: 0.4056 - val_acc: 0.8750
+Epoch 9/10
+172/172 [==============================] - 33s 191ms/step - loss: 0.0870 - acc: 0.9838 - val_loss: 0.3952 - val_acc: 0.8594
+Epoch 10/10
+172/172 [==============================] - 33s 191ms/step - loss: 0.0749 - acc: 0.9869 - val_loss: 0.3829 - val_acc: 0.8516
+``` 
+This model achieves 85% validation accuracy. Already a good bit better than the logistic regressor.
+
+## Preprocessing all images through VGG16
 
 # Using OpenCV for image preprocessing
 https://www.kaggle.com/ianchute/background-removal-cieluv-color-thresholding
