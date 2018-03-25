@@ -7,6 +7,17 @@ Computer vision allows us to perceive and interpret the real world at scale. No 
 
 A slightly less fancy but never the less important application of computer vision in finance is insurance. Insurers might use drones to fly over roofs to spot issues before they become an expensive problem. Or they might inspect factories and equipment they insured. The applications are near endless.
 
+# A note on libraries
+This chapter makes use of the following libraries:
+- Keras 
+- Tensorflow 
+- Sklearn 
+- OpenCV 
+- numpy
+- Seaborn 
+- tqdm 
+All of these, except for OpenCV can be installed via `pip` (e.g. `pip install keras`). OpenCV requires a slightly more complex installation procedure which is well documented online and does not necessarily add to this chapter. Both Kaggle and Google Colab come with OpenCV preinstalled. To run these examples, make sure you have OpenCV installed and can import it with `import cv2`
+
 # ConvNets
 Convolutional Neural Networks, ConvNets for short, are the driving engine behind computer vision. ConvNets allow us to work with larger images while keeping the size of the network reasonable. The name Convolutional Neural Net comes from the mathematical operation that differentiates them from regular neural nets. Convolution is the mathematical correct term for sliding one matrix over another matrix. You will see in a minute why this is important for ConvNets but also why this is not the best name in the world. Actually, ConvNets should be called Filter Nets. Because what makes them work is the fact that they use filters. In this section, we will work with the MNIST dataset. The MNIST dataset is a collection of handwritten digits that has become a standard 'hallo world' application for computer vision.
 
@@ -1069,11 +1080,279 @@ Epoch 10/10
 ``` 
 This model achieves 85% validation accuracy. Already a good bit better than the logistic regressor.
 
-## Preprocessing all images through VGG16
+## Preprocessing and saving images
+In the setup above, we have to run the image through the whole network every epoch, although we only want to train the top layers. This is good if we want to use image augmentation or create salience maps (both see below) but many times it is just unnecessary to run these images through the whole network time and time again. It is better to run the images through the network once and then save the output of the convolutional layer. To save the output, we will use `bcolz`, a library that can speeds up data handling through compression. To easier load and save data we have to define two functions:
 
+```Python 
+import bcolz
+def save_array(fname, arr): 
+  c = bcolz.carray(arr, rootdir=fname, mode='w')
+  c.flush()
+  
+def load_array(fname): 
+  return bcolz.open(fname)[:]
+```  
+In `save_array` we first create a new bcolz array. We specify were it should be written to. `flush` then writes the array to disk. In `load_array` we load the file and then return the elements in that file. To preprocess all files in the `'Segmented'` folder we run the following code:
+```Python 
+source = 'Segmented'
+target = 'train_proc'
+
+if not os.path.isdir(target):
+  os.mkdir(target)
+
+for plant in os.listdir(source):
+  target_path = os.path.join(target,plant)
+  source_path = os.path.join(source,plant)
+  
+  if not os.path.isdir(target_path):
+    os.mkdir(target_path)
+  
+  print('Processing',plant)
+  for file in tqdm(os.listdir(source_path)):
+    img = cv2.imread(os.path.join(source_path,file))
+    img = cv2.resize(img, (150, 150)) 
+    img = np.expand_dims(img,0)
+    out = vgg_model.predict(img)
+    save_array(os.path.join(target_path,file), out)
+```
+First we specify source path and target directories. Then we loop over the folders in the source directory (the plants). If there is no folder for the plant in the target directory, we create one. For each plant, we loop over the files in the plant source path. We use OpenCV is a computer vision library which we will consider in depth in the next section. For now all you have to know is that it offers a bunch of useful tools such as reading and resizing images. Before we can feed the image into our model, we have to expand its dimensions. The model expects inputs to have the shape `(batch_size, 150, 150, 3)`. Images, when loaded from disk have dimensions `(150,150,3)`, so we need to expand the dimensionality to include a batch size dimension. After expanding dimensions, the images will have the shape `(1,150,150,3)`. Then we finally can run the image through the model by calling `predict`. We save the output using bcolz. By using `tqdm` we can keep track of how long the conversion takes.
+
+```
+out: 
+Processing Common wheat
+100%|██████████| 246/246 [00:04<00:00, 49.27it/s]
+Processing Sugar beet
+100%|██████████| 452/452 [00:09<00:00, 47.04it/s]
+Processing Maize
+100%|██████████| 248/248 [00:05<00:00, 46.39it/s]
+Processing Common Chickweed
+100%|██████████| 704/704 [00:13<00:00, 53.49it/s]
+Processing Black-grass
+100%|██████████| 321/321 [00:07<00:00, 41.90it/s]
+Processing Loose Silky-bent
+100%|██████████| 807/807 [00:16<00:00, 48.58it/s]
+Processing Shepherd’s Purse
+100%|██████████| 264/264 [00:05<00:00, 50.62it/s]
+Processing Fat Hen
+100%|██████████| 531/531 [00:10<00:00, 50.98it/s]
+Processing Cleavers
+100%|██████████| 336/336 [00:06<00:00, 52.02it/s]
+Processing Scentless Mayweed
+100%|██████████| 596/596 [00:11<00:00, 51.77it/s]
+Processing Small-flowered Cranesbill
+100%|██████████| 568/568 [00:11<00:00, 50.35it/s]
+Processing Charlock
+100%|██████████| 442/442 [00:09<00:00, 46.28it/s]
+``` 
+To process our validation data we only have to run the same code with `source` and `target` changed.
+
+```Python 
+source = 'Validation'
+root_dir = 'validation_proc'
+
+
+if not os.path.isdir(root_dir):
+  os.mkdir(root_dir)
+
+for plant in os.listdir(source):
+  target_path = os.path.join(root_dir,plant)
+  if not os.path.isdir(target_path):
+    os.mkdir(target_path)
+  source_path = os.path.join(source,plant)
+  print('Processing',plant)
+  for file in tqdm(os.listdir(source_path)):
+    img = cv2.imread(os.path.join(source_path,file))
+    img = cv2.resize(img, (150, 150)) 
+    img = img / 255
+    img = np.expand_dims(img,0)
+    out = vgg_model.predict(img)
+    save_array(os.path.join(target_path,file), out)
+``` 
+Note that bcolz saves arrays as directories containing multiple files. 
+
+To train from this data now we need to write a new generator that loads the files from disk and yields the outputs of the VGG network.
+
+```Python 
+def bcz_imgen(root_dir, batch_size = 32): 
+  dirs = os.listdir(root_dir)
+  paths = []
+  targets = []
+  for dir in dirs:
+    path = os.path.join(root_dir,dir)
+    for file in os.listdir(path):
+      paths.append(os.path.join(path,file))
+      targets.append(dir)
+   
+  nclasses = len(np.unique(targets))
+  nitems = len(targets)
+  
+  labelenc = LabelEncoder()
+  int_targets = labelenc.fit_transform(targets)
+  onehot_enc = OneHotEncoder(sparse=False)
+  int_targets = int_targets.reshape(len(int_targets), 1)
+  onehot_targets = onehot_enc.fit_transform(int_targets)
+  
+  indices = np.arange(len(paths))
+  np.random.shuffle(indices)
+  
+  while True:
+    image_stack = []
+    target_stack = []
+    for index in indices:
+      path = paths[index]
+      target = onehot_targets[index]
+      img = load_array(path)
+
+      image_stack.append(img)
+      target_stack.append(target)
+
+      if len(image_stack) == batch_size:
+        images = np.concatenate(image_stack,axis=0)
+        one_hot_targets = np.stack(target_stack)
+        yield images, one_hot_targets
+        image_stack = []
+        target_stack = []
+```
+
+There is a lot going on in this code snippet, so lets break it down. The first part of the function loops over all sub directories of a a given root directory and indexes all files in the sub directories. In this case, we the root directory could be `'train_proc'` and the subdirectories would be the plant names. Since the directory a file is in indicates the class the file belongs to, the name of the directory is saved as a target. The targets are then encoded from names such as 'Maize' to integers using the sci kit learn `LabelEncoder`. Each target name is assigned an integer. This is done so because the `OneHotEncoder` accepts only integers. Using the `OneHotEncoder`, all targets get converted to one-hot. To make sure that we randomly walk over the data, we create and shuffle indices. `np.arrange` yields a sequence of integers from zero to the, but not including, length of the target. So if we have for example 5000 files, `np.arrange` yields 1,2,3,4...4998,4999. This sequence is then shuffled. After the setup is done, we create an infinite while loop. Inside this while loop we keep track of an image stack and a target stack. We loop through our random index, loading the files in the random order. Once we have a number of images and targets together, we combine them into a single numpy array and yield them. Note, that for the images we want to use `np.concatenate` to stack them along an existing axis while for the targets we want to use `np.stack` to stack them along a new axis. The images have run through the model and have a batch size dimension of 1. To create a bigger batch, we need to stack along the batch size axis. We can now define generators for training and validation: 
+
+```Python 
+train_gen = bcz_imgen('train_proc')
+val_gen = bcz_imgen('validation_proc')
+```
+We create a new model and train it on these generators.
+
+```Python 
+model = Sequential()
+model.add(Flatten(input_shape=(4,4,512)))
+model.add(Dense(12))
+model.add(Activation('softmax'))
+
+model.compile(loss='categorical_crossentropy',
+              optimizer='adam',
+              metrics=['acc'])
+              
+model.fit_generator(train_gen,
+                    epochs=2,
+                    steps_per_epoch= 5515 // 32, 
+                    validation_data=val_gen, 
+                    validation_steps= 144//32)
+```
+```
+out: 
+Epoch 1/2
+172/172 [==============================] - 3s 15ms/step - loss: 1.6133 - acc: 0.7356 - val_loss: 3.0247 - val_acc: 0.1797
+Epoch 2/2
+172/172 [==============================] - 3s 17ms/step - loss: 0.3882 - acc: 0.9253 - val_loss: 3.2615 - val_acc: 0.2266
+```
+This model hopelessly overfits, achieving a validation accuracy of 22% at a training accuracy of 92%. However, it trained very fast due to using saved model outputs.
 # Using OpenCV for image preprocessing
-https://www.kaggle.com/ianchute/background-removal-cieluv-color-thresholding
-http://opencv-python-tutroals.readthedocs.io/en/latest/py_tutorials/py_imgproc/py_grabcut/py_grabcut.html#grabcut
+## Removing background
+Much success in computer vision recently was about training neural nets from 'raw pixels', speak images that had not seen much image processing. However, rule based augmentation is not dead and can in fact massively boost performance of neural net based solutions if done right. In this section we will use OpenCV an numpy to remove the background of our leaves. We will do this by specifying a range of colors that plants can have, and then removing all pixels whose colors are too far away from the plant colors. To this end, we first need to define a color distance algorithm. We use a low cost approximation. 
+
+```Python 
+def colordist(img, target):
+    
+    img = img.astype('int')
+    
+    aR, aG, aB = img[:,:,0], img[:,:,1], img[:,:,2]
+    bR, bG, bB = target
+    
+    rmean = ((aR + bR) / 2.).astype('int')
+    
+    r2 = np.square(aR - bR)
+    g2 = np.square(aG - bG)
+    b2 = np.square(aB - bB)
+    
+    
+    result = (((512+rmean)*r2)>>8) + 4*g2 + (((767-rmean)*b2)>>8)
+    
+    return result
+```
+We use this color distance to create a mask. This mask lets us identify all pixels in an image that are not either one of the shades of leaf green. We specify the colors in brackets, (71, 86, 38) for example is the RGB code for leaf green.
+
+```Python 
+img_filter = (
+  (colordist(img, (71, 86, 38)) > 1600)
+  & (colordist(img, (65,  79,  19)) > 1600)
+  & (colordist(img, (95,  106,  56)) > 1600)
+  & (colordist(img, (56,  63,  43)) > 500)
+)
+```
+
+Once we have masked an image we can remove all pixels not belonging to something leafy with 
+
+```Python 
+img[img_filter] = 0
+```
+
+The process will leave some artifacts which can be removed with OpenCV:
+```Python
+img = cv2.medianBlur(img, 9)
+```
+`medianBlur` blurs the image `img` with an aperture linear size size of 9.
+
+This process can be rolled into a generator which we then use for training:
+
+```Python 
+def ocv_imgen(root_dir,batch_size = 32, 
+              rescale = 1/255, 
+              target_size = (150,150)):
+              
+  dirs = os.listdir(root_dir)
+  paths = []
+  targets = []
+  for dir in dirs:
+    path = os.path.join(root_dir,dir)
+    for file in os.listdir(path):
+      paths.append(os.path.join(path,file))
+      targets.append(dir)
+   
+  nclasses = len(np.unique(targets))
+  nitems = len(targets)
+  
+  labelenc = LabelEncoder()
+  int_targets = labelenc.fit_transform(targets)
+  onehot_enc = OneHotEncoder(sparse=False)
+  int_targets = int_targets.reshape(len(int_targets), 1)
+  onehot_targets = onehot_enc.fit_transform(int_targets)
+  
+  indices = np.arange(len(paths))
+  np.random.shuffle(indices)
+  while True:
+    image_stack = []
+    target_stack = []
+    for index in indices:
+      path = paths[index]
+      target = onehot_targets[index]
+      
+      img = plt.imread(path)
+      
+      
+      img = np.round(img * 255).astype('ubyte')[:,:,:3]
+      img = cv2.resize(img, (150,150))
+      img_filter = (
+        (cieluv(img, (71, 86, 38)) > 1600)
+        & (cieluv(img, (65,  79,  19)) > 1600)
+        & (cieluv(img, (95,  106,  56)) > 1600)
+        & (cieluv(img, (56,  63,  43)) > 500)
+      )
+      
+      img[img_filter] = 0
+      img = cv2.medianBlur(img, 9)
+      
+      image_stack.append(img)
+      target_stack.append(target)
+      if len(image_stack) == batch_size:
+        images = np.stack(image_stack)
+        images = np.divide(images,rescale)
+        yield images, np.stack(target_stack)
+        image_stack = []
+        target_stack = []
+```
+Note that rule based image augmentation can be very powerful. However, you need to make sure that the augumentation process can also be run in production. Otherwise you trained the model on something that it does not encounter in real life.
+
+## Random image augmentation
 
 # Understanding what ConvNets learn
 https://github.com/raghakot/keras-vis
