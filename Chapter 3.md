@@ -16,6 +16,8 @@ This chapter makes use of the following libraries:
 - numpy
 - Seaborn 
 - tqdm 
+
+
 All of these, except for OpenCV can be installed via `pip` (e.g. `pip install keras`). OpenCV requires a slightly more complex installation procedure which is well documented online and does not necessarily add to this chapter. Both Kaggle and Google Colab come with OpenCV preinstalled. To run these examples, make sure you have OpenCV installed and can import it with `import cv2`
 
 # ConvNets
@@ -1350,15 +1352,442 @@ def ocv_imgen(root_dir,batch_size = 32,
         image_stack = []
         target_stack = []
 ```
-Note that rule based image augmentation can be very powerful. However, you need to make sure that the augumentation process can also be run in production. Otherwise you trained the model on something that it does not encounter in real life.
+This code sample works very similar to the previous generator we built ourselves. We have a setup step in which we create one-hot encoded targets and prepare our random index. However, this time we do not just load data with bcolz. For semantic reasons, we load the image with `matplotlib`. Matplotlib is a plotting library that also has some image tool. It loads image in RGB format while OpenCV loads images in BGR format. Since we want to render images in matplotlib, it is easier to also let matplotlib do the image loading. Then we apply our filters. Once we have assembled a stack we rescale it. The results looks like this: 
+
+![BG removed](./assets/leaf_no_background.png)
+
+You can see how everything that is not leafy green has been removed. There are a few artifacts left but the shape of the leaf is now easier to detect than it was before.
+
+Note that rule based image augmentation can be very powerful. However, you need to make sure that the augmentation process can also be run in production. Otherwise you trained the model on something that it does not encounter in real life.
 
 ## Random image augmentation
 
+A general problem in machine learning is that no matter how much data we have, more data would be better. More data prevents overfitting and allows our model to deal with a larger variety of inputs. It is therefore common to apply random augmentation to images, for example a rotation or a random crop. The idea is to get many different images out of one image so that the model is less likely to overfit. For many image augumentation purposes, we can just use keras `ImageDataGenerator`. More advanced augumentation can be done with OpenCV.
+
+### Augumentation with `ImageDataGenerator`
+When using an augmenting data generator we usually use it only for training. The validation generator should not use the augmentation features. The reason for this is that when we validate our model we want an estimate on how well it is doing on unseen, actual data, not augmented data. This is different from rule based augmentation where we try to create images that are easier to classify. For this reason, we need to create two `ImageDataGenerator`, one for training and one for validation. 
+
+```Python 
+train_datagen = ImageDataGenerator(
+  rescale = 1/255,
+  rotation_range=90,
+  width_shift_range=0.2,
+  height_shift_range=0.2,
+  shear_range=0.2,
+  zoom_range=0.1,
+  horizontal_flip=True,
+  fill_mode='nearest')
+```
+
+This training data generator makes use of a few built in augmentation techniques. There are more available in Keras, for a full list refer to the Keras documentation. But these are commonly used:
+
+- `rescale` scales the values in the image. We used it before and will also use it for validation. 
+- `rotation_range` is a range (0 to 180 degrees) in which to randomly rotate the image. 
+- `width_shift_range` and `height_shift_range` are ranges (relative to the image size, so here 20%), in which to randomly stretch images horizontally or vertically.
+- `shear_range` is a range (again, relative to the image) in which to randomly apply sheer.
+- `zoom_range` is the range in which to randomly zoom into a picture.
+- `horizontal_flip` specifies whether to randomly flip the image. 
+- `fill_mode` specifies how to fill empty spaces created by e.g. rotation. 
+
+We can check out what the generator does by running one image through it multiple times. First, we import Keras image tools and specify an image path (this one was chosen at random).
+```Python 
+from keras.preprocessing import image
+fname = 'train/Charlock/270209308.png'
+```
+
+We then load the image and convert it to a numpy array.
+```Python 
+img = image.load_img(fname, target_size=(150, 150))
+img = image.img_to_array(img)
+```
+As before, we have to add a batch size dimension to the image:
+
+```Python 
+img = np.expand_dims(img,axis=0)
+```
+We then use the `ImageDataGenerator` we just created, but instead of using `flow_from_directory` we use `flow` which allows us to pass the data directly into the generator. We then pass that one image we want to use.
+
+```Python 
+gen = train_datagen.flow(img, batch_size=1)
+```
+In a loop, we then call `next` on our generator 4 times:
+```Python 
+for i in range(4):
+    plt.figure(i)
+    batch = next(gen)
+    imgplot = plt.imshow(image.array_to_img(batch[0]))
+    
+plt.show()
+```
+![AugCharlock](./assets/aug_charlock_1.png)
+![AugCharlock](./assets/aug_charlock_2.png)
+![AugCharlock](./assets/aug_charlock_3.png)
+![AugCharlock](./assets/aug_charlock_4.png)
+
+### Image augmentation with OpenCV & imgaug
+Need more augmentation? OpenCV offers a wide range of tools. Luckily we do not have to implement all of them ourselves. Alexander Jung, Assistant Professor of Computer Science at Aalto University has written a useful library that wraps the OpenCV tools into an easy to use augmenter. You can install it from his GitHub repository with 
+```
+pip install git+https://github.com/aleju/imgaug
+``` 
+Image augmentation is a sequential process. The filters are applied sequentially and the effect often comes from not just the use of certain filters but also the combination of filters. We can create a sequential image augmenter like this:
+``` Python
+from imgaug import augmenters as iaa 
+seq = iaa.Sequential([
+    iaa.Fliplr(0.5), 
+    iaa.Crop(percent=(0, 0.1)), 
+    
+    iaa.Sometimes(0.5,
+        iaa.GaussianBlur(sigma=(0, 0.5))
+    ),
+    
+    iaa.ContrastNormalization((0.75, 1.5)),
+    
+    iaa.AdditiveGaussianNoise(loc=0, scale=(0.0, 0.05*255), per_channel=0.5),
+    
+    iaa.Multiply((0.8, 1.2), per_channel=0.2),
+    
+], random_order=True) 
+
+``` 
+`iaa.Sequential` takes in a list of augmenters. Lets take a look at the augmenters in here:
+
+- `Fliplr` flips images horizontally with a specified likelihood, here 50%
+- `Crop` randomly crops images, here between 0% and 10%
+- `Sometimes` can be wrapped around another augmenter. This augmenter is executed only with the specified probability, here `GaussianBlur` is only applied to 50% of all images.
+- `GaussianBlur` adds gaussian blur with a random sigma, speak strength, between 0 and 0.5
+- `ContrastNormalization` changes the contrast of the image, randomly between reducing it by a quarter and adding 50%.
+- `AdditiveGaussianNoise` adds noise between 0 and 5% of the maximum pixel value (255). In 50% of all cases this is done per channel, meaning that not only the pixel brightness changes, but also the pixel color.
+- `Multiply` multiplies the image values by values between 0.8, making it darker, and 1.2 making it brighter. In 20% of cases, this operation is done per channel, changing the color of the image. 
+
+All these augmenters get passed to the sequential augmenter. Since `random_order` is set to `True`, the augmenters are not always executed in the same order, but randomly. To use this augmenter, we call `seq.augment_images(img)` where `img` is a list of images or a numpy array with a batch of images.
+
+To try out the augmenter, we load the image as before, and then run it through the augmenter a few times.
+```Python 
+from keras.preprocessing import image
+fname = 'train/Charlock/270209308.png'
+
+img = image.load_img(fname, target_size=(150, 150))
+img = image.img_to_array(img)
+img = np.expand_dims(img,axis=0)
+
+for i in range(4):
+    plt.figure(i)
+    batch = seq.augment_images(img)
+    imgplot = plt.imshow(image.array_to_img(batch[0]))
+    
+plt.show()
+``` 
+
+![OCV image aug](./assets/ocv_aug_1.png)
+![OCV image aug](./assets/ocv_aug_2.png)
+![OCV image aug](./assets/ocv_aug_3.png)
+![OCV image aug](./assets/ocv_aug_4.png)
+
+To use this augmenter in a generator, we can apply it in the last step of the generator we used before.
+
+```Python 
+def ocv_imgen_aug(root_dir,batch_size = 32, 
+                  rescale = 1/255, 
+                  target_size = (150,150)):
+  
+  dirs = os.listdir(root_dir)
+  paths = []
+  targets = []
+  for dir in dirs:
+    path = os.path.join(root_dir,dir)
+    for file in os.listdir(path):
+      paths.append(os.path.join(path,file))
+      targets.append(dir)
+   
+  nclasses = len(np.unique(targets))
+  nitems = len(targets)
+  
+  labelenc = LabelEncoder()
+  int_targets = labelenc.fit_transform(targets)
+  onehot_enc = OneHotEncoder(sparse=False)
+  int_targets = int_targets.reshape(len(int_targets), 1)
+  onehot_targets = onehot_enc.fit_transform(int_targets)
+  
+  indices = np.arange(len(paths))
+  np.random.shuffle(indices)
+  while True:
+    image_stack = []
+    target_stack = []
+    for index in indices:
+      path = paths[index]
+      target = onehot_targets[index]
+      
+      img = cv2.imread(path)
+      img = cv2.resize(img, target_size)
+      
+  
+      
+      image_stack.append(img)
+      target_stack.append(target)
+      if len(image_stack) == batch_size:
+        images = np.stack(image_stack)
+        
+        images = seq.augment_images(images)
+        
+        images = np.divide(images,rescale)
+        yield images, np.stack(target_stack)
+        image_stack = []
+        target_stack = []
+```
+
 # Understanding what ConvNets learn
-https://github.com/raghakot/keras-vis
+Before we close this chapter, let's take a bit to think about what ConvNets learn. Neural networks in general are hard to interpret. In contrast to many classic predictive modeling techniques out of statistics or econometrics, we still lack rigorous quantitative analysis tools to figure out what exactly happens in a neural network. For computer vision applications however, there are some early promising approaches to peek inside the network. 
+
+In this section, we will train the _input_ of a the VGG network to maximize the activations in a certain filter or network output. By finding the input that most activates a certain part of the network, we can see what the part is looking for.  
 
 ## Visualizing filters
-https://blog.keras.io/how-convolutional-neural-networks-see-the-world.html
 
-## Saliency Maps
-https://github.com/experiencor/deep-viz-keras
+First, we will visualize some of the convolutional filters of the network. We will use the VGG16 model again. We will have to write some advances neural network code here. We can access the backend of Keras, the tensorflow library, as a module in Keras. This makes working in tensorflow easier and we do not have to write tensorflow code directly.
+
+```Python
+import numpy as np
+
+from keras.applications.vgg16 import VGG16
+from keras import backend as K 
+``` 
+
+Next we need to load VGG16. This time, we will load the entire model.
+```Python 
+model = VGG16(weights='imagenet')
+model.summary()
+```
+```
+out: 
+_________________________________________________________________
+Layer (type)                 Output Shape              Param #   
+=================================================================
+input_2 (InputLayer)         (None, 224, 224, 3)       0         
+_________________________________________________________________
+block1_conv1 (Conv2D)        (None, 224, 224, 64)      1792      
+_________________________________________________________________
+block1_conv2 (Conv2D)        (None, 224, 224, 64)      36928     
+_________________________________________________________________
+block1_pool (MaxPooling2D)   (None, 112, 112, 64)      0         
+_________________________________________________________________
+block2_conv1 (Conv2D)        (None, 112, 112, 128)     73856     
+_________________________________________________________________
+block2_conv2 (Conv2D)        (None, 112, 112, 128)     147584    
+_________________________________________________________________
+block2_pool (MaxPooling2D)   (None, 56, 56, 128)       0         
+_________________________________________________________________
+block3_conv1 (Conv2D)        (None, 56, 56, 256)       295168    
+_________________________________________________________________
+block3_conv2 (Conv2D)        (None, 56, 56, 256)       590080    
+_________________________________________________________________
+block3_conv3 (Conv2D)        (None, 56, 56, 256)       590080    
+_________________________________________________________________
+block3_pool (MaxPooling2D)   (None, 28, 28, 256)       0         
+_________________________________________________________________
+block4_conv1 (Conv2D)        (None, 28, 28, 512)       1180160   
+_________________________________________________________________
+block4_conv2 (Conv2D)        (None, 28, 28, 512)       2359808   
+_________________________________________________________________
+block4_conv3 (Conv2D)        (None, 28, 28, 512)       2359808   
+_________________________________________________________________
+block4_pool (MaxPooling2D)   (None, 14, 14, 512)       0         
+_________________________________________________________________
+block5_conv1 (Conv2D)        (None, 14, 14, 512)       2359808   
+_________________________________________________________________
+block5_conv2 (Conv2D)        (None, 14, 14, 512)       2359808   
+_________________________________________________________________
+block5_conv3 (Conv2D)        (None, 14, 14, 512)       2359808   
+_________________________________________________________________
+block5_pool (MaxPooling2D)   (None, 7, 7, 512)         0         
+_________________________________________________________________
+flatten (Flatten)            (None, 25088)             0         
+_________________________________________________________________
+fc1 (Dense)                  (None, 4096)              102764544 
+_________________________________________________________________
+fc2 (Dense)                  (None, 4096)              16781312  
+_________________________________________________________________
+predictions (Dense)          (None, 1000)              4097000   
+=================================================================
+Total params: 138,357,544
+Trainable params: 138,357,544
+Non-trainable params: 0
+_________________________________________________________________
+```
+Note that the layers in VGG16 have names like `block1_conv1`. We can later identify the layers we want to work with by these names. Also notice that the output of the model has 1000 dimensions. This is because the model was trained on image net, and in image net, there are 1000 classes.
+
+From the VGG model we can create a dictionary so we can easily access the layers by name.
+```Python 
+layer_dict = dict([(layer.name, layer) for layer in model.layers[1:]])
+```
+
+Next, we have to specify our constants. We want our input image to be 224 by 224 pixels, which is the size of an input size our model expects. To begin with, we want to visualize the layer called `'block2_conv1'`. Since each convolutional layer consists of multiple convolutional filters, we also have to decide which filter we want to visualize.
+```Python
+img_width = 224
+img_height = 224
+
+
+layer_name = 'block5_conv1'
+filter_index = 110
+``` 
+
+We now have to build a loss function. The loss function is the activation of the filter we want to visualize. This allows us to produce a gradient for the activation of the filter. We can then perform _gradient ascent_, which is basically the same as gradient descent, except that we want to _increase_ the loss.
+
+```Python 
+layer_output = layer_dict[layer_name].output
+loss = K.mean(layer_output[:, :, :, filter_index])
+```
+We first get the output of the layer that we want, and then compute the mean activation of the filter we are interested in. We do this with Tensorflow so that we can get the gradients of this process in the next step. 
+
+```Python
+input_img = model.input
+
+grads = K.gradients(loss, input_img)[0]
+```
+In order to compute the gradients, we first need to create a placeholder for the input. We can then get the gradients through Tensorflow. Note that we do not actually compute the gradients here yet. We merely set up the 'computational graph' through which we will run operations later. 
+
+It has been shown that layer visualization works much better if the gradients are normalized. In order to normalize gradients, we divide them through the mean absolute value. `K.epsilon()` is a very small constant to avoid divisions by zero. Again, we are using Tensorflow to set up a graph.
+
+```Python 
+def normalize(x):
+    
+    return x / (K.sqrt(K.mean(K.square(x))) + K.epsilon())
+    
+grads = normalize(grads)
+```
+
+Now we come to the point were we get to use all these graphs! Since we have defined the computational graph that takes an input image and produces a loss and gradient, we can now define a function which accepts an actual immage and produces loss and gradient. The function automatically uses Tensorflow and the GPU.
+
+```Python
+iterate = K.function([input_img], [loss, grads])
+```
+
+The actual training work like this. We first initialize an image with random values:
+```Python 
+input_img_data = np.random.rand(1,img_height,img_width,3)
+```
+We set a learning rate alpha much like for gradient descent.
+```Python 
+alpha = 0.1
+```
+In a loop we then run the input image through our graph and obtain loss and gradients. We update our image along the gradients. Note that we do not update them with the negative gradients as with gradient descent in chapter one but with the positive gradients. This is called gradient ascent.
+```Python 
+for i in range(500):
+    loss_value, grads_value = iterate([input_img_data])
+    input_img_data += grads_value * alpha
+
+    print('Current loss value:', loss_value)
+```
+
+Before we can visualize the image now we first have to convert into something we can actually render, speak an RGB image. 
+
+```Python 
+def deprocess_image(x):
+    
+    x -= x.mean()
+    x /= (x.std() + K.epsilon())
+    x *= 0.1
+
+    
+    x += 0.5
+    x = np.clip(x, 0, 1)
+
+    
+    x *= 255
+    
+    x = np.clip(x, 0, 255).astype('uint8')
+    return x
+```
+In the first step, we ensure the mean of the image data is zero and the standard deviation is 0.1. In the next step we move the mean to 0.5 and clip all values between zero and one. We then multiply all values with 255. Finally, we clip values at zero and 255 and convert them to integers. This ensures we have integer values between zero and 255 just as RGB prescribes.
+
+Our optimized input still has a batch size dimension, we can remove this dimension by passing only the first (and only) element along this dimension in the deprocessing function.
+
+```Python 
+img = deprocess_image(input_img_data[0])
+```
+Finally, we can render the output image with matplotlib.
+
+```Python 
+import matplotlib.pyplot as plt
+
+plt.style.use(['dark_background'])
+fig = plt.figure(figsize=(10,10))
+ax = fig.add_subplot(111) 
+
+plt.imshow(img)
+ax.grid(False)
+```
+
+![Conv5](./assets/conv5_vis.png)
+
+This layer clearly responds to some pretty complex color and shape patterns. While it is hard to interpret it might be some kind of animal ear. For contrast, consider the first filter in the first layer, `'block1_conv1'`. You can render this image by running the same code only modifying two lines: 
+
+```Python 
+layer_name = 'block1_conv1'
+filter_index = 0
+```
+
+![Conv1](./assets/conv1_vis.png)
+
+
+This filter seems to respond too much simpler structures, diagonal lines to be precise. In general, deeper layers respond to more complex features. 
+## Visualizing outputs
+To visualize what triggers a certain output we can use the same method. We have to specify which output index we want to maximize. In this case we choose 184, which is the class 'Irish Terrier' in image net. 
+
+```Python 
+img_width = 224
+img_height = 224
+
+output_index = 184
+```
+
+We can use the same VGG model.
+```Python 
+model = VGG16(weights='imagenet')
+```
+
+Only this time our loss is not the activation of a filter but the activation of the output we want to visualize
+
+```Python 
+loss = K.mean(model.output[:, output_index])
+```
+Our gradient computation stays the same.
+
+```Python
+input_img = model.input
+grads = K.gradients(loss, input_img)[0]
+grads = normalize(grads)
+iterate = K.function([input_img], [loss, grads])
+```
+We again start with a random image and perform gradient ascent. For output layers a smaller learning rate produces better results.
+
+```Python
+input_img_data = np.random.rand(1,img_height,img_width,3)
+
+alpha = 0.01
+
+for i in range(500):
+    loss_value, grads_value = iterate([input_img_data])
+    input_img_data += grads_value * alpha
+```
+We can reuse our deprocessing method we used above.
+
+```Python 
+img = deprocess_image(input_img_data[0])
+
+plt.style.use(['dark_background'])
+fig = plt.figure(figsize=(10,10))
+ax = fig.add_subplot(111) 
+plt.imshow(img)
+ax.grid(False)
+```
+
+![Terrier](./assets/terrier_vis.png)
+
+This image represents the prototypical terrier in the eyes of VGG16. If you squint you can recognize some elements of a terrier. There is an eye, a nose, fluffy ears, etc. But it becomes clear that the model does not really know what a terrier _is_. It only has a statistical representation of what terriers look like. These statistical representations are why neural networks are a form of 'representation learning'. They learn the statistical representation of lines, curves, up to ears and finally the whole dog. This can also be used against them. Since this image is the ultimate representation of a terrier for the network, it could be overlaid on another image and the network would classify that image as a terrier. It has been shown that these attacks can be done with just faint overlays or a few pixels. It has also been shown that representations should be semantically interpretable for good network performance. The network should learn something that makes sense to humans.
+
+# Exercises
+1. Visit the State Farm Distracted Driver Challenge on Kaggle. Build a model that can classify distracted drivers. Can you use some rulebased preprocessing? Which augmenters aid robustness the most?
+2. Use the stacked VGG model from earlier and train it on the seedlings dataset. Then visualize the outputs by backpropagating to the input. What is the ultimate representation of Maize?
+3. Visit the 'Planet: Understanding the Amazon from Space' competition on Kaggle. Can you use pretrained models for statelites? Try using `model.pop()` to remove some convolutional layers from VGG16 and replace them with your own.
+
+# Summary 
+In this chapter you have learned about computer vision. From simple ConvNets on MNIST to visualizing through backprop to the input. An impressive feat! Images are still quite rarely used in finance. But an increasing number of firms incorporates image based datasources in their decision making. In the next chapter we will take a look at the most common kind of data in finance: Time series.
