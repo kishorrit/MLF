@@ -120,11 +120,14 @@ The step size, also called stride size, with which the convolutional filter slid
 ### Padding
 Finally, we have to add `padding` to our convolutional layer. Padding, adds zeros around our image. This can be used for two reasons: First, we might want to prevent our feature map from shrinking. Consider a 5 by 5 pixel feature map and a 3 by 3 filter. The filter only fits on the feature map 9 times, so we end up with a 3 by 3 output. This reduces the amount of information that we can capture in the next feature map. It also reduces how much the outer pixels of the input feature map can contribute to the task. The filter never centers on them, it only goes over them once.
 
-SAME PADDING IMAGE GOES HERE
+![No Padding](./assets/no_padding.png)
+
+
+![Same Padding](./assets/same_padding.png)
 
 To ensure the output has the same size as the input, we can use `'same'` padding. Keras will then add enough zeros around the input feature map to preserve the size. The default padding setting however is `'valid'`. Valid padding does not preserve the feature map size, but only makes sure that the filter and stride size actually fits on the input feature map. 
 
-VALID PADDING IMAGE GOES HERE
+![Valid Padding](./assets/valid_padding.png)
 
 ### Input shape 
 Keras requires us to specify the input shape only for the first layer. For all following layers Keras will infer the input shape from the previous layers output shape.
@@ -158,7 +161,7 @@ model.add(Activation('relu'))
 ## MaxPooling2D
 It is common to use a pooling layer after a number of convolutional layers. Pooling decreases the spatial size of the feature map. This reduces the number of parameters needed in a neural net and thus reduces overfitting.
 
-POOLING IMAGE GOES HERE
+![Max Pooling](./assets/max_pooling.png)
 
 Maximum pooling returns the maximum element out of a pool. This is in contrast to for example average `AveragePooling2D` which returns the average of a pool. Max pooling often delivers superior results to average pooling, so it is the standard most practitioners use. 
 
