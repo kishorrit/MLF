@@ -237,6 +237,27 @@ Even with lots of data available, we have to ask ourselves how we want to split 
 
 In a walk forward split, we train on all 145 thousand series. To validate, we use more recent data from all series. In side by side splitting we sample a number of series for training and use the rest for validation. Both have advantages and disadvantages. The disadvantage of walk forward splitting is that we can not use all observations of the series for our predictions. The disadvantage of side by side splitting is that we can not use all series for training. If we have few series, but many data observations per series, a walk forward split is preferable. It also aligns more nicely with the forecasting problem, at hand. In side by side splitting, the model might overfit to global events in the prediction period. Imagine that wikipedia was down for a week in the prediction period used in side by side splitting. This would reduce views for all pages, and the model would overfit to this global event. We would not catch the overfitting in our validation set as the prediction period in our validation set is also affected by the global event. However, in our case we have many time series, but only about 550 observations per series. There seem to be no global events that would have significantly impacted all wikipedia pages in a time period. However, there are some global events that impacted views for some pages, such as the olympic winter games. Yet, this is a reasonable risk in this case, as the number of pages affected by such global events are still small. Since we have an abundance of series and only few observations per series, a side by side split is more feasible in our case.
 
+In this chapter we focus on forecasting traffic for 50 days. So we first split the last 50 days of each series form the rest before splitting training and validation set.
+
+```Python
+from sklearn.model_selection import train_test_split
+
+X = data.iloc[:,:500]
+y = data.iloc[:,500:]
+
+X_train, X_val, y_train, y_val = train_test_split(X.values, y.values, 
+                                                  test_size=0.1, 
+                                                  random_state=42)
+``` 
+When splitting, we use `X.values` to only get the data, not a DataFrame containing the data. This operations leaves us with 130,556 series to train and 14,507 for validation. We use mean absolute percentage (MAPE) error as a loss and evaluation metric. MAPE can cause division by zero errors if the true value of y is zero. We thus use a small value epsilon to prevent division by zero.
+
+```Python 
+def mape(y_true,y_pred):
+    eps = 1
+    err = np.mean(np.abs((y_true - y_pred) / (y_true + eps))) * 100
+    return err
+```
+
 # A note on backtesting
 The peculiarities of choosing training and testing sets are especially important in systematic investing and algorithmic trading. The main way to test trading algorithms is a process called **backtesting**. Backtesting means we train the algorithm on data from a certain time period and then test its performance on _older_ data. For example we could train on data from 2015 to 2018 and then test on data from 1990 to 2015. Usually not only the models accuracy is tested, but the backtested algorithm executes virtual trades so its profitability can be evaluated. Backtesting is done because there is plenty of past data available. 
 
@@ -251,7 +272,45 @@ Building good testing regimes is a core activity of any quantitative investment 
 In practice, a combination regimes is used. Statisticians carefully design regimes to see how an algorithm responds to different simulations. In our web traffic forecasting model we will simply validate on different pages and then test on future data in the end.
 
 # Median forecasting
-https://www.kaggle.com/safavieh/median-estimation-by-fibonacci-et-al-lb-44-9
+A good sanity check and sometimes underrated forecasting tool are medians. A median is the value separating the higher half of a distribution from the lower half, they sit exactly in the middle of the distribution. Medians have the advantage of removing noise. They are less susceptible to outliers than means and capture the mid point of a distribution. They are also easy to compute. 
+
+To make a forecast, we compute the median over a look-back window in our training data. In this case, we use a window size of 50, but you could experiment with other values. We then select the last 50 values from our X values and compute the median. Note that in the numpy median function, we have to set `keepdims=True`. This ensures that we keep a two dimensional matrix rather than a flat array which is important when computing the error. 
+
+```Python 
+lookback = 50
+
+lb_data = X_train[:,-lookback:]
+
+med = np.median(lb_data,axis=1,keepdims=True)
+
+err = mape(y_train,med)
+``` 
+
+We obtain an error of about 68.1%, not bad given the simplicity of our method. To see how the medians work, lets plot the X values, true y values and predictions for a random page.
+
+```Python 
+idx = 15000
+
+fig, ax = plt.subplots(figsize=(10, 7))
+
+
+ax.plot(np.arange(500),X_train[idx], label='X')
+ax.plot(np.arange(500,550),y_train[idx],label='True')
+
+ax.plot(np.arange(500,550),np.repeat(med[idx],50),label='Forecast')
+
+plt.title(' '.join(train.loc[idx,['Subject', 'Sub_Page']]))
+ax.legend()
+ax.set_yscale('log')
+```  
+
+As you can see, our plotting consists of drawing three plots. For each plot we specify the X and Y values for the plot. For `X_train`, the X values range from zero to 500, for `y_train` and the forecast they range from 500 to 550. From our training data, we select the series we want to plot by indexing. Since we have only one median value, we repeat the median forecast of the desired series 50 times to draw our forecast. 
+
+![Median Forecast](./assets/median_forecast.png)
+
+As you can see, the data for this page, the image of American actor Eric Stoltz is very noisy, and the median cuts through all the noise. This is especially useful for pages that are visited infrequently and for which there is no clear trend or pattern. 
+
+A lot of further work could be done with medians. You could for example use different medians for weekends or use a median of medians from multiple look-back periods. A simple tool like median forecasting can deliver good results with smart feature engineering. It makes sense to use a bit of time on implementing it as a baseline and sanity check before using more advanced methods.
 
 # ARIMA
 https://www.kaggle.com/zoupet/predictive-analysis-with-different-approaches
