@@ -313,12 +313,207 @@ As you can see, the data for this page, the image of American actor Eric Stoltz 
 A lot of further work could be done with medians. You could for example use different medians for weekends or use a median of medians from multiple look-back periods. A simple tool like median forecasting can deliver good results with smart feature engineering. It makes sense to use a bit of time on implementing it as a baseline and sanity check before using more advanced methods.
 
 # ARIMA
-https://www.kaggle.com/zoupet/predictive-analysis-with-different-approaches
+Earlier, in the section on exploratory data analysis, we already talked about how seasonality and stationarity are important to forecasting time series. In fact, median forecasting has trouble with both. If the mean of a time series continuously shifts, median forecasting will not continue the trend. And if a time series shows cyclical behavior, the median will not continue with the cycle. ARIMA stands for Autoregressive Integrated Moving Average:
+- **Autoregression**: The model uses the relationship between a value and a number of lagged observations.
+- **Integrated**: The model uses the difference between raw observations to make the time series stationary. A time series going continuously upward will have a flat integral as the differences between points are always the same.
+- **Moving Average**: The model uses residual errors from a moving average.
+
+We have to manually specify how many lagged observations we want to include $p$, how often we want to differentiate the series $d$, and how large the moving average window should be $q$. ARIMA then performs linear regression against all included lagged observations and moving average residuals on the differentiated series.
+
+We can use ARIMA in Python with `statsmodels`, a library with many helpful statistical tools. 
+
+```Python 
+from statsmodels.tsa.arima_model import ARIMA
+```
+
+To create a new ARIMA model, we pass the data we want to fit, views for 2NE1 in the Chinese wikipedia, as well as the desired values for $p$, $d$ and $q$ in that order. In this case we want to include 5 lagged observations, differentiate 1 time and take a moving average window of 5.
+
+```Python 
+model = ARIMA(X_train[0], order=(5,1,5))
+```
+
+We fit of the model using `model.fit()`
+```Python 
+model = model.fit()
+```
+
+`model.summary()` will output all coefficients as well as significance values for statistical analysis. We are more interested in how good our model does in forecasting. 
+
+```Python
+residuals = pd.DataFrame(model.resid)
+ax.plot(residuals)
+
+plt.title('ARIMA residuals for 2NE1 pageviews')
+```
+
+![ARIA res over time](./assets/ARIMA_res_time.png)
+
+We can see that the model does very well in the beginning but struggles around the 350 day mark. This can be because page views are harder to predict or there is more volatility in this period. To ensure that our model is not skewed, we need to examine the distribution of the residuals. We can do this by plotting a kernel density estimator, a mathematical method to estimate distributions without needing to model them.
+
+```Python 
+residuals.plot(kind='kde',
+               figsize=(10,7),
+               title='ARIMA residual distribution 2NE1 ARIMA',
+               legend = False)
+```
+
+![ARIMA Res Dist](./assets/ARIMA_res_dist.png)
+
+As you can see our model roughly represents a gaussian distribution with a mean of zero. All good on that front, so how do we make forecasts?
+
+To use this model for forecasting, all we have to do is to specify the number of days we want to forecast.
+
+```Python
+predictions, stderr, conf_int = model.forecast(50)
+``` 
+
+This forecast not only gives us predictions, but also the standard error and confidence interval (95% by default). 
+
+Lets plot the projected views against the real views to see how we are doing. This graph shows the last 20 days fo our prediction basis as well as the forecast to keep things readable.
+
+```Python 
+fig, ax = plt.subplots(figsize=(10, 7))
+
+
+ax.plot(np.arange(480,500),basis[480:], label='X')
+ax.plot(np.arange(500,550),y_train[0], label='True')
+ax.plot(np.arange(500,550),predictions, label='Forecast')
+
+plt.title('2NE1 ARIMA forecasts')
+ax.legend()
+ax.set_yscale('log')
+``` 
+
+![ARIMA Forecasts](./assets/ARIMA_forecasts.png)
+
+You can see that ARIMA captures the periodicity of the series very well. Its forecasts steer a bit of towards the end, but in the beginning it does a remarkable job. 
 
 # Kalman filters
-http://www.bzarg.com/p/how-a-kalman-filter-works-in-pictures/
+Kalman filters are a method to extract a signal from noisy or incomplete measurements. They were invented by Rudolf Emil Kalman for electrical engineering purposes and were first used in the Apollo program in the 1960s. 
 
-https://github.com/rlabbe/Kalman-and-Bayesian-Filters-in-Python/blob/master/README.md
+The basic idea behind Kalman filters is that there is some hidden state of a system which we can not observe directly but for which we can obtain noisy measurements. Imagine you want to measure the temperature inside a rocket engine. You can not put a measurement device directly into the engine, its too hot, but you can have a device on the outside of the engine. Naturally, this measurement is not perfect, as there is lots of stuff going on the outside of the engine that makes the measurement noisy. To estimate the temperature inside the rocket, you therefore need a method that can deal with noise. We can imagine the internal state in the page forecasting as the actual interest in a certain page of which the page views represent only a noisy measurement.
+
+The idea is that the internal state $x_k$ at time $k$ is a state transition matrix $A$ multiplied with the previous internal state $x_{k-1}$ plus some process noise $q_{k−1}$. How interest in 2NE1 develops is to some degree random. The randomness is assumed follow a gaussian normal distribution with mean zero and variance $Q$
+
+$$x_k = Ax_{k-1} + q_{k-1}, \qquad q_{k−1}∼N(0,Q)$$
+
+The obtained measurement at time $k$, $y_k$ is an observation model $H$, describing how states translate to measurements times the state $x_k$ plus some observation noise $r_k$. The observation noise is assumed to follow a gaussian normal distribution with mean zero and variance $R$.
+
+$$y_k = Hx_k + r_k, \qquad r_k∼N(0,R)$$
+
+Roughly speaking, Kalman filters fit a function by estimating $A$, $H$, $Q$ and $R$. The process of going over a time series and updating the parameters is called smoothing. The exact mathematics of the estimation process are complicated and not very relevant if all we want to do is forecasting. Yet, what is relevant is that we need to provide priors to these values. 
+
+Note that our state does not have to be only one number. In this case, our state is an 8 dimensional vector, one hidden level as well as seven levels to capture weekly seasonality.
+
+```Python
+n_seasons = 7
+
+state_transition = np.zeros((n_seasons+1, n_seasons+1))
+
+state_transition[0,0] = 1
+
+state_transition[1,1:-1] = [-1.0] * (n_seasons-1)
+state_transition[2:,1:-1] = np.eye(n_seasons-1)
+```
+
+The transition matrix $A$ looks like this, describing one hidden level, which we might interpret as the real interest as well as a seasonality model.
+
+``` 
+array([[ 1.,  0.,  0.,  0.,  0.,  0.,  0.,  0.],
+       [ 0., -1., -1., -1., -1., -1., -1.,  0.],
+       [ 0.,  1.,  0.,  0.,  0.,  0.,  0.,  0.],
+       [ 0.,  0.,  1.,  0.,  0.,  0.,  0.,  0.],
+       [ 0.,  0.,  0.,  1.,  0.,  0.,  0.,  0.],
+       [ 0.,  0.,  0.,  0.,  1.,  0.,  0.,  0.],
+       [ 0.,  0.,  0.,  0.,  0.,  1.,  0.,  0.],
+       [ 0.,  0.,  0.,  0.,  0.,  0.,  1.,  0.]])
+``` 
+The observation model $H$ maps the general interest plus seasonality to a single measurement.
+
+```Python
+observation_model = [[1,1] + [0]*(n_seasons-1)]
+``` 
+
+The observation model looks like this:
+```
+[[1, 1, 0, 0, 0, 0, 0, 0]]
+``` 
+
+The noise priors are just estimates scaled by a 'smoothing factor', which allows us to control the update process. 
+```Python 
+smoothing_factor = 5.0
+
+level_noise = 0.2 / smoothing_factor
+observation_noise = 0.2
+season_noise = 1e-3
+
+process_noise_cov = np.diag([level_noise, season_noise] + [0]*(n_seasons-1))**2
+observation_noise_cov = observation_noise**2
+``` 
+
+`process_noise_cov` is an 8 dimensional vector, matching the 8 dimensional state vector, `observation_noise_cov` is a single number, as we have only a single measurement. The only real requirement for these priors is that their shapes must allow the matrix multiplications described in the two formulas above. Other than that, we are free to specify transition models as we see them. 
+
+Otto Seiskari, a mathematician and 8th place winner in the original wikipedia traffic forecasting competition wrote a very fast Kalman filtering library, which we will use here. It allows for vectorized processing of multiple independent time series, which is very handy if you have 145 thousand time series to process. You can install his library using 
+
+```
+pip install simdkalman
+``` 
+And import it with
+```Python 
+import simdkalman
+``` 
+
+Although `simdkalman` is very sophisticated, it is quite simple to use. First, we specify a Kalman filter using the priors we just defined:
+
+```Python 
+kf = simdkalman.KalmanFilter(state_transition = state_transition,
+                             process_noise = process_noise_cov,
+                             observation_model = observation_model,
+                             observation_noise = observation_noise_cov)
+``` 
+
+We can then estimate the parameters and compute a forecast in one step.
+
+```Python 
+result = kf.compute(X_train[0], 50)
+```
+
+Once again we make forecasts for 2NE1s Chinese page, and create a forecast for 50 days. Note that we could also pass multiple series (e.g. the first 10 with `X_train[:10]`) and compute separate filters for all of them at once. 
+
+The result of the compute function contains the state and observation estimates from the smoothing process as well as predicted internal states and observations. States and observations are gaussian distributions, so to get a plottable value we need to access their mean. Our states are 8 dimensional but we only care about the non seasonal state value, so we need to index the mean.
+
+```Python 
+fig, ax = plt.subplots(figsize=(10, 7))
+ax.plot(np.arange(480,500),X_train[0,480:], label='X')
+ax.plot(np.arange(500,550),y_train[0],label='True')
+
+ax.plot(np.arange(500,550),
+        result.predicted.observations.mean,
+        label='Predicted observations')
+
+
+ax.plot(np.arange(500,550),
+        result.predicted.states.mean[:,0],
+        label='predicted states')
+
+ax.plot(np.arange(480,500),
+        result.smoothed.observations.mean[480:],
+        label='Expected Observations')
+
+ax.plot(np.arange(480,500),
+        result.smoothed.states.mean[480:,0],
+        label='States')
+
+
+
+ax.legend()
+ax.set_yscale('log')
+```
+![Kalman forecasting](./assets/kalman_forecasting.png)
+
+We can clearly see the effects of our prior modeling on the predictions. We can see the model predicts strong weekly oscillation, stronger than actually observed. We can also see that the model does not anticipate any trends, since we did not model trends in our prior. 
+
+Kalman filters are a useful tool and are used in many applications from electrical engineering to finance. Until relatively recently, they were the go to tool fore time series modeling in many cases. Smart modelers were able to create smart systems that described time series very well. However, Kalman filters can not discover patterns by themselves and need carefully engineered priors. In the second half of this chapter, we will look at neural network based approaches that can model time series more automatically, and often more accurately.
 
 # Time series neural nets
 
@@ -329,11 +524,11 @@ Another method to make order matter in neural networks is to give the network so
 
 ![Simple RNN Cell](./assets/simple_rnn.png)
 
-Reocurrent neural networks contain reocurrent layers. Reocurrent layers can remember their last activation and use it as their own input.
+Recurrent neural networks contain recurrent layers. Recurrent layers can remember their last activation and use it as their own input.
 
 $$A_{t} = activation( W * in + U * A_{t-1} + b)$$
 
-A reocurrent layer takes a sequence as an input. For each element, it then computes a matrix multiplication ($W * in$) just like a ``Dense`` layer and runs the result through an activation function like e.g. ``relu``. It then retains it's own activation. When the next item of the sequence arrives, it performs the matrix multiplication as before but it also multiplies it's previous activation with a second matrix ($U * A_{t-1}$). It adds the result of both operations together and passes it through it's activation function again. In Keras, we can use a simple RNN like this:
+A recurrent layer takes a sequence as an input. For each element, it then computes a matrix multiplication ($W * in$) just like a ``Dense`` layer and runs the result through an activation function like e.g. ``relu``. It then retains it's own activation. When the next item of the sequence arrives, it performs the matrix multiplication as before but it also multiplies it's previous activation with a second matrix ($U * A_{t-1}$). It adds the result of both operations together and passes it through it's activation function again. In Keras, we can use a simple RNN like this:
 
 # LSTM 
 
