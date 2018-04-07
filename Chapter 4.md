@@ -516,7 +516,152 @@ We can clearly see the effects of our prior modeling on the predictions. We can 
 Kalman filters are a useful tool and are used in many applications from electrical engineering to finance. Until relatively recently, they were the go to tool fore time series modeling in many cases. Smart modelers were able to create smart systems that described time series very well. However, Kalman filters can not discover patterns by themselves and need carefully engineered priors. In the second half of this chapter, we will look at neural network based approaches that can model time series more automatically, and often more accurately.
 
 # Time series neural nets
+The second half of the chapter is all about neural networks. But before we can dive in, wee need to do some preprocessing.
+```Python
+import datetime
+from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import OneHotEncoder
 
+datetime.datetime.strptime(train.columns.values[0], '%Y-%m-%d').strftime('%a')
+weekdays = [datetime.datetime.strptime(date, '%Y-%m-%d').strftime('%a') 
+            for date in train.columns.values[:-4]]
+
+day_one_hot = LabelEncoder().fit_transform(weekdays)
+day_one_hot = day_one_hot.reshape(-1, 1)
+day_one_hot = OneHotEncoder(sparse=False).fit_transform(day_one_hot)
+day_one_hot = np.expand_dims(day_one_hot,0)
+``` 
+
+```Python 
+agent_int = LabelEncoder().fit(train['Agent'])
+agent_enc = agent_int.transform(train['Agent'])
+agent_enc = agent_enc.reshape(-1, 1)
+agent_one_hot = OneHotEncoder(sparse=False).fit(agent_enc)
+
+del agent_enc
+
+page_int = LabelEncoder().fit(train['Sub_Page'])
+page_enc = page_int.transform(train['Sub_Page'])
+page_enc = page_enc.reshape(-1, 1)
+page_one_hot = OneHotEncoder(sparse=False).fit(page_enc)
+
+del page_enc
+
+acc_int = LabelEncoder().fit(train['Access'])
+acc_enc = acc_int.transform(train['Access'])
+acc_enc = acc_enc.reshape(-1, 1)
+acc_one_hot = OneHotEncoder(sparse=False).fit(acc_enc)
+
+del acc_enc
+```
+
+```Python 
+def lag_arr(arr, lag,fill):
+    filler = np.full((arr.shape[0],lag,1),-1)
+    comb = np.concatenate((filler,arr),axis=1)
+    result = comb[:,:arr.shape[1]]
+    return result
+```
+
+```Python 
+def single_autocorr(series, lag):
+    s1 = series[lag:]
+    s2 = series[:-lag]
+    ms1 = np.mean(s1)
+    ms2 = np.mean(s2)
+    ds1 = s1 - ms1
+    ds2 = s2 - ms2
+    divider = np.sqrt(np.sum(ds1 * ds1)) * np.sqrt(np.sum(ds2 * ds2))
+    return np.sum(ds1 * ds2) / divider if divider != 0 else 0
+```
+
+```Python 
+def batc_autocorr(data,lag,series_length):
+    corrs = []
+    for i in range(data.shape[0]):
+        c = single_autocorr(data, lag)
+        corrs.append(c)
+    corr = np.array(corrs)
+    corr = corr.reshape(-1,1)
+    corr = np.expand_dims(corr,-1)
+    corr = np.repeat(corr,series_length,axis=1)
+    return corr
+```
+
+```Python
+def get_batch(train,start=0,lookback = 100):
+    assert((start + lookback) <= (train.shape[1] - 5))
+    
+    data = train.iloc[:,start:start + lookback].values
+    target = train.iloc[:,start + lookback].values
+    target = np.log1p(target)
+    
+    log_view = np.log1p(data)
+    log_view = np.expand_dims(log_view,axis=-1)
+    
+    days = day_one_hot[:,start:start + lookback]
+    days = np.repeat(days,repeats=train.shape[0],axis=0)
+    
+    year_lag = lag_arr(log_view,365,-1)
+    halfyear_lag = lag_arr(log_view,182,-1)
+    quarter_lag = lag_arr(log_view,91,-1)
+    
+    agent_enc = agent_int.transform(train['Agent'])
+    agent_enc = agent_enc.reshape(-1, 1)
+    agent_enc = agent_one_hot.transform(agent_enc)
+    agent_enc = np.expand_dims(agent_enc,1)
+    agent_enc = np.repeat(agent_enc,lookback,axis=1)
+    
+    page_enc = page_int.transform(train['Sub_Page'])
+    page_enc = page_enc.reshape(-1, 1)
+    page_enc = page_one_hot.transform(page_enc)
+    page_enc = np.expand_dims(page_enc, 1)
+    page_enc = np.repeat(page_enc,lookback,axis=1)
+    
+    acc_enc = acc_int.transform(train['Access'])
+    acc_enc = acc_enc.reshape(-1, 1)
+    acc_enc = acc_one_hot.transform(acc_enc)
+    acc_enc = np.expand_dims(acc_enc,1)
+    acc_enc = np.repeat(acc_enc,lookback,axis=1)
+    
+    year_autocorr = batc_autocorr(data,lag=365,series_length=lookback)
+    halfyr_autocorr = batc_autocorr(data,lag=182,series_length=lookback)
+    quarter_autocorr = batc_autocorr(data,lag=91,series_length=lookback)
+    
+    medians = np.median(data,axis=1)
+    medians = np.expand_dims(medians,-1)
+    medians = np.expand_dims(medians,-1)
+    medians = np.repeat(medians,lookback,axis=1)
+    
+    batch = np.concatenate((log_view,
+                            days, 
+                            year_lag, 
+                            halfyear_lag, 
+                            quarter_lag,
+                            page_enc,
+                            agent_enc,
+                            acc_enc, 
+                            year_autocorr, 
+                            halfyr_autocorr,
+                            quarter_autocorr, 
+                            medians),axis=2)
+    
+    return batch, target
+``` 
+
+```Python 
+def generate_batches(train,batch_size = 32, lookback = 100):
+    num_samples = train.shape[0]
+    num_steps = train.shape[1] - 5
+    while True:
+        for i in range(num_samples // batch_size):
+            batch_start = i * batch_size
+            batch_end = batch_start + batch_size
+
+            seq_start = np.random.randint(num_steps - lookback)
+            X,y = get_batch(train.iloc[batch_start:batch_end],start=seq_start)
+            yield X,y
+``` 
 # Conv1D
 
 # SimpleRNN
