@@ -515,22 +515,50 @@ We can clearly see the effects of our prior modeling on the predictions. We can 
 
 Kalman filters are a useful tool and are used in many applications from electrical engineering to finance. Until relatively recently, they were the go to tool fore time series modeling in many cases. Smart modelers were able to create smart systems that described time series very well. However, Kalman filters can not discover patterns by themselves and need carefully engineered priors. In the second half of this chapter, we will look at neural network based approaches that can model time series more automatically, and often more accurately.
 
-# Time series neural nets
-The second half of the chapter is all about neural networks. But before we can dive in, wee need to do some preprocessing.
+# Forecasting with neural nets
+The second half of the chapter is all about neural networks. In the first part, we will build a simple neural network that only forecasts the next time step. Since the spikes in the series are very large, we will work with log transformed pageviews in input and output. We can use the short term forecast neural net to make longer term forecasts, too, by feeding its predictions back into the network.
+But before we can dive in, wee need to do some preprocessing & feature engineering. The advantage of neural networks is that they can take in many features and very high dimensional data. The disadvantage is that we have to be careful about which features we input. Remember of Look-Ahead bias, including data that would not have been available at forecasting time, is a problem in backtesting. We might also include future data into the features.
+
+## Data preparation
+For each series, we will assemble the following features:
+
+- `log_view`: The natural logarithm of page views. Since the logarithm of zero is undefined, we will use `log1p`, which is the natural logarithm of pageviews plus one.
+- `days`: One hot encoded weekdays 
+- `year_lag`: The value of `log_view` from 365 days ago. -1 if there is no value available. 
+- `halfyear_lag`: The value of `log_view` from 182 days ago. -1 if there is no value available. 
+- `quarter_lag`: The value of `log_view` from 91 days ago. -1 if there is no value available. 
+- `page_enc` One hot encoded sub page.
+- `agent_enc` One hot encoded agent.
+- `acc_enc` One hot encoded access method. 
+- `year_autocorr` Autocorrelation of the series of 365 days. 
+- `halfyr_autocorr` Autocorrelation of the series of 182 days.
+- quarter_autocorr, Autocorrelation of the series of 91 days.
+- `medians` the median of pageviews over the lookback period.
+
+These features are assembled for each time series, giving our input data the shape (batch size, look back window size, 29). 
+
+### Week days 
 ```Python
 import datetime
 from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import OneHotEncoder
 
-datetime.datetime.strptime(train.columns.values[0], '%Y-%m-%d').strftime('%a')
 weekdays = [datetime.datetime.strptime(date, '%Y-%m-%d').strftime('%a') 
             for date in train.columns.values[:-4]]
+``` 
+First, we turn the date strings (like '2017-03-02') into their weekday ('Thursday').
 
+```Python
 day_one_hot = LabelEncoder().fit_transform(weekdays)
 day_one_hot = day_one_hot.reshape(-1, 1)
+```
+We then encode the weekdays into integers, so that 'Monday' becomes 1, 'Tuesday' becomes 2 and so on. We reshape the resulting array into a rank 2 tensor with shape (array length, 1) so that the one hot encoder knows that we have many observations, but only one feature, not the other way around.
+
+```Python
 day_one_hot = OneHotEncoder(sparse=False).fit_transform(day_one_hot)
 day_one_hot = np.expand_dims(day_one_hot,0)
 ``` 
+Finally, we one hot encode the days. We then add a new dimension to the tensor showing that we have only one 'row' of dates. We will later repeat the array along this axis.
 
 ```Python 
 agent_int = LabelEncoder().fit(train['Agent'])
@@ -539,7 +567,12 @@ agent_enc = agent_enc.reshape(-1, 1)
 agent_one_hot = OneHotEncoder(sparse=False).fit(agent_enc)
 
 del agent_enc
+``` 
+We will need the encoders for the agents later when we encode the agent of each series. Here, we first create a `LabelEncoder` that can transform the agent name strings into integers. We then transform all agents into such an integer string to setup a `OneHotEncoder` that can one hot encode the agents. To save memory, we will then delete the already encoded agents. 
 
+We do the same for sub pages and access methods. 
+
+```Python 
 page_int = LabelEncoder().fit(train['Sub_Page'])
 page_enc = page_int.transform(train['Sub_Page'])
 page_enc = page_enc.reshape(-1, 1)
@@ -555,14 +588,27 @@ acc_one_hot = OneHotEncoder(sparse=False).fit(acc_enc)
 del acc_enc
 ```
 
+Now we come to the lagged features. Technically, neural networks could discover which past events are relevant for forecasting themselves. However, this is pretty difficult because of the vanishing gradient problem, covered in more detail in the LSTM section of this chapter. For now, let's just set up a little function that creates an array lagged by a number of days.
+
 ```Python 
-def lag_arr(arr, lag,fill):
+def lag_arr(arr, lag, fill):
     filler = np.full((arr.shape[0],lag,1),-1)
     comb = np.concatenate((filler,arr),axis=1)
     result = comb[:,:arr.shape[1]]
     return result
 ```
+This function first creates a new array that will fill up the 'empty space' from the shift. The new array has as many rows as the original array but its series length, or width, is the number of days we want to lag. We then attach this array to the front of our original array. Finally, we remove elements from the back of the array to get back to the original array series length, or width. 
 
+We want to inform our model about the amount of autocorrelation for different time intervals. To compute the autocorrelation for a single series, we shift the series by the amount of lag we want to measure the autocorrelation for. We then compute the autocorrelation. 
+
+$$R(\tau) = \frac{\sum ((X_t - \mu_t) * 
+  
+  (X_{t + \tau} - \mu_{t + \tau}))}
+  
+{\sigma_t * \sigma_{t + \tau}} $$
+
+Where $\tau$ is the lag indicator.
+We do not just use a numpy function since there is a real possibility that the divider is zero. In this case, our function will just return zero.
 ```Python 
 def single_autocorr(series, lag):
     s1 = series[lag:]
@@ -574,6 +620,7 @@ def single_autocorr(series, lag):
     divider = np.sqrt(np.sum(ds1 * ds1)) * np.sqrt(np.sum(ds2 * ds2))
     return np.sum(ds1 * ds2) / divider if divider != 0 else 0
 ```
+We can use this function we wrote for a single series to create a batch of autocorrelation features.
 
 ```Python 
 def batc_autocorr(data,lag,series_length):
@@ -582,57 +629,72 @@ def batc_autocorr(data,lag,series_length):
         c = single_autocorr(data, lag)
         corrs.append(c)
     corr = np.array(corrs)
-    corr = corr.reshape(-1,1)
+    corr = np.expand_dims(corr,-1)
     corr = np.expand_dims(corr,-1)
     corr = np.repeat(corr,series_length,axis=1)
     return corr
 ```
+First, we calculate autocorrelations for each series in the batch. Then we fuse the correlations together into one numpy array. Since autocorrelations are a global feature, we create a new dimension for the length of the series and another new dimension to show that this is only one feature. We then repeat the autocorrelations over the entire length of the series. 
 
+The `get_batch` function produces utilizes all these tools to provide one batch of data.
 ```Python
 def get_batch(train,start=0,lookback = 100):
+    # 1
     assert((start + lookback) <= (train.shape[1] - 5))
     
+    # 2
     data = train.iloc[:,start:start + lookback].values
+    
+    # 3
     target = train.iloc[:,start + lookback].values
     target = np.log1p(target)
     
+    # 4
     log_view = np.log1p(data)
     log_view = np.expand_dims(log_view,axis=-1)
     
+    # 5
     days = day_one_hot[:,start:start + lookback]
     days = np.repeat(days,repeats=train.shape[0],axis=0)
     
+    # 6
     year_lag = lag_arr(log_view,365,-1)
     halfyear_lag = lag_arr(log_view,182,-1)
     quarter_lag = lag_arr(log_view,91,-1)
     
+    # 7
     agent_enc = agent_int.transform(train['Agent'])
     agent_enc = agent_enc.reshape(-1, 1)
     agent_enc = agent_one_hot.transform(agent_enc)
     agent_enc = np.expand_dims(agent_enc,1)
     agent_enc = np.repeat(agent_enc,lookback,axis=1)
     
+    # 8
     page_enc = page_int.transform(train['Sub_Page'])
     page_enc = page_enc.reshape(-1, 1)
     page_enc = page_one_hot.transform(page_enc)
     page_enc = np.expand_dims(page_enc, 1)
     page_enc = np.repeat(page_enc,lookback,axis=1)
     
+    # 9
     acc_enc = acc_int.transform(train['Access'])
     acc_enc = acc_enc.reshape(-1, 1)
     acc_enc = acc_one_hot.transform(acc_enc)
     acc_enc = np.expand_dims(acc_enc,1)
     acc_enc = np.repeat(acc_enc,lookback,axis=1)
     
+    # 10
     year_autocorr = batc_autocorr(data,lag=365,series_length=lookback)
     halfyr_autocorr = batc_autocorr(data,lag=182,series_length=lookback)
     quarter_autocorr = batc_autocorr(data,lag=91,series_length=lookback)
     
+    # 11
     medians = np.median(data,axis=1)
     medians = np.expand_dims(medians,-1)
     medians = np.expand_dims(medians,-1)
     medians = np.repeat(medians,lookback,axis=1)
     
+    # 12
     batch = np.concatenate((log_view,
                             days, 
                             year_lag, 
@@ -648,7 +710,29 @@ def get_batch(train,start=0,lookback = 100):
     
     return batch, target
 ``` 
+Let's walk through this step by step.
 
+\# 1 Ensures there is enough data to create a lookback window and a target from the given starting point.
+
+\# 2 Separates the lookback window out of the training data.
+
+\# 3 Separates the target and then takes the one plus logarithm of it.
+
+\# 4 Takes the one plus logarithm of the lookback window and adds a feature dimension.
+
+\# 5 Gets the days from the precomputed one hot encoding of days and repeats it for each time series in the batch.
+
+\# 6 Computes the lag features for year lag, half year lag and quarterly lag.
+
+\# 7, 8 & 9 encode the global features using the encoders defined above.
+
+\# 10 Calculates the year, half year and quarterly autocorrelation.
+
+\# 11 Calculates the median for the lookback data.
+
+\# 12 fuses all these features into one batch.
+
+Finally, we can use our `get_batch` function to write a generator, just like we did in chapter 3. It loops over the original training set and passes a subset into the `get_batch` function. It then yields the batch obtained. Note that we choose random starting points to make the most out of our data.
 ```Python 
 def generate_batches(train,batch_size = 32, lookback = 100):
     num_samples = train.shape[0]
@@ -662,7 +746,84 @@ def generate_batches(train,batch_size = 32, lookback = 100):
             X,y = get_batch(train.iloc[batch_start:batch_end],start=seq_start)
             yield X,y
 ``` 
+We will train and validate with this function.
+
 # Conv1D
+You might remember convolutional neural networks from computer vision week. In computer vision, convolutional filters slide over the image two dimensionally. There is also a version of convolutional filters that can slide over a sequence one dimensionally. The output is another sequence, much like the output of a two dimensional convolution was another 'image'. Everything else about 1D convolutions is exactly the same as 2D convolutions.
+
+We will first build a ConvNet that expects a fixed input length.
+```Python
+n_features = 29
+max_len = 100
+``` 
+
+```Python 
+
+model = Sequential()
+
+model.add(Conv1D(16,5, input_shape=(100,29)))
+model.add(Activation('relu'))
+model.add(MaxPool1D(5))
+
+model.add(Conv1D(16,5))
+model.add(Activation('relu'))
+model.add(MaxPool1D(5))
+model.add(Flatten())
+model.add(Dense(1))
+``` 
+
+You will notice that next to `Conv1D` and `Activation` there are two more layers in this network:
+- `MaxPool1D` works exactly like MaxPooling2D which we used earlier. It takes a piece of the sequence with specified length and returns the maximum element in the sequence much like it returned the maximum element of a small window in 2D convolutional networks. Note that MaxPooling always returns the maximum element for each channel.
+- `Flatten` transforms the 2D sequence tensor into a 1D flat tensor. To use `Flatten` in combination with `Dense`, we need to specify the sequence length in the input shape. Here, we set it with the `max_len` variable. This is because `Dense` expects a fixed input shape and flatten will return a tensor based on the size of its input. An alternative to using `Flatten` is `GlobalMaxPool1D` which returns the maximum element of the entire sequence. Since this is fixed in size, you can use a `Dense` layer afterwards without fixing the input length.
+
+Our model compiles just as you know it.
+```Python 
+model.compile(optimizer='adam',loss='mean_absolute_percentage_error')
+``` 
+
+We train it on the generator we wrote earlier. To obtain separate train and validation sets, we first split the overall dataset and then create two generators based on the two datasets.
+```Python 
+from sklearn.model_selection import train_test_split
+
+batch_size = 128
+train_df, val_df = train_test_split(train, test_size=0.1)
+train_gen = generate_batches(train_df,batch_size=batch_size)
+val_gen = generate_batches(val_df, batch_size=batch_size)
+
+n_train_samples = train_df.shape[0]
+n_val_samples = val_df.shape[0]
+```
+
+Finally, we can train our model on a generator just like we did in computer vision.
+
+```Python 
+model.fit_generator(train_gen, 
+                    epochs=20,
+                    steps_per_epoch=n_train_samples // batch_size, 
+                    validation_data= val_gen, 
+                    validation_steps=n_val_samples // batch_size)
+```
+# Dilated and causal convolution 
+
+As discussed in the section of backtesting, we have to make sure that our model does not suffer from Look-Ahead bias. 
+![Standard_Conv1D](./assets/Standard_Conv1D.png) 
+As the convolutional filter slides over the data, it looks into the future as well as the past. Causal convolution ensures, that the output at time t derives only from inputs from time t - 1.
+
+![Causal Convolution](./assets/Causal_Conv1D.png)
+
+In Keras, all we have to do is to set the `padding` parameter to `'causal'`
+```Python 
+model.add(Conv1D(16,5, padding='causal'))
+```
+Another useful trick are dilated convolutional networks. Dilation means that the filter accesses only every nth element.
+
+![Dilated Causal](./assets/Causal_Dilated_Conv1D.png)
+
+In the image above, the upper convolutional layer has a dilation rate of 4 and the lower layer a dilation rate of 1. We can set the dilation rate in Keras:
+
+```Python 
+model.add(Conv1D(16,5, padding='causal', dilation_rate=4))
+```
 
 # SimpleRNN
 Another method to make order matter in neural networks is to give the network some kind of memory. So far, all of our networks did a forward pass without any memory of what happened before or after the pass. It is time to change that with recurrent neural networks.
@@ -674,6 +835,29 @@ Recurrent neural networks contain recurrent layers. Recurrent layers can remembe
 $$A_{t} = activation( W * in + U * A_{t-1} + b)$$
 
 A recurrent layer takes a sequence as an input. For each element, it then computes a matrix multiplication ($W * in$) just like a ``Dense`` layer and runs the result through an activation function like e.g. ``relu``. It then retains it's own activation. When the next item of the sequence arrives, it performs the matrix multiplication as before but it also multiplies it's previous activation with a second matrix ($U * A_{t-1}$). It adds the result of both operations together and passes it through it's activation function again. In Keras, we can use a simple RNN like this:
+
+```Python 
+from keras.layers import SimpleRNN
+
+model = Sequential()
+model.add(SimpleRNN(16,input_shape=(max_len,n_features)))
+model.add(Dense(1))
+
+model.compile(optimizer='adam',loss='mean_absolute_percentage_error')
+```
+The only parameter we need to specify is the size of the recurrent layer. This is basically the same as setting the size of a `Dense` layer, as `SimpleRNN` layers are very similar to `Dense` layers except that they feed their output back in as input.
+RNNs by default only return the last output of the sequence. To stack multiple RNNs we need to set `return_sequences` to `True`:
+```Python
+from keras.layers import SimpleRNN
+
+model = Sequential()
+model.add(SimpleRNN(16,return_sequences=True,input_shape=(max_len,n_features)))
+model.add(SimpleRNN(32, return_sequences = True))
+model.add(SimpleRNN(64))
+model.add(Dense(1))
+
+model.compile(optimizer='adam',loss='mean_absolute_percentage_error')
+```
 
 # LSTM 
 
@@ -711,11 +895,46 @@ $$c_{t+1} = c_t * f_t + i_t * k_t$$
 While the standard theory claims that the LSTM layer learns what to add and what to forget, in practice nobody knows what really happens inside an LSTM. However, they have been shown to be quite effective at learning long term memory.
 
 Note that ``LSTM``layers do not need an extra activation function as they already come with a tanh activation function out of the box.
+
+LSTMs can be used the same way as `SimpleRNN`:
+
+```Python 
+from keras.layers import LSTM
+
+model = Sequential()
+model.add(LSTM(16,input_shape=(max_len,n_features)))
+model.add(Dense(1))
+```
+
+To stack layers, you also need to set `return_sequences` to `True`. Note that you can easily combine `LSTM` and `SimpleRNN`.
+```Python
+model = Sequential()
+model.add(LSTM(32,return_sequences=True,input_shape=(max_len,n_features)))
+model.add(SimpleRNN(16, return_sequences = True))
+model.add(LSTM(16))
+model.add(Dense(1))
+``` 
+
+Tipp: If you are using a GPU and tensorflow backend with Keras, use a `CuDNNLSTM` instead of `LSTM`. It is significantly faster while otherwise working exactly the same.
+
 # Recurrent dropout 
+You have already heard of dropout. Dropout removes some elements of one layers input at random. A common and important tool in recurrent neural networks is recurrent dropout. Recurrent dropout does not remove any inputs between layers but inputs between time steps.
 
-# Bigger time series models
-Conv1D + GRU
+![Recurrent Dropout](./assets/recurrent_dropout.png)
 
+Just as regular dropout, recurrent dropout has a regularizing effect and can prevent overfitting. It is used in Keras by simply passing an argument to the LSTM or RNN layer. Recurrent Dropout, unlike regular dropout, does not have an own layer.
+
+```Python 
+model = Sequential()
+model.add(LSTM(16, 
+               recurrent_dropout=0.1,
+               return_sequences=True,
+               input_shape=(max_len,n_features)))
+
+model.add(LSTM(16,recurrent_dropout=0.1))
+
+model.add(Dense(1))
+```
 
 # Uncertainty in neural nets - Bayesian deep learning
 http://mlg.eng.cam.ac.uk/yarin/blog_3d801aa532c1ce.html
