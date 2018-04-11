@@ -824,7 +824,6 @@ In the image above, the upper convolutional layer has a dilation rate of 4 and t
 ```Python 
 model.add(Conv1D(16,5, padding='causal', dilation_rate=4))
 ```
-
 # SimpleRNN
 Another method to make order matter in neural networks is to give the network some kind of memory. So far, all of our networks did a forward pass without any memory of what happened before or after the pass. It is time to change that with recurrent neural networks.
 
@@ -863,7 +862,7 @@ model.compile(optimizer='adam',loss='mean_absolute_percentage_error')
 
 In the last section we already learned about basic recurrent neural networks. In theory, simple RNN's should be able to retain even long term memories. However, in practice, this approach often falls short. This is because of the 'vanishing gradients' problem. Over many timesteps, the network has a hard time keeping up meaningful gradients. See e.g. Learning long-term dependencies with gradient descent is difficult (Bengio, Simard and Frasconi, 1994) for details.
 
-In direct response to the vanishing gradients problem of simple RNN's, the Long Short Term Memory layer was invented. Before we dive into details, let's look at a simple RNN 'unrolled' over time:
+In direct response to the vanishing gradients problem of simple RNN's, the Long Short Term Memory layer was invented. It does much better at longer time series. Yet, if relevant observations are a few hundred steps behind in the series, even they struggle. This is why we manually included some lagged observations. Before we dive into details, let's look at a simple RNN 'unrolled' over time:
 
 ![Unrolled RNN](./assets/unrolled_simple_rnn.png)
 
@@ -937,6 +936,101 @@ model.add(Dense(1))
 ```
 
 # Uncertainty in neural nets - Bayesian deep learning
-http://mlg.eng.cam.ac.uk/yarin/blog_3d801aa532c1ce.html
 
-https://github.com/kyle-dorman/bayesian-neural-network-blogpost/blob/master/README.md
+We now have a whole stable of models that can make forecasts on time series. But are the point estimates these models give sensible estimates or just random guesses? How certain is the model? Most classic, probabilistic modeling techniques, like Kalman filters, can give confidence intervals for predictions. Regular deep learning can not do this. The field of bayesian deep learning combines bayesian approaches with deep learning to enable models to express uncertainty. 
+
+The key idea in bayesian deep learning is that there is inherent uncertainty in the model. Sometimes this is done by learning a mean and standard deviation for weights instead of just a single weight value. However, this approach increases the number of parameters needed quite a bit so it did not catch on. A simpler 'hack' that allows us to turn regular deep nets into bayesian deep nets is to activate dropout during prediction time, and then make multiple predictions. 
+
+In this section we will use a simpler dataset than before. Our X values are 20 random values between -5 and 5 and our y values are just the sine function applied to these values. 
+```Python 
+X = np.random.rand(20,1) * 10 -5
+y = np.sin(X)
+```
+
+Our neural net is relatively straightforward, too. Note that Keras does not allow to make a dropout layer the first layer, so we add a dense layer that just passes through the input value.
+
+```Python 
+from keras.models import Sequential
+from keras.layers import Dense, Dropout, Activation
+
+model = Sequential()
+
+model.add(Dense(1,input_dim = 1))
+model.add(Dropout(0.05))
+
+model.add(Dense(20))
+model.add(Activation('relu'))
+model.add(Dropout(0.05))
+
+model.add(Dense(20))
+model.add(Activation('relu'))
+model.add(Dropout(0.05))
+
+model.add(Dense(20))
+model.add(Activation('sigmoid'))
+
+model.add(Dense(1))
+```
+To fit this function, we need a relatively low learning rate, so we import Keras vanilla stochastic gradient descent optimizer to set the learning rate there. We then train the model for 10000 epochs. Since we are not interested in the training logs we set `verbose` to zero which makes the model train 'quietly'.
+```Python 
+from keras.optimizers import SGD
+model.compile(loss='mse',optimizer=SGD(lr=0.01))
+model.fit(X,y,epochs=10000,batch_size=10,verbose=0)
+```
+
+We want to test our model over a larger range of values, so we create a test dataset with 200 values from -10 to 10 in 0.1 intervals.
+```Python 
+X_test = np.arange(-10,10,0.1)
+X_test = np.expand_dims(X_test,-1)
+```
+
+And now comes the magic trick! Using `keras.backend` we can pass settings to TensorFlow, which runs the operations in the background. We use the backend to set the learning phase parameter to 1. This makes TensorFlow believe we are training, and so it will apply dropout. If we call `K.set_learning_phase(0)` the model would act as if in test mode and dropout would not be applied. We then make 100 predictions for our test data. The result of these 100 predictions is a probability distribution for the y value at every point X
+```Python 
+import keras.backend as K
+
+K.set_learning_phase(1)
+probs = []
+for i in range(100):
+    out = model.predict(X_test)
+    probs.append(out)
+```
+We can now calculate mean and standard deviation for our distributions-
+```Python
+p = np.array(probs)
+
+mean = p.mean(axis=0)
+std = p.std(axis=0)
+```
+And finally plot the models predictions with 1, 2 and 4 standard deviations (corresponding to different shades of blue.)
+```Python 
+plt.figure(figsize=(10,7))
+plt.plot(X_test,mean,c='blue')
+
+lower_bound = mean - std * 0.5
+upper_bound =  mean + std * 0.5
+plt.fill_between(X_test.flatten(),upper_bound.flatten(),lower_bound.flatten(),alpha=0.25, facecolor='blue')
+
+lower_bound = mean - std
+upper_bound =  mean + std
+plt.fill_between(X_test.flatten(),upper_bound.flatten(),lower_bound.flatten(),alpha=0.25, facecolor='blue')
+
+lower_bound = mean - std * 2
+upper_bound =  mean + std * 2
+plt.fill_between(X_test.flatten(),upper_bound.flatten(),lower_bound.flatten(),alpha=0.25, facecolor='blue')
+
+plt.scatter(X,y,c='black')
+```
+
+![Bayes Net](./assets/bayesnet_std.png)
+
+As you can see, the model is relatively confident around areas for which it had data and becomes less and less confident the further away it gets from the data points. 
+
+Getting uncertainty estimates from our model increases the value we can get from a model. It also helps in improving the model if we can detect where the model is over or under-confident. Bayesian deep learning is just only in its infancy and we will certainly see many advances in the next few years. 
+
+# Exercises
+- Implement the model architectures above, and see how you can combine them. A good trick is to use LSTMs on top of 1D Convolution, as the 1D convolution can go over large sequences while using fewer parameters. 
+- Add uncertainty to your web traffic forecasts.
+- Visit the Kaggle datasets page and search for time series data. Make a forecasting model.
+
+# Summary 
+In this chapter, you learned about a wide range of conventional tools for dealing with time series. You also learned about 1D convolution and recurrent architectures. Finally, you learned about a simple way to get your models to express uncertainty. 
