@@ -984,11 +984,16 @@ X_test = np.arange(-10,10,0.1)
 X_test = np.expand_dims(X_test,-1)
 ```
 
-And now comes the magic trick! Using `keras.backend` we can pass settings to TensorFlow, which runs the operations in the background. We use the backend to set the learning phase parameter to 1. This makes TensorFlow believe we are training, and so it will apply dropout. If we call `K.set_learning_phase(0)` the model would act as if in test mode and dropout would not be applied. We then make 100 predictions for our test data. The result of these 100 predictions is a probability distribution for the y value at every point X
+And now comes the magic trick! Using `keras.backend` we can pass settings to TensorFlow, which runs the operations in the background. We use the backend to set the learning phase parameter to 1. This makes TensorFlow believe we are training, and so it will apply dropout.  We then make 100 predictions for our test data. The result of these 100 predictions is a probability distribution for the y value at every point X. 
+
+Note, for this example to work, you have to load the backend, clear the session and setting the learning phase _before_ defining and training the model as the training process will leave setting in the TensorFlow graph. You can also save the trained model, clear the session and reload the model. See the code for this section for a working implementation.
 ```Python 
 import keras.backend as K
-
+K.clear_session()
 K.set_learning_phase(1)
+```
+And now we can obtain our distributions.
+```Python 
 probs = []
 for i in range(100):
     out = model.predict(X_test)
