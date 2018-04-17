@@ -137,7 +137,7 @@ Note that this approach makes a crucial assumption: That our data $X$ and labels
 
 # Measuring model loss
 We already saw that we optimize parameters by minimizing some distance function $D$. This distance function, also called loss function, is the performance measure under which we evaluate possible functions. In this case, our problem is a binary classification problem, so we will use the binary cross entropy loss:
-$$D_{BCE}(y,\hat y) = -\frac{1}{N} \sum_{i = i}^N[y_i  log(\hat y_i) + (1-y_i)log(1-\hat y_i)]$$
+$$D_{BCE}(y,\hat y) = -\frac{1}{N} \sum_{i = 1}^N[y_i  log(\hat y_i) + (1-y_i)log(1-\hat y_i)]$$
 
 Let's go through this step by step.
  
