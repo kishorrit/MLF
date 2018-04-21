@@ -7,13 +7,15 @@ But natural language processing (NLP) is also making inroads into finance in oth
 Historically, NLP relied on hand crafted rules by linguists. Today, the linguists are getting replaced by neural networks that can learn the complex and often hard to codify rules of language. In this chapter, we will learn how to build powerful natural language models with Keras as well as how to use the SpaCy NLP library.
 
 # A quick guide to SpaCy
-SpaCy is a library for advanced natural language processing. It comes with a range of useful tools and pre-trained models that make NLP easier and more reliable. It is also pretty fast. To use SpaCy, you will need to install the library, and download its pre trained models separately:
+SpaCy is a library for advanced natural language processing. It comes with a range of useful tools and pre-trained models that make NLP easier and more reliable. It is also pretty fast. To use SpaCy locally, you will need to install the library, and download its pre trained models separately:
 
 ```bash
 $ pip install -U spacy
 
 $ python -m spacy download en
 ```
+In Kaggle, SpacCy is pre installed including the models.
+
 This chapter makes use of the english language models, but more are available. Most features are available in English, German, Spanish, Portuguese, French, Italian and Dutch. Entity recognition is available for many more languages through the multi-language model.
 
 The core of SpaCy are the `Doc` and `Vocab` classes. A `Doc` instance contains one document, including its text, tokenized version, recognized entities, etc. The `Vocab` class keeps track of all common information across documents. SpaCy is useful for its pipeline features, that contain many pieces needed for NLP. If this all seems a bit abstract right now, don't worry. This section will show you how to use SpaCy for many practical tasks. 
@@ -307,10 +309,235 @@ Apple | Apple | dobj | buy
 # Rule based matching
 https://spacy.io/usage/linguistic-features#section-rule-based-matching
 
+Before deep learning and statistical modeling took over, natural language processing was all about rules. And rule based systems are not dead! They are often easy to set up and do simple tasks pretty well. Imagine you would want to find all mentions of 'Google' in a text. Would you really train a neural network based named entity recognizer, run all text through the neural network and then look for 'Google' in the entity texts, or would you just search for text that exactly matches 'Google' with a classic search algorithm? SpaCy comes with an easy to use rule based matcher.
+
+Before we start this section, make sure you reload a the english laguage model and import the matcher.
+```Python 
+import spacy
+from spacy.matcher import Matcher
+
+nlp = spacy.load('en')
+```
+
+The matcher searchers for patterns which we encode as a list of dictionaries. It operates token by token, that is word for word, except for punctuation and numbers, where a single symbol can be a token. As a starting example, lets search for the phrase 'Hallo, world'. We would define a pattern as follows:
+```Python 
+pattern = [{'LOWER': 'hello'}, {'IS_PUNCT': True}, {'LOWER': 'world'}]
+``` 
+This pattern is fulfilled, if the lower case first token is 'hallo'. That means, if the actual token text is 'Hallo' or 'HALLO' it would also fulfil the requirement. The second token has to be punctuation, so the phrase 'hallo. world' or 'hallo! world' would both work, but not 'hallo world'. The lower case of the third token has to be 'world', so 'WoRlD' would also be fine.
+
+The possible attributes for a token can be:
+- `'ORTH'`: The token text has to match exactly.
+- `'LOWER'`: The lower case of the token has to match.
+- `'LENGTH'`: The length of the token text has to match.
+- `'IS_ALPHA'`, `'IS_ASCII'`,`'IS_DIGIT'`: The token text has to consist of alphanumeric characters, ASCII symbols or digits.
+- `'IS_LOWER'`, `'IS_UPPER'`,`'IS_TITLE'`: The token text has to be lower case, upper case or title case.
+- `'IS_PUNCT'`, `'IS_SPACE'`,`'IS_STOP'`: Token text has to be punctuation, white space, or a stop word.
+- `'LIKE_NUM'`, `'LIKE_URL'`,`'LIKE_EMAIL'`: Token has to resemble a number, URL or email.
+- `'POS'`, `'TAG'`, `'DEP'`, `'LEMMA'`, `'SHAPE'`: The tokens position, tag, dependency, lemma or shape has to match. 
+- `'ENT_TYPE'`: The tokens entity type from NER has to match.
+
+To create a matcher, we have to pass on the vocabulary the matcher works on. In this case, we can just pass the vocabulary of our english language model:
+
+```Python 
+matcher = Matcher(nlp.vocab)
+```
+
+To add the required attributes to our matcher we call:
+
+```Python 
+matcher.add('HelloWorld', None, pattern)
+```
+The `add` function expects three arguments: A name of the pattern, in this case 'HalloWorld', so that we can keep track of the patterns we added. A function that can process matches once found. We pass `None`, here, meaning no function will be applied. But we will use this tool later. Finally, we need to pass the list of token attributes we want to search for.
+
+
+To use our matcher, we can simply call `matcher(doc)`. This will give us back all the matches the matcher found.
+```Python
+doc = nlp(u'Hello, world! Hello world!')
+matches = matcher(doc)
+``` 
+
+If we print out the matches, we can see the structure:
+```Python 
+matches
+```
+```
+[(15578876784678163569, 0, 3)]
+```
+The fist thing in a match is the hash of the string found. This is just to clearly identify what was found internally and we won't use it here. The next two numbers indicate the range in which the matcher found something, here tokens 0 to 3:
+
+We can get the text back by indexing the original document:
+``` 
+doc[0:3]
+```
+``` 
+Hello, world
+```
+
+## Add custom functions to matchers
+Lets move on to a more complex case. We know that the iPhone is a product. The neural network based matcher however, often classifies it as an organization. This happens because the word 'iPhone' gets used a lot in similar context as organizations, like in 'The iPhone offers ...' or 'The iPhone sold ...'. Lets build a rule based matcher that always classifies the word 'iPhone' as a product entity.
+
+First, we have to get the hash of the word 'PRODUCT'. Words in SpaCy can be uniquely identified by their hash. Entity types also get identified by their hash. To set an entity of the product type, we have to be able to provide the hash for the entity name. 
+
+We can get the name from the language models vocabulary:
+```Python 
+PRODUCT = nlp.vocab.strings['PRODUCT']
+```
+
+Next, we need to define an `on_match` rule. This function will be called every time the matcher finds a match. `on_match` rules get passed four arguments:
+- `matcher`: The matcher that made the match. 
+- `doc`: The document the match was made in.
+- `i`: The index of a mach. The first match in a document would have index zero, the second would have index one and so on.
+- `matches`: A list of all matches made.
+
+There are two things happening in our `on_match` rule:
+```Python 
+def add_product_ent(matcher, doc, i, matches):
+    match_id, start, end = matches[i] #1
+    doc.ents += ((PRODUCT, start, end),) #2
+``` 
+\#1 We index all matches to find our match at index `i`. One match is a tuple of a match id, the start of the match and the end of the match. 
+
+\#2 We add a new entity to the documents named entities. An entity is a tuple of the hash of the type of entity (the hash of the word 'PRODUCT' here), the start of the entity and the end of the entity. To append an entity, we have to nest it in another tuple. Tuples that contain only one value need to include a comma at the end. It is important to not overwrite `doc.ents`, as we otherwise would remove all the entities we already found.
+
+Now that we have a `on_match` rule we can define our matcher. 
+
+Note that matchers allow us to add multiple patterns, so we can add a matcher for just the word 'iPhone' and another pattern for the word iPhone together with a version number like 'iPhone 5':
+
+```Python 
+pattern1 = [{'LOWER': 'iphone'}] #1
+pattern2 = [{'ORTH': 'iPhone'}, {'IS_DIGIT': True}] #2
+
+matcher = Matcher(nlp.vocab) #3
+matcher.add('iPhone', add_product_ent,pattern1, pattern2) #3
+```
+\#1 We define the fist pattern.
+
+\#2 We define the second pattern.
+
+\#3 We create a new empty matcher.
+
+\#4 We add the patterns to the matcher. Both will fall under the rule called 'iPhone', and both will call our `on_match` rule called `add_product_ent`.
+
+We will now pass one of the news articles through the matcher.
+
+```Python 
+doc = nlp(df.content.iloc[14]) #1
+matches = matcher(doc) #2
+```
+\#1 We run the text through the pipeline to create an annonated document.
+\#2 We run the document through the matcher. This modifies the document created in the step before. We do not care as much about the matches but about how the `on_match` methods adds the matches as entities to our documents.
+
+And boom, all mentions of the word 'iPhone' (case independent), are now tagged as named entities of the type product. You can validate this by displaying the entities with `displacy`
+
+```Python 
+displacy.render(doc,style='ent',jupyter=True)
+``` 
+
+![Spacy now finds the iPhone as a product](./assets/spacy_iphone_product.png)
+
+## Adding the matcher to the pipeline
+
+Calling the matcher seperately is somewhat cumbersome. To add it to the pipeline, we have to wrap it into a function: 
+
+```Python 
+def matcher_component(doc):
+    matches = matcher(doc)
+    return doc
+```
+The SpaCy pipeline calls the components of the pipeline as functions and alway expects the anonated document to be returned. Returning anything else might break the pipeline. We can then add the matcher to the main pipeline like this: 
+
+```Python 
+nlp.add_pipe(matcher_component,last=True)
+```
+The matcher is now the last piece of the pipeline and iPhones get tagged based on the matchers rules.
+
+## Combining rule based and learning based systems
+One especially interesting aspect of SpaCy's pipeline system is that it is relatively easy to combine different aspects. We can for example combine the neural network based named entity recognition with a rule based matcher to find something like executive compensation information.
+
+Executive compensation is often reported in the press but hard to find in aggregate. One possible rule based matching pattern for executive compensation could look like this:
+
+```Python 
+pattern = [{'ENT_TYPE':'PERSON'}, 
+            {'LEMMA':'receive'}, 
+            {'ENT_TYPE':'MONEY'}]
+``` 
+
+A matcher looking for this pattern would pick up any combination of a Persons name (e.g. 'John Appleseed', or 'Daniel'), any version of the word receive ('received', 'receives', etc.) followed by any expression of money (e.g. '$4 Million'). This matcher could be run over a large text corpus with the `on_match` rule handily saving the found snippets into a database. A machine learning approach for naming entities as well as a rule based approach go seamlessly hand in hand. Since there is much more training data available with annotations for names and money rather than statements about executive education, it is much easier to combine the NER with a rule based method rather than training a new NER.
+
+# Regular expressions 
+Regular expressions, or regex, are a powerful form of rule based matching. Invented in the 1950s they were the most useful way to find things in text for a very long time, and proponents argue they still are. No chapter on NLP would be complete without mentioning them. This section is by no means a complete regex tutorial. It just introduces the general idea and shows how regex can be used in Python, pandas and SpaCy. 
+
+A very simple regex pattern could be `'a.'` Which would only find instances of the lower case letter a followed by a dot. But regex also allows to add ranges of patterns, for example `'[a-z].'` would find any lower case letter followed by a dot, and `'[xy].'` would find only the letters x or y followed by a dot. Regex patterns are case sensitive, so `'[A-Z]'` captures only upper case letters. This is useful if we are searching for expressions in which spelling is frequently different, for example the pattern `'seriali[sz]e'` would catch the British as well as American english version of the word. The same goes for numbers, `'[0-9]'` captures all numbers from 0 to 9. To find repetitions, you can use the `'*'` which captures zero or more occurrences, or the `'+'` which captures one or more occurrences. E.g. `'[0-9]+'` would capture any series of numbers, which might be useful when looking for years. `'[A-Z][a-z]+ [0-9]+'` for example would find all words starting with a capital letter followed by one or more digit, like 'March 2018' but also 'Jaws 2'. Curly brackets can be used to define the number of repetitions, `'[0-9]{4}'` would find number sequences with exactly four digits. As you can see, regex does not make any attempt to understand what is in the text, but rather offers a clever method of finding text that matches patterns. 
+
+A practical use case in the financial industry is finding the VAT number of companies in invoices. These follow a pretty strict pattern in most countries that can easily be encoded. VAT numbers in the Netherlands for example follow this regex pattern: `'NL[0-9]{9}B[0-9]{2}'`.
+
+## Using Python's regex module 
+Python has a built in tool for regex called re. It does not need to be installed as it is part of Python itself. 
+
+```Python 
+import re
+```
+Imagine we are working on an automatic invoice processor, and we want to find to find the VAT number of the company that sent us the invoice. For simplicity's sake, we only deal with Dutch VAT numbers. We know the pattern for a dutch VAT number:
+
+```Python 
+pattern = 'NL[0-9]{9}B[0-9]{2}'
+```
+
+A string that we want to search the BTW in might look like this:
+
+```Python 
+my_string = 'ING Bank N.V. BTW:NL003028112B01'
+```
+
+To find all occurrences of a BTW number in the string, we can call `re.findall`, which will return a list of all strings matching the pattern found. 
+
+``` Python 
+re.findall(pattern,my_string)
+``` 
+```
+['NL003028112B01']
+```
+
+`re` also allows to pass flags to make development of regex patterns a bit easier.
+
+To ignore the case of letters when matchin a regular expression for exaple we can add a `re.IGNORECASE` flag.
+``` Python 
+re.findall(pattern,my_string, flags=re.IGNORECASE)
+``` 
+
+Often, we are interested in a bit more information around our matches. To this end, there is a `match` object. `re.search` yields a `match` object for the first match found:
+
+```Python 
+match = re.search(pattern,my_string)
+```
+
+We can get more information out of this object, such as the location of our match: 
+```Python 
+match.span()
+```
+```
+(18, 32)
+```
+The span, the start and the end, of our match are the characters 18 to 32.
+
+## Regex in pandas
+Data for NLP problems often comes in pandas dataframes. Luckily, pandas natively supports regex. If for example we want to find out if any of the articles in our news dataset contains a dutch BTW number, we can pass:
+
+```Python 
+df[df.content.str.contains(pattern)]
+```
+This would yield all articles which include a Dutch btw, but unsurprisingly no articles do.
+
+## When to use regex and when not to
+Regex is a powerful tool and this very short introduction does not do it justice. In fact, there are several books longer than this one written purely on regex. Regex works well on simple, clear to define patterns. VAT numbers are the perfect examples, and email addresses or phone numbers are very popular use cases. However, regex fails when the pattern is hard to define or can only be inferred from context. It is not possible to create a rule based named entity recognizer that can spot that a word refers to the name of a person, because names follow no clear distinguishing pattern. So, next time you are looking to find something that is easy to spot for a human but hard to describe in rules, use a machine learning based solution. Next time you are looking for something clearly encoded, like a VAT number, use regex.
+
 # Document similarity
 
 # Topic modeling
 http://nbviewer.jupyter.org/github/skipgram/modern-nlp-in-python/blob/master/executable/Modern_NLP_in_Python.ipynb 
+
+# Expanding SpaCy 
+https://explosion.ai/blog/spacy-v2-pipelines-extensions
 
 # A text classification task
 https://www.figure-eight.com/data-for-everyone/
