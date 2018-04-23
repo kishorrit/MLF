@@ -734,9 +734,268 @@ Words and word tokens are categorical features. As such, we can not directly fee
 
 In practice, embeddings work like a look up table. For each token, they store a vector. When the token is given to the embedding layer, it returns the vector for that token and passes it through the neural network. As the network trains, the embeddings get optimized as well. Remember that neural networks work by calculating the derivative of the loss function with respect to the parameters (weights) of the model. Through back propagation we can also calculate the derivative of the loss function with respect to the input of the model. Thus we can optimize the embeddings to deliver ideal inputs that help our model.
 
-# Building your own neural network for NLP 
+VECTOR IMAGE GOES HERE
 
-# Document similarity
+## Preprocessing for training with word vectors 
+Before we start with training word embeddings though, we need to do some preprocessing steps. Namely, we need to assign each word token a number and create a numpy array full of sequences. 
+
+Assigning numbers to tokens makes the training process smoother and decouples the tokenization process from the word vectors. Keras has a `Tokenizer` class that can create numeric tokens for words. By default, this tokenizer splits text by spaces. This works mostly fine in english, but in other languages it can be problematic. It is better to tokenize the text with SpaCy first, as we already did for our two previous methods, and then assign numeric tokens with Keras. 
+
+The Tokenizer also allows us to specify how many words we want to consider, so once again we will only use the 10,000 most used words.
+```Python
+from keras.preprocessing.text import Tokenizer
+import numpy as np
+
+max_words = 10000
+```
+
+The tokenizer works a lot like the `CountVectorizer` from `sklearn`. First we create a new tokenizer object. Then we fit the tokenizer, and finally, we can transform the text to tokenized sequences.
+``` Python 
+tokenizer = Tokenizer(num_words=max_words)
+tokenizer.fit_on_texts(df['joint_lemmas']) 
+sequences = tokenizer.texts_to_sequences(df['joint_lemmas'])
+```
+
+The `sequences` variable now holds all of our texts as numeric tokens. We can look up the mapping of words to numbers from the tokenizers word index: 
+```Python 
+word_index = tokenizer.word_index
+print('Token for "the"',word_index['the'])
+print('Token for "Movie"',word_index['movie'])
+```
+``` 
+Token for "the" 4
+Token for "Movie" 333
+```
+As you can see, frequently used words like 'the' have lower token numbers than less frequent words like 'movie'. You can also see that the `word_index` is a dictionary. If you are using your model in production, you can save this dictionary to disk to convert words to tokens later.
+
+Finally, we need to turn our sequences into sequences of equal length. This is not always nessecary, some model types can deal with sequences of different lengths, but it usually makes sense and is often required. We will examine which models need equal length sequences in the next section on building custom NLP models.
+
+Keras `pad_sequences` function allows to easily bring all sequences to the same length by either cutting off sequences or adding zeros at the end. We will bring all tweets to a length of 140 characters, which for a long time was the maximum lenght tweets could have.
+```Python 
+from keras.preprocessing.sequence import pad_sequences
+
+maxlen = 140
+
+data = pad_sequences(sequences, maxlen=maxlen)
+```
+
+Finally, we split our data in a training and validation set.
+
+```Python 
+from sklearn.model_selection import train_test_split
+X_train, X_test, y_train, y_test = train_test_split(data,
+                                                    df['relevant'],
+                                                    test_size = 0.2, 
+                                                    shuffle=True, 
+                                                    random_state = 42)
+```
+
+Now we are ready to train our own word vectors.
+## Training your own word vectors 
+
+Embeddings are a their own layer type in Keras. To use them, we have to specify how large we want the word vectors to be. A 50 dimensional vector is able to capture good embeddings even for quite large vocabularies. We also have to specify for how many words we want embeddings and how long our sequences are. Our model is now a simple logistic regressor which trains its own embeddings.
+```Python 
+from keras.models import Sequential
+from keras.layers import Embedding, Flatten, Dense
+
+embedding_dim = 50
+
+model = Sequential()
+model.add(Embedding(max_words, embedding_dim, input_length=maxlen))
+model.add(Flatten())
+model.add(Dense(1, activation='sigmoid'))
+```
+
+Notice how we do not have to specify an input shape as usual. Even specifying the input length is only necessary if the following layers require knowledge of the input length. `Dense` layers require knowledge about the input size. Since we are using a dense layers directly, we need to specify the input length here.
+
+Word embeddings have _many_ parameters. You can see this if you are printing out the models summary:
+```Python 
+model.summary()
+```
+```
+_________________________________________________________________
+Layer (type)                 Output Shape              Param #   
+=================================================================
+embedding_2 (Embedding)      (None, 140, 50)           500000    
+_________________________________________________________________
+flatten_2 (Flatten)          (None, 7000)              0         
+_________________________________________________________________
+dense_3 (Dense)              (None, 1)                 7001      
+=================================================================
+Total params: 507,001
+Trainable params: 507,001
+Non-trainable params: 0
+_________________________________________________________________
+```
+The embedding layer has 50 parameters for 10,000 words equalling 500,000 parameters in total. This makes training slower and can increase the chance of overfitting.
+
+We can now compile and train our model as usual. 
+```Python 
+model.compile(optimizer='adam',
+              loss='binary_crossentropy',
+              metrics=['acc'])
+              
+history = model.fit(X_train, y_train,
+                    epochs=10,
+                    batch_size=32,
+                    validation_data=(X_test, y_test))
+```
+
+This model achieves about 76% accuracy on the test set but over 90% accuracy on the training set. The many parameters in the custom embeddings lead to overfitting. To avoid overfitting and reduce training time, you are often better off using pre trained word embeddings.
+
+## Loading pre trained word vectors 
+Like in computer vision, NLP models can benefit from using pre trained pieces of other models. In this case, we will use the pre trained GloVe vectors. GloVe stands for Global Vectors for Word Representation, and is a project of the Stanford NLP group. GloVe provides different sets of vectors trained on different texts. We will use word embeddings trained on wikipedia texts as well as the Gigaword dataset. In total, the vectors were trained on a text of 6 billion tokens. An alternative to GloVe is Word2Vec, a similar set of word vectors that you might try out. GloVe and Word2Vec are relatively similar although the training method for them was different. They each have their strengths and weaknesses and in practice it is often worth trying out both.
+
+A nice feature of GloVe vectors is that they encode word meanings in vector space so that 'word algebra' becomes possible. The vector for 'king' minus the vector for 'man' plus the vector for 'woman' for example results in a vector pretty close to 'queen'. This means the differences between the vectors for 'man' and 'woman' are the same as the differences for the vectors of 'king' and 'queen' as the differentiating features for both are nearly the same.
+
+Equally, swords describing similar things such as 'frog' and 'toad' are very close to each other in the GloVe vector space. Encoding semantic meanings in vectors offers a range of other exciting opportunities for document similarity and topic modeling as we will see later in this chapter. But the semantic vectors are also pretty useful to serve for a wide range of NLP tasks, such as our text classification problem.
+
+The actual GloVe vectors are in a text file. We will use the 50 dimensional embeddings trained on 6 billion tokens. First we need to open the file:
+```Python
+import os
+glove_dir = '../input/glove6b50d'
+f = open(os.path.join(glove_dir, 'glove.6B.50d.txt'))
+```
+Then we create an empty dictionary which will later map words to embeddings.
+```Python 
+embeddings_index = {}
+```
+
+In the dataset, each line represents a new word embedding. The line starts with the word and the embedding values follow. We can read out the embeddings like this:
+```Python 
+for line in f: #1
+    values = line.split() #2
+    word = values[0] #3
+    embedding = np.asarray(values[1:], dtype='float32') #4
+    embeddings_index[word] = embedding dictionary #5
+f.close() #6
+```
+\#1 We loop over all lines in the file. Each line contains a word and embedding. 
+\#2 We split the line by whitespace.
+\#3 The first thing in the line is always the word.
+\#4 Then come the embedding values. We immediately transform them into a numpy array and make sure there are all floating point numbers, that is decimals.
+\#5 We then save the embedding vector in our embedding dictionary.
+\#6 Once we are done with it we close the file.
+
+Now we have a dictionary mapping words to their embeddings:
+```Python 
+print('Found %s word vectors.' % len(embeddings_index))
+``` 
+```
+Found 400000 word vectors.
+```
+This version of GloVe has vectors for 400,000 words. Which should be enough to cover most words we will encounter. However, there might be some words, for which we still do not have a vector. For these words we will just create random vectors. To make sure these vectors are not too much off, it is a good idea to use the same mean and standard deviation for the random vectors as from the trained vectors. To this end we need to calculate mean and standard deviation for the GloVe vectors.
+
+```Python 
+all_embs = np.stack(embeddings_index.values())
+emb_mean = all_embs.mean()
+emb_std = all_embs.std()
+``` 
+
+Our embedding layer will be a matrix with a row for each word and a column for each element of the embedding. Therefore, we need to specify how many dimensions one embedding has. The version of GloVe we loaded earlier has 50 dimensional vectors.
+
+```Python 
+embedding_dim = 50
+```
+
+Next, we need to find out how many words we actually have. Although we have set the maximum to 10,000, there might be fewer words in our corpus. At this point we also retrieve the word index from the tokenizer, which we will use later.
+```Python 
+word_index = tokenizer.word_index
+nb_words = min(max_words, len(word_index))
+```
+To create our embedding matrix, we first create a random matrix with the same mean and std as the embeddings.
+
+```Python 
+embedding_matrix = np.random.normal(emb_mean, 
+                                    emb_std, 
+                                    (nb_words, embedding_dim))
+```
+
+Embedding vectors need to be in the same position as their token number. A word with token 1 needs to be in row 1 (rows start with zero) and so on. We can now replace the random embeddings for the words for which we do have trained embeddings with trained embeddings.
+
+```Python 
+for word, i in word_index.items(): #1
+    if i >= max_words: #2
+        continue  
+    embedding_vector = embeddings_index.get(word) #3
+    if embedding_vector is not None: #4
+        embedding_matrix[i] = embedding_vector
+```
+\#1 Loop over all words in the word index.
+\#2 If we are above the amount of words we want to use we do nothing.
+\#3 Get the embedding vector for the word. This operation might return none if there is no embedding for this word.
+\#4 If there is an embedding vector, put it in the embedding matrix
+
+To use the pre trained embeddings, we just have to set the weights in the embedding layer to the embedding matrix we just created. To make sure the carefully created weights are not destroyed we set the layer to not trainable. 
+```Python 
+model = Sequential()
+model.add(Embedding(max_words, 
+                    embedding_dim, 
+                    input_length=maxlen, 
+                    weights = [embedding_matrix], 
+                    trainable = False))
+                    
+model.add(Flatten())
+model.add(Dense(1, activation='sigmoid'))
+```
+This model can be compiled and trained just like any other Keras model. You will notice that it trains much faster than the model in which we trained our own embeddings and suffers less from overfitting. Its overall performance on the test set is roughly the same however.
+
+Word embeddings are pretty cool in reducing training time and helping to build accurate models. However, semantic embeddings go further. They can for example be used to measure how similar two texts are semantically, even if they include different words.
+
+## Time series models with word vectors.
+Text is a time series. Different words follow each other and the order in which they do matters. Therefore, every neural network based technique from last chapter can also be used for NLP. In addition there are some building blocks that were not introduced in the last chapter that are useful for NLP.
+
+Let's start with an LSTM. All you have to change from the implementation in the last chapter is that the first layer of the network should be an embedding layer. This example uses a `CuDNNLSTM` layer which trains much faster than a regular `LSTM` layer but is otherwise the same. If you do not have a GPU, replace `CuDNNLSTM` with `LSTM`.
+```Python 
+from keras.layers import CuDNNLSTM
+model = Sequential()
+model.add(Embedding(max_words, 
+                    embedding_dim, 
+                    input_length=maxlen, 
+                    weights = [embedding_matrix], trainable = False))
+model.add(CuDNNLSTM(32))
+model.add(Dense(1, activation='sigmoid'))
+``` 
+
+One technique used frequently in NLP but less frequently in time series forecasting is a bidirectional RNN. 
+
+A bidirectional RNN is basically just two recurrent neural networks. One gets fed the sequence forward, the other one backward. 
+![Bidirectional RNN](./assets/bidirectional_rnn.png)
+
+In Keras, there is a `Bidirectional` layer in which we can wrap any recurrent neural network layer, such as an `LSTM`:
+```Python 
+from keras.layers import Bidirectional
+model = Sequential()
+model.add(Embedding(max_words, 
+                    embedding_dim, 
+                    input_length=maxlen, 
+                    weights = [embedding_matrix], trainable = False))
+model.add(Bidirectional(CuDNNLSTM(32)))
+model.add(Dense(1, activation='sigmoid'))
+```
+
+Word embeddings enrich neural networks. They are a space efficient and powerful method to transform words into numbers a neural network can work with. But there are more advantages of encoding semantics as vectors. We can perform vector math on them! This is useful if we want to measure the similarity between two texts for instance.
+
+# Document similarity with word embeddings
+Practical use case of word vectors is to compare the semantic similarity between documents. If you are a retail bank, insurance company or any other company that sells to end users, you will have to deal with support requests. Many customers have similar requests. By finding out how similar texts are semantically, previous answers to similar requests can be reused and service can be improved.
+
+SpaCy has a built in function to measure the similarity between two sentences. It also comes with pre trained vectors, from the Word2Vec model which is similar to GloVe. This methods works by averaging the embedding vectors of all words in a text and then measuring the cosine of the angle between the average vectors. Two vectors pointing in roughly the same direction will have a high similarity score, vectors pointing in different directions will have a low similarity score.
+
+![Similarity Vectors](./assets/similarity_vectors.png)
+
+```Python 
+sup1 = nlp('I would like to open a new checking account')
+sup2 = nlp('How do I open a checking account?')
+```
+As you can see, these requests are pretty similar:
+```Python 
+sup1.similarity(sup2)
+```
+```
+0.7079433112862716
+```
+And indeed their similarity score is quite high. This simple averaging method works pretty decently. It is not however able to capture things like negations well as a single deviating vector might not influence the average too much. E.g. 'I would like to close a checking account' has a semantically different meaning than 'I would like to open a checking account' but the model sees them as pretty similar. Yet, this approach is still useful and a good illustration of the advantages of representing semantics as vectors.
+
 
 # Topic modeling
 http://nbviewer.jupyter.org/github/skipgram/modern-nlp-in-python/blob/master/executable/Modern_NLP_in_Python.ipynb 
@@ -744,11 +1003,10 @@ http://nbviewer.jupyter.org/github/skipgram/modern-nlp-in-python/blob/master/exe
 # A quick tour of the Keras functional API
 https://keras.io/getting-started/functional-api-guide/
 
-## Debugging complex models with GraphViz
-https://keras.io/visualization/
 
 # Seq2Seq models
 https://blog.keras.io/a-ten-minute-introduction-to-sequence-to-sequence-learning-in-keras.html
+
 
 # Attention
 https://github.com/philipperemy/keras-attention-mechanism/blob/master/attention_lstm.py
