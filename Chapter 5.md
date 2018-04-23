@@ -336,6 +336,7 @@ The possible attributes for a token can be:
 - `'POS'`, `'TAG'`, `'DEP'`, `'LEMMA'`, `'SHAPE'`: The tokens position, tag, dependency, lemma or shape has to match. 
 - `'ENT_TYPE'`: The tokens entity type from NER has to match.
 
+SpaCys lemmatization is extremely useful. A lemma is the base version of a word. 'Was' for example is a version of 'be' so 'be' is the lemma for 'was' but also for 'is'. SpaCy can lemmatize words in context, meaning it uses the surrounding words to determine what the actual base version of a word is.
 To create a matcher, we have to pass on the vocabulary the matcher works on. In this case, we can just pass the vocabulary of our english language model:
 
 ```Python 
@@ -531,31 +532,214 @@ This would yield all articles which include a Dutch btw, but unsurprisingly no a
 ## When to use regex and when not to
 Regex is a powerful tool and this very short introduction does not do it justice. In fact, there are several books longer than this one written purely on regex. Regex works well on simple, clear to define patterns. VAT numbers are the perfect examples, and email addresses or phone numbers are very popular use cases. However, regex fails when the pattern is hard to define or can only be inferred from context. It is not possible to create a rule based named entity recognizer that can spot that a word refers to the name of a person, because names follow no clear distinguishing pattern. So, next time you are looking to find something that is easy to spot for a human but hard to describe in rules, use a machine learning based solution. Next time you are looking for something clearly encoded, like a VAT number, use regex.
 
-# Document similarity
-
-# Topic modeling
-http://nbviewer.jupyter.org/github/skipgram/modern-nlp-in-python/blob/master/executable/Modern_NLP_in_Python.ipynb 
-
-# Expanding SpaCy 
-https://explosion.ai/blog/spacy-v2-pipelines-extensions
-
 # A text classification task
 https://www.figure-eight.com/data-for-everyone/
+
+A common NLP task is to classify text. The most common text classification is done in sentiment analysis, where texts are classified as positive or negative. In this section, we will consider a slightly harder problem: Classifying whether a tweet is about an actual disaster happening or not. Today, investors have developed a number of ways to gain information from tweets. Twitter users are often faster than news outlets to report disasters, such as a fire or a flood. This speed advantage can be used for event driven trading strategies for instance. Yet, not all tweets that contain words associated with disasters are actually about disasters. A tweet like: 'California forests on fire near San-Francisco' is a tweet that should be taken into consideration while: 'California this weekend was fire, good times in San-Francisco' can be safely ignored. 
+
+The goal of this task is to build a classifier that separates the tweets about real disasters from irrelevant tweets. The dataset consists of hand labeled tweets that were obtained by searching twitter for words common to disaster tweets like 'ablaze' or 'fire'.
 
 # Preparing the data
 https://blog.insightdatascience.com/how-to-solve-90-of-nlp-problems-a-step-by-step-guide-fda605278e4e 
 
-## Tokenization
+Preparing text task of its own, because real world text is often messy and can not be fixed with a few simple scaling operations. People make typos, they add unnecessary characters, they use text encodings we can not read, etc. NLP involves its own set of data cleaning challenges and techniques. 
+
+## Sanitizing characters 
+To store text, computers need to encode the characters into bits. There are several different ways to do this and not all of them can deal with all characters. It is good practice to keep all text files in one encoding scheme, usually utf-8, but of course that does not always happen. Files might also be corrupted, meaning that a few bits are off rendering some characters unreadable. Therefore we need to sanitize our inputs first.
+
+Python offers a helpful `codecs` library that allows us to deal with different encodings. Our data is utf-8 encoded, but there are a few special characters in there that can not be read easily. Therefore, we have to sanitize our text of these special characters.
+```Python 
+import codecs
+input_file = codecs.open('../input/socialmedia-disaster-tweets-DFE.csv',
+                          'r',
+                          encoding='utf-8', 
+                          errors='replace')
+```
+`codecs.open` acts as a stand in replacement for pythons standard file opening function. It returns a file object which we can later read line by line. We specify the input path, that we want to read the file (with `'r'`), the expected encoding and what to do with errors. In this case we will replace errors with a special unreadable character marker.
+
+To write to the output file, we can just use Pythons standard `open()` function. This function will create a file at the specified file path we can write to. 
+```Python                         
+output_file = open('clean_socialmedia-disaster.csv', 'w')
+```
+Now, all we have to do is loop over the lines in our input file that we read with our `codecs` reader and save it as a regular csv file again.
+```Python
+for line in input_file:
+    out = line
+    output_file.write(line)
+
+```
+It is good practice that we close the file objects afterwards.
+```Python
+input_file.close()
+output_file.close()
+```
+
+Now we can read the sanitized csv file with pandas.
+```Python 
+df = pd.read_csv('clean_socialmedia-disaster.csv')
+```
+
 
 ## Lemmatization
 
+Lemmas have already made several appearances in this chapter. A lemma in the field of linguistics, also called headword, is the word under which the set of related words or forms appears in a dictionary. 'Was' and 'is' appear under 'be', 'mice' appears under 'mouse' and so on. Often times, the specific form of a word does not matter very much, so it can be a good idea to convert all text into it's lemma form.
+
+SpaCy offers a handy way to lemmatize text, so once again, we load a SpaCy pipeline. Only that in this case we don't need any pipeline module but the tokenizer. The tokenizer splits text into separate words, usually by spaces. These individual words, or tokens, can then be used to look up their lemma. 
+```Python 
+import spacy
+nlp = spacy.load('en',disable=['tagger','parser','ner'])
+```
+
+Lemmatization can be slow, so for big files it makes sense to track progress. `tqdm` allows to show progress pars on the pandas `apply` function. All we have to do is to import `tqdm` as well as the notebook component for pretty rendering in our work environment. Then we have to tell `tqdm` we would like to use it with pandas.
+```Python 
+from tqdm import tqdm, tqdm_notebook
+tqdm.pandas(tqdm_notebook)
+```
+We can now run `progress_apply` on a data frame just as we would use the standard `apply` method, but it has a progress bar. 
+
+For each row, we loop over the words in the 'text' column and save the lemma of the word in a new 'lemmas' column.
+```Python 
+df['lemmas'] = df["text"].progress_apply(lambda row: 
+                                         [w.lemma_ for w in nlp(row)])
+```
+Our 'lemmas' column is a full of lists now, so to turn the lists back into texts, we join all elements of the lists with a space as a separator.
+
+```Python 
+df['joint_lemmas'] = df['lemmas'].progress_apply(lambda row: ' '.join(row))
+```
+
+## Preparing the target 
+There are several possible prediction target in this dataset. Humans were asked to rate a tweet, and apparently the were given three options:
+```Python 
+df.choose_one.unique()
+```
+
+```
+array(['Relevant', 'Not Relevant', "Can't Decide"], dtype=object)
+```
+Tweets for which humans can not decide whether it is about a real disaster or not are not interesting to us here. So we will just remove that category:
+
+```Python 
+df = df[df.choose_one != "Can't Decide"]
+```
+
+We are also only interested in mapping text to relevance, so we can drop all other metadata and just keep these two columns.
+```Python 
+df = df[['text','choose_one']]
+``` 
+Finally, we convert the target into numbers. This is a binary classification task as there are only two categories. So we map 'Relevant' to 1 and 'Not Relevant' to zero:
+```Python 
+f['relevant'] = df.choose_one.map({'Relevant':1,'Not Relevant':0})
+```
+
+## Preparing train and test set 
+Before we start building models, lets split our data in train and test set:
+```Python 
+from sklearn.model_selection import train_test_split
+X_train, X_test, y_train, y_test = train_test_split(df['joint_lemmas'], 
+                                                    df['relevant'], 
+                                                    test_size=0.2,
+                                                    random_state=42)
+```
+
 # Bag of words
 https://stackoverflow.com/questions/21107505/word-count-from-a-txt-file-program
+A simple, yet effective way of classifying text is to see text as a bag of words. That means, we do not care for the order in which words appear in the text, but only about which words appear in the text.
+## Count vectors
+One way of doing bag of words classification is by simply counting the occurrences of different words in a text. This is done with a so called count vector. Each word has an index, and for each text, the value of the count vector at that index is the number of occurrences of the word that belongs to the index. 
 
-# TF-IDF
+A count vector for the text 'I see cats and dogs and elephants' could look like this:
+
+|i|see|cats|and|dogs|elephants|
+|-|---|---|---|---|--------|
+|1|1|1|2|1|1|
+
+In reality, count vectors are pretty sparse. There are about 23,000 different words in our text corpus. It makes sense to limit the amount of words we want to include in our count vectors. Rare words are often just gibberish or typos with no meaning. Keeping all rare words can be a source of overfitting. 
+
+We are using `sklearn`'s built in count vectorizer. By setting `max_features` we can control how many words we want to consider. In this case, we will only consider the 10,000 most frequent words: 
+```Python 
+from sklearn.feature_extraction.text import CountVectorizer
+
+count_vectorizer = CountVectorizer(max_features=10000)
+```
+Our count vectorizer can now transform texts into count vectors. Each count vector will have 10,000 dimensions. 
+```Python 
+X_train_counts = count_vectorizer.fit_transform(X_train)
+X_test_counts = count_vectorizer.transform(X_test)
+```
+Once we have obtained our count vectors, we can perform simple logistic regression on them. While we could use Keras for logistic regression as we did in chapter 1, it is often easier to just use the logistic regression class from sklearn:
+```Python 
+from sklearn.linear_model import LogisticRegression
+clf = LogisticRegression()
+
+clf.fit(X_train_counts, y_train)
+
+y_predicted = clf.predict(X_test_counts)
+```
+Now that we have predictions from our logistic regressor, we can measure its accuracy with `sklearn`:
+
+```Python 
+from sklearn.metrics import accuracy_score
+accuracy_score(y_test, y_predicted)
+```
+
+``` 
+0.8011049723756906
+``` 
+80% accuracy is pretty decent for such a simple method. A simple count vector based classification is useful as a baseline for more advanced methods which we will discuss later.
+
+## TF-IDF
 https://stevenloria.com/tf-idf/
+TF-IDF stands for 'Term Frequency, Inverse Document Frequency' and it aims to address a problem of simple word counting: Words that appear frequently in a text are important but words that appear in _all_ texts are not important. 
+
+The TF component is just like a count vector, except that TF divides the counts by the total number of words in a text. 
+
+The IDF component is the logarithm of the total number of texts in the entire corpus divided by the number of texts that include a specific word.
+
+TF-IDF is the product of these two measurements. TF-IDF vectors are like count vectors, except they contain the TF-IDF scores instead of the counts for words contain 
+
+ Words that appear frequently in one text but are rare across the entire corpus have a high score in the TF-IDF vector. We create TF-IDF vectors just as we created count vectors with `sklearn`:
+
+```Python 
+from sklearn.feature_extraction.text import TfidfVectorizer
+tfidf_vectorizer = TfidfVectorizer()
+
+X_train_tfidf = tfidf_vectorizer.fit_transform(X_train)
+X_test_tfidf = tfidf_vectorizer.transform(X_test)
+```
+
+Once we have the TF-IDF vectors, we can train a logistic regressor on them just like we did for count vectors:
+
+```Python 
+clf_tfidf = LogisticRegression()
+clf_tfidf.fit(X_train_tfidf, y_train)
+
+y_predicted = clf_tfidf.predict(X_test_tfidf)
+```
+
+In this case, TF-IDF does slightly worse than count vectors. The performance difference is very small though so that it might be attributable to chance in this case:
+
+```Python
+accuracy_score(y_pred=y_predicted, y_true=y_test)
+```
+
+```
+0.7978821362799263
+```
 
 # Word embeddings
+The order of words in a text matters. Therefore, we can expect higher performance if we do not just look at texts in aggregate but see them as a sequence. The next sections make use of a lot of the techniques discussed in the last chapter but they add a critical ingredient: Word Vectors.
+
+Words and word tokens are categorical features. As such, we can not directly feed them into a neural net. Previously, we have dealt with categorical data by turning it into one hot encoded vectors. But for words, this is impractical. Since our vocabulary is 10,000 words, each vector would contain 10,000 numbers which are all zeros except for one. This is highly inefficient. Instead we will use an embedding.
+
+In practice, embeddings work like a look up table. For each token, they store a vector. When the token is given to the embedding layer, it returns the vector for that token and passes it through the neural network. As the network trains, the embeddings get optimized as well. Remember that neural networks work by calculating the derivative of the loss function with respect to the parameters (weights) of the model. Through back propagation we can also calculate the derivative of the loss function with respect to the input of the model. Thus we can optimize the embeddings to deliver ideal inputs that help our model.
+
+# Building your own neural network for NLP 
+
+# Document similarity
+
+# Topic modeling
+http://nbviewer.jupyter.org/github/skipgram/modern-nlp-in-python/blob/master/executable/Modern_NLP_in_Python.ipynb 
 
 # A quick tour of the Keras functional API
 https://keras.io/getting-started/functional-api-guide/
