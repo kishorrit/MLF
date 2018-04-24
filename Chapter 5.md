@@ -172,8 +172,6 @@ As you can see, political institutions such as the senate are most frequently na
 From here, you could conduct all kinds of other investigations. The pre-trained NER gives a powerful tool that solves many common NLP tasks.
 
 ## Fine tuning the NER
-https://github.com/explosion/spacy/blob/master/examples/training/train_ner.py
-
 Many times, you will find that the pre trained NER does not do well enough on the specific kind of text that you want to work with. To solve this problem, you will have to fine tune the NER model by training it with custom data. 
 
 Your training data should be in a form like this:
@@ -307,7 +305,6 @@ Apple | Apple | dobj | buy
 
 
 # Rule based matching
-https://spacy.io/usage/linguistic-features#section-rule-based-matching
 
 Before deep learning and statistical modeling took over, natural language processing was all about rules. And rule based systems are not dead! They are often easy to set up and do simple tasks pretty well. Imagine you would want to find all mentions of 'Google' in a text. Would you really train a neural network based named entity recognizer, run all text through the neural network and then look for 'Google' in the entity texts, or would you just search for text that exactly matches 'Google' with a classic search algorithm? SpaCy comes with an easy to use rule based matcher.
 
@@ -533,14 +530,12 @@ This would yield all articles which include a Dutch btw, but unsurprisingly no a
 Regex is a powerful tool and this very short introduction does not do it justice. In fact, there are several books longer than this one written purely on regex. Regex works well on simple, clear to define patterns. VAT numbers are the perfect examples, and email addresses or phone numbers are very popular use cases. However, regex fails when the pattern is hard to define or can only be inferred from context. It is not possible to create a rule based named entity recognizer that can spot that a word refers to the name of a person, because names follow no clear distinguishing pattern. So, next time you are looking to find something that is easy to spot for a human but hard to describe in rules, use a machine learning based solution. Next time you are looking for something clearly encoded, like a VAT number, use regex.
 
 # A text classification task
-https://www.figure-eight.com/data-for-everyone/
 
 A common NLP task is to classify text. The most common text classification is done in sentiment analysis, where texts are classified as positive or negative. In this section, we will consider a slightly harder problem: Classifying whether a tweet is about an actual disaster happening or not. Today, investors have developed a number of ways to gain information from tweets. Twitter users are often faster than news outlets to report disasters, such as a fire or a flood. This speed advantage can be used for event driven trading strategies for instance. Yet, not all tweets that contain words associated with disasters are actually about disasters. A tweet like: 'California forests on fire near San-Francisco' is a tweet that should be taken into consideration while: 'California this weekend was fire, good times in San-Francisco' can be safely ignored. 
 
 The goal of this task is to build a classifier that separates the tweets about real disasters from irrelevant tweets. The dataset consists of hand labeled tweets that were obtained by searching twitter for words common to disaster tweets like 'ablaze' or 'fire'.
 
 # Preparing the data
-https://blog.insightdatascience.com/how-to-solve-90-of-nlp-problems-a-step-by-step-guide-fda605278e4e 
 
 Preparing text task of its own, because real world text is often messy and can not be fixed with a few simple scaling operations. People make typos, they add unnecessary characters, they use text encodings we can not read, etc. NLP involves its own set of data cleaning challenges and techniques. 
 
@@ -643,7 +638,7 @@ X_train, X_test, y_train, y_test = train_test_split(df['joint_lemmas'],
 ```
 
 # Bag of words
-https://stackoverflow.com/questions/21107505/word-count-from-a-txt-file-program
+
 A simple, yet effective way of classifying text is to see text as a bag of words. That means, we do not care for the order in which words appear in the text, but only about which words appear in the text.
 ## Count vectors
 One way of doing bag of words classification is by simply counting the occurrences of different words in a text. This is done with a so called count vector. Each word has an index, and for each text, the value of the count vector at that index is the number of occurrences of the word that belongs to the index. 
@@ -689,7 +684,6 @@ accuracy_score(y_test, y_predicted)
 80% accuracy is pretty decent for such a simple method. A simple count vector based classification is useful as a baseline for more advanced methods which we will discuss later.
 
 ## TF-IDF
-https://stevenloria.com/tf-idf/
 TF-IDF stands for 'Term Frequency, Inverse Document Frequency' and it aims to address a problem of simple word counting: Words that appear frequently in a text are important but words that appear in _all_ texts are not important. 
 
 The TF component is just like a count vector, except that TF divides the counts by the total number of words in a text. 
@@ -726,6 +720,79 @@ accuracy_score(y_pred=y_predicted, y_true=y_test)
 ```
 0.7978821362799263
 ```
+
+# Topic modeling 
+
+A final, very useful application of word counting is topic modeling. Given a set of texts, can we find clusters of topics? The method to do this is called latent dirichlet allocation (LDA).
+
+The name is quite a mouth full but the algorithm is useful, so we will look at it step by step. LDA makes the following assumption about how texts are written.
+
+- First, a topic distribution is chosen, say 70% machine learning and 30% finance.
+- Second, a distribution of words for each topic is chosen. For example the topic 'machine learning' consists to 20% of the word 'tensor', 10% out of the word 'gradient' and so on. This means, that our topic distribution is a _distribution of distributions_, also called a dirichlet distribution.
+- Once the text gets written, two probabilistic decisions are made for each word: First, a topic is chosen from the distribution of topics in the document. Then, a word is chosen for the distribution of words in that document.
+
+Note that not all documents in a corpus have the same distribution of topics. Chapter 1 can be 80% about machine learning while chapter 4 is only 50% about machine learning. We need to specify a fixed number of topics however.
+
+In the learning process, we start out by assigning each word in the corpus randomly to one topic. 
+
+For each document, we then calculate
+$$p(t| d)$$
+
+That is the probability of each topic $t$ to be included in document $d$. For each word we then calculate
+
+$$p(w| t)$$
+
+That is the probability of a word $w$ to belong to a topic $t$
+
+We then assign the word to a new topic $t$ with the probability:
+
+$$p(t| d) * p(w| t)$$
+
+In other words, we assume that all words are already correctly assigned to a topic except for the word currently under consideration. We then try to assign words to topics to make documents more homogenous in their topic distribution. This way, words that actually belong to a topic cluster together.
+
+Scikit Learn offers an easy to use LDA tool. We first need to create a new LDA analyzer and specify the number of topics (called components here) we expect.
+
+```Python
+from sklearn.decomposition import LatentDirichletAllocation
+
+lda = LatentDirichletAllocation(n_components=2)
+```
+
+We then create count vectors, just as we did for the bag of words analysis. For LDA it is important to remove frequent words that don't mean anything like 'an' or 'the', so called stop words. The `CountVectorizer` comes with a built in stop word dictionary that removes these words automatically.
+
+```Python 
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+vectorizer = CountVectorizer(stop_words='english')
+tf = vectorizer.fit_transform(df['joint_lemmas'])
+```
+
+Now we fit the LDA to the count vectors.
+```
+lda.fit(tf)
+```
+
+To inspect our results, we can print out the most frequent words for each topic. To this end we first need to specify the number of words per topic we want to print. We also need to extract the mapping word count vector indices to words. 
+```Python 
+n_top_words = 5
+tf_feature_names = vectorizer.get_feature_names()
+```
+
+Now we can loop over the topics of the LDA, and print the most frequent words in in.
+```Python
+for topic_idx, topic in enumerate(lda.components_):
+        message = "Topic #%d: " % topic_idx
+        message += " ".join([tf_feature_names[i]
+                             for i in topic.argsort()[:-n_top_words - 1:-1]])
+        print(message)
+```
+
+```
+Topic #0: http news bomb kill disaster
+Topic #1: pron http like just https
+```
+As you can see, the LDA seems to have discovered the grouping into serious tweets and non serious ones by itself without being given the targets.
+
+This method is very useful for classifying news articles to. Investors might want to know if there is a news article mentionioning a risk factor they are exposed to. The same goes for support requests for consumer facing organizations which can be clustered this way.
 
 # Word embeddings
 The order of words in a text matters. Therefore, we can expect higher performance if we do not just look at texts in aggregate but see them as a sequence. The next sections make use of a lot of the techniques discussed in the last chapter but they add a critical ingredient: Word Vectors.
@@ -1004,18 +1071,7 @@ sup1.similarity(sup2)
 ```
 And indeed their similarity score is quite high. This simple averaging method works pretty decently. It is not however able to capture things like negations well as a single deviating vector might not influence the average too much. E.g. 'I would like to close a checking account' has a semantically different meaning than 'I would like to open a checking account' but the model sees them as pretty similar. Yet, this approach is still useful and a good illustration of the advantages of representing semantics as vectors.
 
-Optional: Add Doc2Vec
-
-https://medium.com/scaleabout/a-gentle-introduction-to-doc2vec-db3e8c0cce5e 
-
-https://towardsdatascience.com/another-twitter-sentiment-analysis-with-python-part-6-doc2vec-603f11832504
-
-# Topic modeling
-http://nbviewer.jupyter.org/github/skipgram/modern-nlp-in-python/blob/master/executable/Modern_NLP_in_Python.ipynb 
-
 # A quick tour of the Keras functional API
-https://keras.io/getting-started/functional-api-guide/
-
 
 So far, we used Sequential models. In the Sequential model, layers get stacked on top of each other when we call model.add(). In the functional API, we have a bit more control and can specify how layers should be connected. Let's look at a simply two layer network in both the Sequential and functional way:
 
@@ -1128,8 +1184,6 @@ Dense(24, activation='relu')
 When using the functional API, this can be easier than adding an activation function.
 
 # Attention
-https://github.com/philipperemy/keras-attention-mechanism/blob/master/attention_lstm.py
-
 Are you paying attention? If so, certainly not to every equally. In any text, some words matter more than others. An attention mechanism is a way for a neural network to 'focus' on a certain element in a sequence. Focusing, for neural networks, means amplifying what is important.
 
 ![Attention](./assets/attention.png)
@@ -1248,7 +1302,6 @@ ________________________________________________________________________________
 This model can be trained just as any Keras model. It achieves about 80% accuracy on the validation set.
 
 # Seq2Seq models
-https://blog.keras.io/a-ten-minute-introduction-to-sequence-to-sequence-learning-in-keras.html
 
 In 2016, Google announced that it had replaced the entire google translate algorithm with a single neural network. The special thing about the Google Neural Machine Translation system is that it translates many languages 'end to end' using only a single model. It works by encoding the semantics of a sentence and then decoding the semantics into the desired output language. The fact that such a system is possible at all baffled many linguists and other researchers as it shows that machine learning can create systems that accurately capture high level meanings and semantics without being given any explicit rules. These semantic meanings are represented as an encoding vector and while we don't quite yet know how to interpret these vectors there are sure a lot of useful applications for them. Translating from one language to another is popular, but we could use a similar approach to 'translate' a report into a summary. Text summarization has made great strides, but it requires a lot of compute power to deliver sensible results, so we will focus on language translation in this chapter.
 
