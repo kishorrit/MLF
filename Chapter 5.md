@@ -1,4 +1,4 @@
-translationtranslation# Chapter 5 - Natural Language processing
+receivetranslationtranslation# Chapter 5 - Natural Language processing
 
 It is no accident that Peter Brown, Co-CEO of Renaissance Technologies, one of the most successful quantitative hedge-funds of all time, previously worked at IBM applying machine learning to natural language problems. Information drives finance, and the most important source of information is written or spoken language. Ask any professional what they are actually spending time on and you will find that a significant part of finance is about reading. Headlines on tickers, Form-10Ks, the financial press, analyst reports, the list goes on and on. Automatically processing this information can increase speed of trades and increase the breath of information considered for trades while at the same time reducing costs.
 
@@ -1016,6 +1016,9 @@ http://nbviewer.jupyter.org/github/skipgram/modern-nlp-in-python/blob/master/exe
 # A quick tour of the Keras functional API
 https://keras.io/getting-started/functional-api-guide/
 
+# Attention
+https://github.com/philipperemy/keras-attention-mechanism/blob/master/attention_lstm.py
+
 
 # Seq2Seq models
 https://blog.keras.io/a-ten-minute-introduction-to-sequence-to-sequence-learning-in-keras.html
@@ -1229,17 +1232,184 @@ SVG(model_to_dot(model).create(prog='dot', format='svg'))
 
 ![Seq2Seq Visal](./assets/seq2seq_model_vis.png)
 
-You can now compile and train the model.
+You can now compile and train the model. Since we have to choose between a number of possible characters to output next, this is basically a multi-class classification task. Therefore we use a categorical cross-entropy loss.
 ```Python
 model.compile(optimizer='rmsprop', loss='categorical_crossentropy')
-model.fit([encoder_input_data, decoder_input_data], decoder_target_data,
-          batch_size=batch_size,
-          epochs=epochs,
-          validation_split=0.2)
+history = model.fit([encoder_input_data, decoder_input_data], 
+                    decoder_target_data,
+                    batch_size=batch_size,
+                    epochs=epochs,
+                    validation_split=0.2)
 ```
 
-# Attention
-https://github.com/philipperemy/keras-attention-mechanism/blob/master/attention_lstm.py
+The training process takes about 7 minutes on a GPU. If we plot the models progress, you can see that it is overfitting:
+
+![Seq2Seq Overfitting](./assets/seq2seq_overfitting.png)
+
+This is largely because we use only 10,000 sentence pairs of only relatively short sentences. Next to being a bigger model, a real translation or summarization system would have to be trained on many more examples. To allow you to follow the examples without owning a massive datacenter however, we are just using a smaller model to give an example of what a seq2seq architecture can do.
+
+## Creating inference models 
+Overfitting or not, we would like to use our model now. Using a seq2seq model for inference, that is making translations in this case, requires us to build a separate inference model which uses the weights trained in the training model, but does the routing a bit different. More specifically, we will separate encoder and decoder. This way, we can first create the encoding once and then use it for decoding instead of creating it again and again.
+
+The encoder model maps from the encoder inputs to the encoder states:
+```Python 
+encoder_model = Model(encoder_inputs, encoder_states)
+```
+The decoder model takes in the encoder memory plus it's own memory from the last character as an input and spits out a prediction plus its own memory to be used for the next character.
+
+```Python 
+# Inputs from the encoder
+#1
+decoder_state_input_h = Input(shape=(latent_dim,))
+decoder_state_input_c = Input(shape=(latent_dim,))
+
+# Create a combined memory to input into the decoder
+#2
+decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+
+# Decoder
+#3
+decoder_outputs, state_h, state_c = decoder_lstm(decoder_inputs, initial_state=decoder_states_inputs)
+
+#4
+decoder_states = [state_h, state_c]
+
+# Predict next char
+#5
+decoder_outputs = decoder_dense(decoder_outputs)
+
+#6
+decoder_model = Model(
+    [decoder_inputs] + decoder_states_inputs,
+    [decoder_outputs] + decoder_states)
+```
+\#1 The encoder memory consists of two states. We need co create two inputs for both of them.
+
+\#2 We then combine the two states into one memory representation.
+
+\#3 We then connect the decoder lstm we trained earlier to the decoder inputs and the encoder memory.
+
+\#4 We combine the two states of the decoder lstm into one memory representation.
+
+\#5 We reuse the dense layer of the decoder to predict the next character.
+
+\#6 Finally, we set up the decoder model to take the in the character input as well as the state input and map it to the character output as well as state output.
+
+## Making translations 
+
+We can now start to use our model. First we create an index which maps tokens to characters again.
+
+```Python 
+reverse_input_char_index = {i: char 
+                            for char, i in input_token_index.items()}
+reverse_target_char_index = {i: char 
+                             for char, i in target_token_index.items()}
+```
+
+When we translate a phrase, we now first encode the input. We then loop, feeding the decoder states back into the decoder until we receive a STOP (in our case we use the tab character to signal STOP).
+
+The `target_seq` is a numpy array representing the last character predicted by the decoder.
+
+```Python 
+def decode_sequence(input_seq):
+    
+    #1
+    states_value = encoder_model.predict(input_seq)
+    
+    #2
+    target_seq = np.zeros((1, 1, num_decoder_tokens))
+    
+    #3
+    target_seq[0, 0, target_token_index['\t']] = 1.
+
+    #4 
+    stop_condition = False
+    decoded_sentence = ''
+    
+    #5
+    while not stop_condition:
+        
+        #6
+        output_tokens, h, c = decoder_model.predict(
+            [target_seq] + states_value)
+
+        #7
+        sampled_token_index = np.argmax(output_tokens[0, -1, :])
+
+        #8
+        sampled_char = reverse_target_char_index[sampled_token_index]
+        
+        #9
+        decoded_sentence += sampled_char
 
 
+        #10
+        if (sampled_char == '\n' or
+           len(decoded_sentence) > max_decoder_seq_length):
+            stop_condition = True
 
+        # 11
+        target_seq = np.zeros((1, 1, num_decoder_tokens))
+        target_seq[0, 0, sampled_token_index] = 1.
+
+        #12
+        states_value = [h, c]
+
+    return decoded_sentence
+```
+\#1 Encode the input as state vectors.
+
+\#2 Generate empty target sequence of length 1.
+
+\#3 Populate the first character of target sequence with the start character.
+
+\#4 There was no stop sign and the decoded sequence is empty so far.
+
+\#5 Loop until we receive a stop sign.
+
+\#6 Get output and internal states of the decoder.
+
+\#7 Get the predicted token (the token with the highest probability) .
+
+\#8 Get the character belonging to the token number.
+
+\#9 Append character to output.
+
+\#10 Exit condition: either hit max length or find stop character.
+
+\#11 Update the target sequence (of length 1).
+
+\#12 Update states.
+
+Now we can translate English to French! At least for some phrases it works quite well. Given that we did not supply our model with any rules about French words or grammar this is quite impressive. Translation systems like Googles of course use much bigger datasets and models, but in principle it is the same.
+
+To translate a text, we first create an placeholder array full of zeros.
+```Python 
+my_text = 'Thanks!'
+placeholder = np.zeros((1,len(my_text)+10,num_encoder_tokens))
+```
+
+We then one hot encode all characters in the text by setting the element at the index of the characters token number to 1.
+```Python
+for i, char in enumerate(my_text):
+    print(i,char, input_token_index[char])
+    placeholder[0,i,input_token_index[char]] = 1
+```
+This prints out the characters toke number alongside the character and its position in the text.
+```
+0 T 38
+1 h 51
+2 a 44
+3 n 57
+4 k 54
+5 s 62
+6 ! 1
+```
+Now we can feed this placeholder into our decoder:
+```Python
+decode_sequence(placeholder)
+```
+And get the translation back:
+```
+'Merci !\n'
+```
