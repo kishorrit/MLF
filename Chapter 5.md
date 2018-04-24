@@ -1,4 +1,4 @@
-# Chapter 5 - Natural Language processing
+translationtranslation# Chapter 5 - Natural Language processing
 
 It is no accident that Peter Brown, Co-CEO of Renaissance Technologies, one of the most successful quantitative hedge-funds of all time, previously worked at IBM applying machine learning to natural language problems. Information drives finance, and the most important source of information is written or spoken language. Ask any professional what they are actually spending time on and you will find that a significant part of finance is about reading. Headlines on tickers, Form-10Ks, the financial press, analyst reports, the list goes on and on. Automatically processing this information can increase speed of trades and increase the breath of information considered for trades while at the same time reducing costs.
 
@@ -871,10 +871,15 @@ for line in f: #1
 f.close() #6
 ```
 \#1 We loop over all lines in the file. Each line contains a word and embedding. 
+
 \#2 We split the line by whitespace.
+
 \#3 The first thing in the line is always the word.
+
 \#4 Then come the embedding values. We immediately transform them into a numpy array and make sure there are all floating point numbers, that is decimals.
+
 \#5 We then save the embedding vector in our embedding dictionary.
+
 \#6 Once we are done with it we close the file.
 
 Now we have a dictionary mapping words to their embeddings:
@@ -922,9 +927,12 @@ for word, i in word_index.items(): #1
         embedding_matrix[i] = embedding_vector
 ```
 \#1 Loop over all words in the word index.
+
 \#2 If we are above the amount of words we want to use we do nothing.
+
 \#3 Get the embedding vector for the word. This operation might return none if there is no embedding for this word.
-\#4 If there is an embedding vector, put it in the embedding matrix
+
+\#4 If there is an embedding vector, put it in the embedding matrix.
 
 To use the pre trained embeddings, we just have to set the weights in the embedding layer to the embedding matrix we just created. To make sure the carefully created weights are not destroyed we set the layer to not trainable. 
 ```Python 
@@ -996,6 +1004,11 @@ sup1.similarity(sup2)
 ```
 And indeed their similarity score is quite high. This simple averaging method works pretty decently. It is not however able to capture things like negations well as a single deviating vector might not influence the average too much. E.g. 'I would like to close a checking account' has a semantically different meaning than 'I would like to open a checking account' but the model sees them as pretty similar. Yet, this approach is still useful and a good illustration of the advantages of representing semantics as vectors.
 
+Optional: Add Doc2Vec
+
+https://medium.com/scaleabout/a-gentle-introduction-to-doc2vec-db3e8c0cce5e 
+
+https://towardsdatascience.com/another-twitter-sentiment-analysis-with-python-part-6-doc2vec-603f11832504
 
 # Topic modeling
 http://nbviewer.jupyter.org/github/skipgram/modern-nlp-in-python/blob/master/executable/Modern_NLP_in_Python.ipynb 
@@ -1007,6 +1020,223 @@ https://keras.io/getting-started/functional-api-guide/
 # Seq2Seq models
 https://blog.keras.io/a-ten-minute-introduction-to-sequence-to-sequence-learning-in-keras.html
 
+In 2016, Google announced that it had replaced the entire google translate algorithm with a single neural network. The special thing about the Google Neural Machine Translation system is that it translates many languages 'end to end' using only a single model. It works by encoding the semantics of a sentence and then decoding the semantics into the desired output language. The fact that such a system is possible at all baffled many linguists and other researchers as it shows that machine learning can create systems that accurately capture high level meanings and semantics without being given any explicit rules. These semantic meanings are represented as an encoding vector and while we don't quite yet know how to interpret these vectors there are sure a lot of useful applications for them. Translating from one language to another is popular, but we could use a similar approach to 'translate' a report into a summary. Text summarization has made great strides, but it requires a lot of compute power to deliver sensible results, so we will focus on language translation in this chapter.
+
+## Seq2Seq architecture overview 
+If all phrases had the exact same length, we could simply use an LSTM (or multiple). Remember that an LSTM can also return a full sequence of the same length as the input sequence. However, in many cases sequences will not have the same length. To deal with different lengths of phrases, we first create an encoder which aims to capture the sentences semantic meaning. We then create a decoder, which has two inputs: The encoded semantics and the sequence that was already produced. The decoder then predicts the next item in the sequence. For our character level translator this looks like this:
+![Seq2Seq architecture overview](./assets/seq2seq_overview.png)
+Note how the output of the decoder is used as the input of the decoder again. This process is only stopped once the decoder produces a < STOP > tag that indicates that the sequence is over.
+
+## The data 
+We use a dataset of English phrases and their Translation. This dataset was obtained from the Tabotea project, a translation database. The data file can be found attached to the code on Kaggle. We implement this model on a character level, which means we won't tokenize words as in previous models but characters. This makes the task harder for our network because it now also has to learn how to spell words! But on the other hand there are much less characters than words so we can just one hot encode characters and don't have to work with embeddings. This makes our model a bit simpler. To get started, we have to set a few parameters: 
+
+```Python 
+batch_size = 64  # 1
+epochs = 100  # 2
+latent_dim = 256  # 
+num_samples = 10000  # 
+data_path = 'fra-eng/fra.txt'
+```
+\#1 Batch size for training.
+
+\#2 Number of epochs to train for.
+
+\#3 Dimensionality of the encoding vectors. How many numbers to we use to encode the meaning of a sentence.
+
+\#3 Number of samples to train on. The whole dataset has about 140,000 samples. However, we will train on fewer for memory and time reasons.
+
+\#4 Path to the data txt file on disk.
+
+Input (English) and target (French) is tab delimited in the data file. Each row represents a new phrase. The translations are separated by a tab (escaped character: \\t). So we loop over the lines and read out inputs and targets by splitting the lines at the tab symbol.
+
+To build up our tokenizer, we also need to know which characters are present in our dataset. So for all characters we check whether they are already in our set of seen characters and if not add them to it.
+
+First we set up the holding variables for texts and characters:
+```Python 
+input_texts = []
+target_texts = []
+input_characters = set()
+target_characters = set()
+``` 
+Then we loop over as many lines as we want samples and extract the texts and characters:
+```Python 
+lines = open(data_path).read().split('\n')
+for line in lines[: min(num_samples, len(lines) - 1)]:
+    
+    input_text, target_text = line.split('\t') #1
+    
+    target_text = '\t' + target_text + '\n' #2
+    input_texts.append(input_text)
+    target_texts.append(target_text)
+
+    for char in input_text: #3
+        if char not in input_characters:
+            input_characters.add(char)
+            
+    for char in target_text:
+        if char not in target_characters:
+            target_characters.add(char)
+```
+\#1 Input and target are split by tabs, English TAB French, so we split the lines by tabs to obtain input and target texts.
+
+\#2 We use "tab" as the "start sequence" character for the targets, and "\n" as "end sequence" character. This way we know when to stop decoding.
+
+\#3 Loop over the characters in the input text, add all characters that we have not seen yet to our set of input characters.
+
+\#4 Loop over the characters in the output text, add all characters that we have not seen yet to our set of output characters.
+
+We now create lists of alphabetically sorted input and output characters:
+```Python 
+input_characters = sorted(list(input_characters))
+target_characters = sorted(list(target_characters))
+```
+
+And we count how many input and output characters we have. This in important since we need to know how many dimensions our one hot encodings should have.
+```Python 
+num_encoder_tokens = len(input_characters)
+num_decoder_tokens = len(target_characters)
+```
+Instead of using Keras tokenizer, we will build our own dictionary mapping characters to token numbers.
+```Python 
+input_token_index = {char: i for i, char in enumerate(input_characters)}
+target_token_index = {char: i for i, char in enumerate(target_characters)}
+```
+We can see how this works by printing the token numbers for all characters in a short sentence:
+```Python 
+for c in 'the cat sits on the mat':
+    print(input_token_index[c], end = ' ')
+```
+
+```
+63 51 48 0 46 44 63 0 62 52 63 62 0 58 57 0 63 51 48 0 56 44 63 
+```
+
+Next, we build up our model training data. Remember that our model has two inputs but one output. While our model can handle sequences of any length, it is handy to prepare the data in Numpy and thus to know how long our longest sequence is:
+
+```Python 
+max_encoder_seq_length = max([len(txt) for txt in input_texts])
+max_decoder_seq_length = max([len(txt) for txt in target_texts])
+
+print('Max sequence length for inputs:', max_encoder_seq_length)
+print('Max sequence length for outputs:', max_decoder_seq_length)
+```
+```
+Max sequence length for inputs: 16
+Max sequence length for outputs: 59
+```
+
+Now we prepare input and output data for our model. 
+
+`encoder_input_data` is a 3D array of shape (num_pairs, max_english_sentence_length, num_english_characters) containing a one-hot vectorization of the English sentences.
+
+```Python 
+encoder_input_data = np.zeros(
+    (len(input_texts), max_encoder_seq_length, num_encoder_tokens),
+    dtype='float32')
+``` 
+
+`decoder_input_data` is a 3D array of shape (num_pairs, max_french_sentence_length, num_french_characters) containg a one-hot vectorization of the French sentences.
+
+```Python 
+decoder_input_data = np.zeros(
+    (len(input_texts), max_decoder_seq_length, num_decoder_tokens),
+    dtype='float32')
+```
+
+`decoder_target_data` is the same as decoder_input_data but offset by one timestep. `decoder_target_data[:, t, :]` will be the same as `decoder_input_data[:, t + 1, :]`.
+```Python 
+decoder_target_data = np.zeros(
+    (len(input_texts), max_decoder_seq_length, num_decoder_tokens),
+    dtype='float32')
+```
+
+You can see that the input and output of the decoder is the same except that the output is one timestep ahead. This makes sense when you consider that we will feed an unfinished sequence into the decoder and want it to predict the next character. We will use the functional API to create a model with two inputs.
+
+You see that the decoder also has two inputs: the decoder inputs and the encoded semantics. The encoded semantics however are not directly the outputs of the encoder LSTM but its _states_. In an LSTM, states are the hidden memory of the cells. What happens is that the first 'memory' of our decoder is the encoded semantics. To give the decoder this first memory, we can initialize its states with the states of the decoder LSTM.
+
+To return states, we have to set the `return_state` argument, configuring a RNN layer to return a list where the first entry is the outputs and the next entries are the internal RNN states. We once again are using a `CuDNNLSTM`. If you do not have a GPU, replace it with an `LSTM`, but note that training this model without a GPU can take very long.
+```Python
+#1
+encoder_inputs = Input(shape=(None, num_encoder_tokens), 
+                       name = 'encoder_inputs')
+
+#2                       
+encoder = CuDNNLSTM(latent_dim, 
+                   return_state=True, 
+                   name = 'encoder')
+
+#3                   
+encoder_outputs, state_h, state_c = encoder(encoder_inputs)
+
+#4
+encoder_states = [state_h, state_c]
+```
+\#1 We create an input layer for our encoder.
+
+\#2 We create the LSTM encoder.
+
+\#3 We link the LSTM ecoder to the input layer and get back the outputs and states.
+
+\#4 We discard `encoder_outputs` and only keep the states.
+
+Now we define the decoder. The decoder uses the states of the encoder as initial states for its decoding LSTM.
+
+You can think of it like this: Imagine, you were a translator translating English to French. When tasked with translating, you would first listen to the English speaker and form ideas about what the speaker wants to say in your head. You would then use these ideas to form a French sentence expressing the same idea.
+
+It is important to understand that we do not just pass a variable, but a piece of the computational graph. This means, we can later back-propagate from the decoder to the encoder. To use the analogy above: You might think that your French translation suffered from a poor understanding of the English sentence, so you start changing your English comprehension based on the outcomes of your French translation.
+```Python 
+#1
+decoder_inputs = Input(shape=(None, num_decoder_tokens), 
+                       name = 'decoder_inputs')
+#2                   
+decoder_lstm = CuDNNLSTM(latent_dim, 
+                        return_sequences=True, 
+                        return_state=True, 
+                        name = 'decoder_lstm')
+
+#3                      
+decoder_outputs, _, _ = decoder_lstm(decoder_inputs,
+                                     initial_state=encoder_states)
+
+#4                                     
+decoder_dense = Dense(num_decoder_tokens, 
+                     activation='softmax', 
+                     name = 'decoder_dense')
+                     
+decoder_outputs = decoder_dense(decoder_outputs)
+```
+\#1 Set up the decoder inputs.
+
+\#2 We set up our decoder to return full output sequences, and to return internal states as well. We don't use the return states in the training model, but we will use them for inference.
+
+\#3 Connect the decoder to the decoder inputs and specify the internal state. As mentioned above, we don't use the internal states of the decoder for training so we discard them here.
+
+\#4 Finally, we need to decide which character we want to use as the next character. This is a classification task so we will use a simple dense layer with a softmax activation function.
+
+We now have the pieces we need and can define our model with two inputs and one output: 
+
+```Python
+model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
+```
+
+If you have the graphviz library installed, you can visualize the model very nicely. Unfortunately this code snippet won't work on Kaggle.
+```Python
+from IPython.display import SVG
+from keras.utils.vis_utils import model_to_dot
+
+SVG(model_to_dot(model).create(prog='dot', format='svg'))
+```
+
+![Seq2Seq Visal](./assets/seq2seq_model_vis.png)
+
+You can now compile and train the model.
+```Python
+model.compile(optimizer='rmsprop', loss='categorical_crossentropy')
+model.fit([encoder_input_data, decoder_input_data], decoder_target_data,
+          batch_size=batch_size,
+          epochs=epochs,
+          validation_split=0.2)
+```
 
 # Attention
 https://github.com/philipperemy/keras-attention-mechanism/blob/master/attention_lstm.py
