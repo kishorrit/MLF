@@ -1016,9 +1016,236 @@ http://nbviewer.jupyter.org/github/skipgram/modern-nlp-in-python/blob/master/exe
 # A quick tour of the Keras functional API
 https://keras.io/getting-started/functional-api-guide/
 
+
+So far, we used Sequential models. In the Sequential model, layers get stacked on top of each other when we call model.add(). In the functional API, we have a bit more control and can specify how layers should be connected. Let's look at a simply two layer network in both the Sequential and functional way:
+
+```Python 
+from keras.models import Sequential
+from keras.layers import Dense, Activation
+
+model = Sequential()
+model.add(Dense(64, input_dim=64))
+model.add(Activation('relu'))
+model.add(Dense(4))
+model.add(Activation('softmax'))
+model.summary()
+```
+
+```
+Layer (type)                 Output Shape              Param #   
+=================================================================
+dense_1 (Dense)              (None, 64)                4160      
+_________________________________________________________________
+activation_1 (Activation)    (None, 64)                0         
+_________________________________________________________________
+dense_2 (Dense)              (None, 4)                 260       
+_________________________________________________________________
+activation_2 (Activation)    (None, 4)                 0         
+=================================================================
+Total params: 4,420
+Trainable params: 4,420
+Non-trainable params: 0
+_________________________________________________________________
+```
+The above model is a simple model implemented in the sequential API as we did it throughout this book so far. We will now implement the same model in the sequential API:
+
+```Python 
+from keras.models import Model #1
+from keras.layers import Dense, Activation, Input 
+
+model_input = Input(shape=(64,)) #2
+x = Dense(64)(model_input) #3
+x = Activation('relu')(x) #4
+x = Dense(4)(x)
+model_output = Activation('softmax')(x)
+
+model = Model(model_input, model_output) #5
+model.summary()
+```
+Notice the differences to the sequential API:
+\#1 Instead of defining the model first with `model = Sequential()`, you now define the computational graph first and then turn it into a model using the `Model` class.
+
+\#2 Inputs are now their own layer. 
+
+\#3 Instead of using `model.add()` you know define the layer and then pass on an input layer or the output tensor of the previous layer.
+
+\#4 You create models by stringing layers on a chain. `Dense(64)(model_input)` for instance returns a tensor. You pass on this tensor to the next layer, like in `Activation('relu')(x)`. This function will return a new output tensor which you can pass to the next layer and so on. This way you create a computational graph like a chain.
+
+\#5 To create a model, you pass the model input layer as well as the final output tensor of your graph into the `Model` class.
+
+Functional API models can be used just like sequential API models. In fact, from the output of this models summary, you can see it is pretty much the same as the model we just created with the sequential API.
+
+```
+Layer (type)                 Output Shape              Param #   
+=================================================================
+input_2 (InputLayer)         (None, 64)                0         
+_________________________________________________________________
+dense_3 (Dense)              (None, 64)                4160      
+_________________________________________________________________
+activation_3 (Activation)    (None, 64)                0         
+_________________________________________________________________
+dense_4 (Dense)              (None, 4)                 260       
+_________________________________________________________________
+activation_4 (Activation)    (None, 4)                 0         
+=================================================================
+Total params: 4,420
+Trainable params: 4,420
+Non-trainable params: 0
+_________________________________________________________________
+```
+
+You can see that the functional API can connect layers in more advanced ways than the Sequential model. We can also separate the layer creation and connection step. This keeps the code clean and allows us to use the same layer for different purposes.
+
+The code segment below will create the exact same model as the segment above, but with separate layer creation and connection steps.
+```Python 
+model_input = Input(shape=(64,))
+
+dense = Dense(64)
+
+x = dense(model_input)
+
+activation = Activation('relu')
+
+x = activation(x)
+
+dense_2 = Dense(4)
+
+x = dense_2(x)
+
+model_output = Activation('softmax')(x)
+
+model = Model(model_input, model_output)
+```
+
+Layers can be reused. We could for example train some layers in one computational graph and then use them for another, as we will do in the section on sequence to sequence models below.
+
+One more caveat before we use the functional API to build advanced models is that the activation function of any layer can also be specified directly in the layer. So far we have used a separate activation layer which increases clarity, but is not strictly required. A `Dense` layer with a relu acativation function can also be specified as:
+
+```Python
+Dense(24, activation='relu')
+```
+
+When using the functional API, this can be easier than adding an activation function.
+
 # Attention
 https://github.com/philipperemy/keras-attention-mechanism/blob/master/attention_lstm.py
 
+Are you paying attention? If so, certainly not to every equally. In any text, some words matter more than others. An attention mechanism is a way for a neural network to 'focus' on a certain element in a sequence. Focusing, for neural networks, means amplifying what is important.
+
+![Attention](./assets/attention.png)
+
+Attention layers are fully connected layers that take in a sequence and output the weighting for a sequence. The sequence is the multiplied with the weightings.
+
+```Python 
+def attention_3d_block(inputs,time_steps,single_attention_vector = False):
+    #1
+    input_dim = int(inputs.shape[2])
+    #2
+    a = Permute((2, 1),name='Attent_Permute')(inputs)
+    #3
+    a = Reshape((input_dim, time_steps),name='Reshape')(a) 
+    #4
+    a = Dense(time_steps, activation='softmax', name='Attent_Dense')(a) # Create attention vector
+    #5
+    if single_attention_vector:
+        #6
+        a = Lambda(lambda x: K.mean(x, axis=1), name='Dim_reduction')(a)
+        #7 
+        a = RepeatVector(input_dim, name='Repeat')(a)
+    #8
+    a_probs = Permute((2, 1), name='Attention_vec')(a) 
+    #9
+    output_attention_mul = Multiply(name='Attention_mul')([inputs, a_probs]) 
+    return output_attention_mul
+```
+\#1 Our input has the shape `(batch_size, time_steps, input_dim)`, where `time_steps` is the length of the sequence, and `input_dim` is the dimensionality of the input. If we applied this directly to a text series with the embeddings used above, `input_dim` would be 50, the same as the embedding dimensionality.
+
+\#2 We then swap (permute) the axis for `time_steps` and `input_dim` so that the tensor has a shape of `(batch_size, input_dim, time_steps)`.
+
+\#3 If everything went fine, our tensor is already in the shape we want it to. We are adding a reshaping operation just to be sure.
+
+\#4 Now comes the trick. We run our input through a dense layer with a softmax activation. This will generate a weighting for each element in the series, just as shown above. This dense layer is what is trained inside the attention block.
+
+\#5 By default, the dense layer computes attention for each input dimension individually. That is, for our word vectors, it would compute 50 different weightings. That can be useful if we are working with time series models where the input dimensions sincerely represent different things. But in this case, we want to weight words as a whole. 
+
+\#6 To create one attention value per word, we average the attention layer across the input dimensions. Our new tensor has the shape `(batch_size, 1, time_steps)`
+
+\#7 In order to multiply the attention vector with the input, we need to repeat the weightings across the input dimension. After repetition, the tensor has shape `(batch_size, input_dim, time_steps)` again, but with the same weights across the `input_dim` dimension.
+
+\#8 To match the shape of the input, we permute the axis for `time_steps` and `input_dim` back, so that the attention vector once again has a shape of `(batch_size, time_steps, input_dim)`.
+
+\#9 Finally, we apply the attention to the input by element wise multiplying the attention vector with the input. We return the resulting tensor.
+
+The flowchart below gives an overview of the process:
+
+![Attention Block](./assets/attention_block.png)
+
+Notice how the function above defines takes a tensor as an input, defines a graph, and returns a tensor. We can now call this function as part of our model building process:
+
+```Python 
+input_tokens = Input(shape=(maxlen,),name='input')
+
+embedding = Embedding(max_words, 
+                      embedding_dim, 
+                      input_length=maxlen, 
+                      weights = [embedding_matrix], 
+                      trainable = False, name='embedding')(input_tokens)
+
+attention_mul = attention_3d_block(inputs = embedding,
+                                   time_steps = maxlen,
+                                   single_attention_vector = True)
+
+lstm_out = CuDNNLSTM(32, return_sequences=True, name='lstm')(attention_mul)
+
+
+
+attention_mul = Flatten(name='flatten')(attention_mul)
+output = Dense(1, activation='sigmoid',name='output')(attention_mul)
+model = Model(input_tokens, output)
+```
+
+In this case, we are using the attention block right after the embeddings, meaning we amplify or suppress certain word embeddings we could equally well use the attention block after the LSTM. In many cases, you will find attention blocks to be powerful tools in your arsenal when building models that deal with any kind of sequence, especially in natural language processing.
+
+
+To become more comfortable with how the functional API strings up layers and how the attention block reshapes tensors, take a look at the models summary below.
+```Python 
+model.summary()
+```
+
+```
+__________________________________________________________________________________________________
+Layer (type)                    Output Shape         Param #     Connected to                     
+==================================================================================================
+input (InputLayer)              (None, 140)          0                                            
+__________________________________________________________________________________________________
+embedding (Embedding)           (None, 140, 50)      500000      input[0][0]                      
+__________________________________________________________________________________________________
+Attent_Permute (Permute)        (None, 50, 140)      0           embedding[0][0]                  
+__________________________________________________________________________________________________
+Reshape (Reshape)               (None, 50, 140)      0           Attent_Permute[0][0]             
+__________________________________________________________________________________________________
+Attent_Dense (Dense)            (None, 50, 140)      19740       Reshape[0][0]                    
+__________________________________________________________________________________________________
+Dim_reduction (Lambda)          (None, 140)          0           Attent_Dense[0][0]               
+__________________________________________________________________________________________________
+Repeat (RepeatVector)           (None, 50, 140)      0           Dim_reduction[0][0]              
+__________________________________________________________________________________________________
+Attention_vec (Permute)         (None, 140, 50)      0           Repeat[0][0]                     
+__________________________________________________________________________________________________
+Attention_mul (Multiply)        (None, 140, 50)      0           embedding[0][0]                  
+                                                                 Attention_vec[0][0]              
+__________________________________________________________________________________________________
+flatten (Flatten)               (None, 7000)         0           Attention_mul[0][0]              
+__________________________________________________________________________________________________
+output (Dense)                  (None, 1)            7001        flatten[0][0]                    
+==================================================================================================
+Total params: 526,741
+Trainable params: 26,741
+Non-trainable params: 500,000
+__________________________________________________________________________________________________
+``` 
+
+This model can be trained just as any Keras model. It achieves about 80% accuracy on the validation set.
 
 # Seq2Seq models
 https://blog.keras.io/a-ten-minute-introduction-to-sequence-to-sequence-learning-in-keras.html
