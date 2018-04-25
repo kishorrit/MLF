@@ -1,4 +1,4 @@
-receivetranslationtranslation# Chapter 5 - Natural Language processing
+# Chapter 5 - Natural Language processing
 
 It is no accident that Peter Brown, Co-CEO of Renaissance Technologies, one of the most successful quantitative hedge-funds of all time, previously worked at IBM applying machine learning to natural language problems. Information drives finance, and the most important source of information is written or spoken language. Ask any professional what they are actually spending time on and you will find that a significant part of finance is about reading. Headlines on tickers, Form-10Ks, the financial press, analyst reports, the list goes on and on. Automatically processing this information can increase speed of trades and increase the breath of information considered for trades while at the same time reducing costs.
 
