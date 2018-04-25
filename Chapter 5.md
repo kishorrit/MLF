@@ -1693,3 +1693,15 @@ And get the translation back:
 ```
 'Merci !\n'
 ```
+
+Sequence to sequence models are useful not only for translating between languages. They can be trained to on just about anything that takes a sequence as input and also outputs a sequence. Remember our forecasting task from the last chapter? The winning solution to the forecasting problem was a seq2seq model. Text summarization is another useful application. Seq2seq models can also be trained to output a series of actions, such as a sequence of trades that would minimize the impact of a large order.
+
+# Exercises 
+- Add an extra layer to the encoder of the translation model.
+- Add attention to the encoder of the translation model. It is best to use attention as the last layer.
+- Visit the 'Daily News for Stock Market Prediction' at https://www.kaggle.com/aaron7sun/stocknews. The task is to use daily news as an input to predict stock prices. There are a number of Kernels already with several attempts. Use what you have learned in this chapter to predict some stock prices!
+
+# Summary 
+In this chapter you have learned the most important NLP techniques. From bag of words to TF-IDF to advanced seq2seq models with attention. These techniques are useful across the industry, from retail banking to hedge fund investing. And while the problem your institution is trying to solve might require a bit of tweaking, the general approaches are quite transferable.
+
+In the next chapter we will look at a technique that has gained much attention since DeepMind beat a human Go champion: Reinforcement learning. This technique is especially useful when working in financial markets and is in many ways a natural extension of what many quantitative investment firms are already doing. So stay tuned and see you on the other side.
