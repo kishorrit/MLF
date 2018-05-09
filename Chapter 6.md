@@ -222,30 +222,108 @@ plt.show()
 
 Caption: Autoncoder reconstruction vs original data.
 
-As you can see, our model does a fine job at reconstructing the original values. The visual inspection gives more insight than the abstract number. 
+As you can see, our model does a fine job at reconstructing the original values. The visual inspection gives more insight than the abstract number.
+
+# Visualizing latent spaces with t-SNE 
+We now have a neural network that takes in a credit card transaction, and outputs a credit card transaction that looks more or less the same. But that is of course not why we built the autoecoder. The main advantage of an autoencoder is that we can now encode the transaction into a lower dimensional representation which captures the main elements of the transaction. To create the encoder model, all we have to do is to define a new Keras model, that maps from the input to the encoded state: 
 
 ```Python 
 encoder = Model(data_in,encoded)
 ```
 
+Note that you don't need to train this model again. The layers keep the weights from the autoencoder which we have trained before. 
+
+To encode our data, we now use the encoder model:
+
 ```Python 
 enc = encoder.predict(X_test)
 ```
 
+But how would we know if these encodings contain any meaningful information about fraud? Once again, visual representation is key. While our encodings are lower dimensional than the input data, they still have twelve dimensions. It is impossible for humans to think about twelve dimensional space, so we need to draw our encodings in a lower dimensional space while still preserving the characteristics we care about. 
+
+In our case, the characteristic we care about is _proximity_. We want points that are close to each other in the twelve dimensional space to be close to each other in the two dimensional plot. More precisely, we care about neighborhood, we want that the points that are closest to each other in the high dimensional space are also closest to each other in the low dimensional space. 
+
+Preserving neighborhood is relevant because we want to find clusters of fraud. If we find that fraudulent transactions form a cluster in our high dimensional encodings, we can use a simple check for if a new transaction falls into the fraud cluster to flag a transaction as fraudulent. 
+
+A popular method to project high dimensional data into low dimensional plots while preserving neighborhoods is called t-distributed stochastic neighbor embedding, or t-SNE. 
+
+In a nutshell, t-SNE aims to faithfully represent the probability that two points are neighbors in a random sample of all points. That is, it tries to find a low dimensional representation of the data in which points in a random sample have the same probability of being closest neighbors than in the high dimensional data. 
+
+
+
+![TSNE Info](./assets/tsne_info_one.png)
+Caption: How t-SNE measures similarity
+
+The t-SNE algorithm follows these steps:
+1. Calculate the _gaussian similarity_ between all points. This is done by calculating the euclidean (spatial) distance between points and the calculate the value of a gaussian curve at that distance, see graphic. The gaussian similarity for all points $j$ from point $i$ can be calculated as:
+
+$$p_{i|j} = \frac{exp(-||x_i-x_j||^2/2\sigma^2_i)}
+{\sum_{k \neq i} exp(-||x_i-x_k||^2/2\sigma^2_i)}$$
+
+Where $\sigma_i$ is the variance of the gaussian distribution. We will look at how to determine this variance later. Note that since the similarity between points $i$ and $j$ is scaled by the sum of distances between $i$ and all other points (expressed as $k$), the similarity between $i$ and $j$ ,$p_{i|j}$, can be different than the similarity between $j$ and $i$, $p_{j|i}$. Therefore, we average the two similarities to gain the final similarity which we work with going forward:
+
+$$p_{ij} = \frac{p_{i|j} + p_{j,i}}{2n}$$
+
+Where n is the number of datapoints.
+
+2. Randomly position the data points in the lower dimensional space.
+
+3. Calculate the _t-similarity_ between all points in the lower dimensional space. 
+
+$$q_{ij} = \frac{(1+||y_i - y_j||^2)^{-1}}
+{\sum_{k \neq l}(1+||y_k - y_l||^2)^{-1}}$$
+
+4. Just like in training neural networks, we will optimize the positions of the data points in the lower dimensional space by following the gradient of a loss function. The loss function in this case is the Kullback–Leibler (KL) divergence between the similarities in the higher and lower dimensional space. We will give the KL divergence a closer look in the section on variational autoencoders. For now, just think of it as a way to measure the difference between two distributions. The derivative of the loss function with respect to the position $y_i$ of a datapoint $i$ in the lower dimensional space is:
+
+$$\frac{d L}{dy_i} = 4 \sum{(p_{ij} − q_{ij})(y_i − y_j)}
+(1 + ||y_i − y_j||^2)^{-1}$$
+
+
+5. Adjust the data points in the lower dimensional space by using gradient descent. Moving points that were close in the high dimensional data closer together and moving points that were further away further from each other.
+
+$$y^{(t)} = y^{(t-1)} + \frac{d L}{dy} + \alpha(t) (y^{(t-1)} - y^{(t-2)})$$
+
+You will recognize this as a form of gradient descent with momentum, as the previous gradient is incorporated into the position update.
+
+The t-distribution used always has one degree of freedom. The choice of one degree of freedom leads to a simpler formula as well as some nice numerical properties that lead to faster computation and more useful charts.
+
+ The standard deviation of the gaussian distribution can be influenced by the user with a _perplexity_ hyperparameter. Perplexity can be interpreted as the number of neighbors we expect a point to have. A low perplexity value emphasizes local proximities while a large perplexity value emphasizes global perplexity values. Mathematically, perplexity can be calculated as 
+ 
+ $$Perp(P_i) = 2^{H(P_i)}$$
+
+Where $P_i$ is a probability distribution over the position of all data points in the dataset and $H(P_i)$ is the Shanon entropy of this distribution calculated as: 
+$$H(P_i) = - \sum{p_{j|i} log_2 p_{j|i}}$$
+
+While the details of this formula are not very relevant to using t-SNE, it is important to know that t-SNE performs a search over values of the standard deviation $\sigma$ so that it finds a global distribution $P_i$ for which the entropy over our data is our desired perplexity. In other words, you need to specify the perplexity by hand, but what that perplexity means for your dataset also depends on the dataset. 
+
+Van Maarten and Hinton, the inventors of t-SNE, report that the algorithm is relatively robust to choices of perplexity between five and 50. The default value in most libraries is 30, which is a fine value for most datasets. If you find that your visualizations are not satisfactory, tuning the perplexity value is probably the first thing you want to do.
+
+For all the math involved, using t-SNE is suprisingly simple. Scikit Learn has a handy t-SNE implementation which we can use just like any algorithm in scikit. We first import the `TSNE` class. Then we create a new `TSNE` instance. We define that we want to train for 5000 epochs, use the default perplexity of 30 and the default learning rate of 200. We also specify that we would like output during the training process. We then just call `fit_transform` which transforms our twelve dimensional encodings into two dimensional projections.
+
 ```Python 
 from sklearn.manifold import TSNE
-tsne = TSNE(verbose=1,n_iter=300)
+tsne = TSNE(verbose=1,n_iter=5000)
 res = tsne.fit_transform(enc)
 ```
 
+As a word of warning, t-SNE is quite slow as it needs to compute the distances between all the points. By default, sklearn uses a faster version of t-SNE called Barnes Hut approximation, which is not as precise but significantly faster already. 
+
+There is a faster python implementation of t-SNE which can be used as a drop in replacement of sklearn's implementation. It is not as well documented however and has fewer features. You can find the faster implementation with installation instructions under the following URL:
+https://github.com/DmitryUlyanov/Multicore-TSNE 
+
+We can plot our t-SNE results as a scatter plot. For illustration, we will distinguish frauds from non frauds by color, with frauds being plotted in red and non frauds being plotted in blue. Since the actual values of t-SNE do not matter as much we will hide the axis.
 ```Python 
 fig = plt.figure(figsize=(10,7))
-scatter =plt.scatter(res[:,0],res[:,1],c=y_test,cmap='coolwarm', s=0.6)
+scatter =plt.scatter(res[:,0],res[:,1],c=y_test, cmap='coolwarm', s=0.6)
 scatter.axes.get_xaxis().set_visible(False)
 scatter.axes.get_yaxis().set_visible(False)
 ```
 
 ![Credit Auto TSNE](./assets/credit_auto_tsne.png)
+
+For easier spotting the cluster containing most frauds is marked with a circle. You can see that the frauds nicely separate from the rest of the transactions. Clearly, our autoencoder has found a way to distinguish frauds from genuine transaction without being given labels. This is a form of unsupervised learning. In fact, plain autoencoders perform an approximation of PCA, which is useful for unsupervised learning. In the chart you can see a few more clusters which are clearly separate from the other transactions but which are not frauds. Using autoencoders and unsupervised learning it is possible to separate and group our data in ways we did not even think about as much before. For example we might be able to cluster transactions by purchase type.
+
+Using our autoencoder, we could now use the encoded information as features for a classifier. But even better, with only a slight modification of the autoencoder, we can generate more data that has the underlying properties of a fraud case while having different features. This is done with a variational autoencoder which we will look at in the next section.
 
 # Variational Autoencoders
 
