@@ -329,6 +329,66 @@ Using our autoencoder, we could now use the encoded information as features for 
 
 https://medium.com/@curiousily/credit-card-fraud-detection-using-autoencoders-in-keras-tensorflow-for-hackers-part-vii-20e0c85301bd
 
+Autoencoders are basically an approximation for PCA. However, they can be extended to become generative models. Given an input, variational autoencoders (VAEs) can create encoding _distributions_. This means, that for a fraud case, the encoder would produce a distribution of possible encodings which all represent the most important characteristics of the transaction so that the decoder could turn all encodings back into the original transaction. This is useful, since it allows us to generate data about transactions. One 'problem' of fraud detection is that there are not all that many fraudulent transactions. Using a variational autoencoder, we can sample any amount of transaction encodings and train our classifier with more fraud transaction data.
+
+How do VAEs do it? Instead of having just one compressed representation vector, a VAE has two: One for the mean encoding $\mu$ and one for the standard deviation of this encoding $\sigma$.
+
+![VAE Scheme](./assets/vae_scheme.png)
+
+Both mean and standard deviation are vectors just like the encoding vector we used for the vanilla autoencoder. However, to create the actual encoding we then sample by adding random noise with the standard deviation $\sigma$ to our encoding vector. 
+
+To achieve a broad distribution of values, our network trains with a combination of two losses: The reconstruction loss you know from the vanilla autoencoder as well as a KL divergence loss between the encoding distribution and a standard gaussian distribution with a standard deviation of one.
+
+## KL Divergence 
+Kullback–Leibler divergence, or KL divergence for short, is one of the metrics machine learning inherited from information theory, just like crossentropy. It is used frequently but many struggle understanding it. 
+
+KL divergence measures how much information is lost when a distribution $p$ is approximated with a distribution $q$.
+
+Imagine you were working on some financial model and have collected data on returns of a security. Your financial modeling tools all assume a normal distribution of returns. The chart below shows the actual distribution of returns versus an approximation using a normal distribution. For the sake of this example, lets assume there are only discrete returns. We will cover continuous distributions later.
+
+![Approximation vs actual](./assets/kl_divergence_dist.png)
+
+Of course the returns in your data are not exactly normally distributed. But just how much information about returns would you loose if you did loose the approximation?
+
+This is exactly what KL divergence is measuring. 
+
+$$D_{KL}(p||q) = \sum_{i=1}^Np(x_i) \cdot (log\ p(x_i) - log\ q(x_i))$$
+
+Where $p(x_i)$ and $q(x_i)$ are the probabilities that $x$, in this case the return, has some value $i$, say 5%. The formula above effectively expresses the expected difference in the logarithm of probabilities of the distribution $p$ and $q$.
+
+$$D_{KL} = E[log\ p(x) - log\ q(x)]$$
+
+This expected difference of log probabilities is the same as the average information lost if you approximate distribution $p$ with distribution $q$.
+
+Since 
+$$log\ a - log\ b = log\frac{a}{b}$$
+
+KL divergence is usually written out as 
+
+$$D_{KL}(p||q) = \sum_{i=1}^N p(x_i) \cdot log\ \frac{ p(x_i)}{q(x_i)}$$
+
+Or in its continuous form as
+
+$$D_{KL}(p||q) = 
+\int_{-\infty}^{\infty} p(x_i) \cdot log\ \frac{ p(x_i)}{q(x_i)}$$
+
+For variational autoencoders, we want the distribution of encodings to be a normal gaussian distribution with mean zero and a standard deviation of one.
+
+When $p$ is substituted with the normal gaussian distribution $\mathcal{N}(0,1)$, and the approximation $q$ is a normal distribution with mean $\mu$ and standard deviation $\sigma$, $\mathcal{N}(\mu,\sigma)$, the KL divergence simplifies to
+
+$$D_{KL} = -0.5 * (1+ log(\sigma) - \mu^2 - \sigma)$$
+
+The partial derivatives to our mean and standard deviation vectors are therefore:
+
+$$\frac{dD_{KL}}{d\mu} = \mu$$
+
+and
+
+$$\frac{dD_{KL}}{d\sigma} = -0.5 * \frac{(\sigma - 1)}{\sigma}$$
+
+
+You can see that the derivative with respect to $\mu$ is zero if $\mu$ is zero and the derivative with respect to $\sigma$ is zero if $\sigma$ is one. This loss term is added to the reconstruction loss.
+
 ## MNIST Example 
 ```Python
 import numpy as np
@@ -364,6 +424,39 @@ def sampling(args):
     epsilon = K.random_normal(shape=(K.shape(z_mean)[0], latent_dim), mean=0.,
                               stddev=epsilon_std)
     return z_mean + K.exp(z_log_var / 2) * epsilon
+```
+
+```Python 
+# note that "output_shape" isn't necessary with the TensorFlow backend
+z = Lambda(sampling, output_shape=(latent_dim,))([z_mean, z_log_var])
+```
+
+```Python 
+# we instantiate these layers separately so as to reuse them later
+decoder_h = Dense(intermediate_dim, activation='relu')
+h_decoded = decoder_h(z)
+
+decoder_mean = Dense(original_dim)
+x_decoded_mean = decoder_mean(h_decoded)
+```
+
+```Python 
+xent_loss = original_dim * metrics.binary_crossentropy(x, x_decoded_mean)
+
+kl_loss = - 0.5 * K.sum(1 + z_log_var - K.square(z_mean) 
+                                      - K.exp(z_log_var), axis=-1)
+                                      
+vae_loss = K.mean(xent_loss + kl_loss)
+```
+
+```Python 
+vae = Model(x, x_decoded_mean)
+```
+
+```Python 
+vae.add_loss(vae_loss)
+vae.compile(optimizer='rmsprop')
+vae.summary()
 ```
 
 ## VAEs for end to end fraud detection
@@ -415,10 +508,6 @@ h_decoded = decoder_h(z)
 decoder_mean = Dense(original_dim)
 x_decoded_mean = decoder_mean(h_decoded)
 ```
-
-
-# Visualizing latent spaces with t-SNE
-https://medium.com/@luckylwk/visualising-high-dimensional-datasets-using-pca-and-t-sne-in-python-8ef87e7915b
 
 # Visual question answering
 
