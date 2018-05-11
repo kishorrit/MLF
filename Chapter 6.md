@@ -547,56 +547,48 @@ As you can see, all images show a seven. They look quite similar, but if you loo
 The VAE has created new data. Using this data for more training is not as good as using completely new real world data, but it is still very useful. While generative models like this one are nice for eye candy, we will now discuss how this technique can be used for credit card fraud detection.
 
 ## VAEs for end to end fraud detection
-```Python 
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.stats import norm
-
-from keras.layers import Input, Dense, Lambda
-from keras.models import Model
-from keras import backend as K
-from keras import metrics
-```
+To transfer the VAE from an MNIST example to a real fraud detection problem, all we have to do is change a three hyperparameters: Input, intermediate and latent dimensionality of the credit card VAE are smaller than for the MNIST VAE. The rest stays the same.
 
 ```Python 
-batch_size = 100
 original_dim = 29
 latent_dim = 6
 intermediate_dim = 16
-epochs = 50
-epsilon_std = 1.0
 ```
+The visualization below shows the resulting VAE including input and output shapes:
+![Credit VAE](./assets/credit_vae.png)
+Caption: Overview of the credit VAE 
+
+Armed with a VAE that can encode and generate credit card data, we can tackle the task of end to end fraud detection. More specifically, we are using the encoding part of the autoecoder as a feature extractor as well as a method to give us more data, where we need it. How exactly that works will be covered in the section on active learning. For now, let's take a little detour and look at how (variational) autoencoders work for time series.
+
+# (Variational) autoencoders for time series
+This section covers the how and why of time series (V)AEs, and gives a couple of examples where they have been used. Time series are such a big topic in finance that this book has a whole chapter about them. Autoencoders have found applications in connection to time series as they can encode a long time series in a single, descriptive vector. This vector can then for example be used to efficiently compare a time series to another time series, based on specific, and complex patterns that can not be captured with a simple correlation for instance. 
+
+Consider the 2010 'Flash Crash'. On May 6 2010, starting at 2:32, US markets saw a major loss of value. The Dow Jones Industrial Average lost about 9%, a trillion dollars of value were wiped out in a couple of minutes. 36 minutes later the crash was over, most lost value was regained and people started wondering what on earth just happened. 
+
+Five years later, a man named Navinder Singh Sarao was arrested for having in part caused the flash crash and having made $40 million in the process. Sarao engaged in a practice called 'spoofing' in which he used an automated bot which would place large sell orders which could not be filled in the market but would drive the price down. The bot would leave the orders in the order books of the stock exchange for only a short time before canceling them. In the meanwhile, Sarao would buy the stock at lower prices and profit of the stocks rebounding after the canceled sales orders. 
+
+While Sarao was certainly not the only one responsible for the flash crash, practices like spoofing are now illegal and exchanges have to monitor and flag it. (If you dig back into old blog posts about high-frequency trading you will find that some traders working at large firms openly recommend spoofing or front running large orders, but that is a story for another time).
+
+How would we detect someone engages in spoofing? One way is to use an autoencoder. Using large amounts of order book information, we can train an autoencoder to reconstruct 'normal' trading behavior. For traders whose trading patterns deviate a lot from normal trading, the reconstruction loss of the trained autoencoder for the transaction will be quite high. 
+
+Another option is to train the autonecoder on different kinds of patterns (illegal or not) and then cluster patterns in the latent space, just as we did for the credit card transactions.
+
+Recurrent neural networks by default take in a time series and output a single vector. They can also output sequences, if Keras `return_sequences` argument is set to `True`. Using recurrent neural networks such as `LSTM`'s, building an autoencoder for time series can be done as follows.
 
 ```Python 
-x = Input(shape=(original_dim,))
-h = Dense(intermediate_dim, activation='relu')(x)
-z_mean = Dense(latent_dim)(h)
-z_log_var = Dense(latent_dim)(h)
+from keras.models import Sequential
+from keras.layers import LSTM, RepeatVector
+
+model = Sequential() #1
+model.add(LSTM(latent_dim, input_shape=(maxlen, nb_features))) #2
+model.add(RepeatVector(maxlen)) #3
+model.add(LSTM(nb_features, return_sequences=True)) #4
 ```
 
-```Python 
-def sampling(args):
-    z_mean, z_log_var = args
-    epsilon = K.random_normal(shape=(K.shape(z_mean)[0], latent_dim), mean=0.,
-                              stddev=epsilon_std)
-    return z_mean + K.exp(z_log_var / 2) * epsilon
-```
-
-```Python 
-# note that "output_shape" isn't necessary with the TensorFlow backend
-z = Lambda(sampling, output_shape=(latent_dim,))([z_mean, z_log_var])
-```
-
-```Python 
-# we instantiate these layers separately so as to reuse them later
-decoder_h = Dense(intermediate_dim, activation='relu')
-h_decoded = decoder_h(z)
-
-decoder_mean = Dense(original_dim)
-x_decoded_mean = decoder_mean(h_decoded)
-```
-
-# Visual question answering
+\#1 A simple autoencoder can be built using the `Sequential` API. 
+\#2 We first feed our sequence length `maxlen` and with the number of features equal to `nb_features` into an `LSTM`. The `LSTM` will return only its last output, a single vector of dimension `latent_dim`. This vector is the encoding of our sequence. 
+\#3 To decode the vector, we need to repeat it over the length of the time series. This is done by the `RepeatVector` layer.
+\#4 Now we feed the sequence of repeated encodings into a decoding LSTM which this time returns the full sequence.
 
 # Using less data: Active Learning
 General explainer
@@ -610,7 +602,9 @@ https://shaoanlu.wordpress.com/2017/04/10/a-simple-pseudo-labeling-function-impl
 
 https://www.kaggle.com/glowingbazooka/semi-supervised-model-using-keras
 
-https://watermark.silverchair.com/nwx106.pdf?token=AQECAHi208BE49Ooan9kkhW_Ercy7Dm3ZL_9Cf3qfKAc485ysgAAAZswggGXBgkqhkiG9w0BBwagggGIMIIBhAIBADCCAX0GCSqGSIb3DQEHATAeBglghkgBZQMEAS4wEQQM39jwhp2SzNRuevyeAgEQgIIBTsa3V5rEmVzmqNsROuhfGmn5F6_JDoUINJDts1FNDjsECQRMq0iydWB72KqqA0-jezc-7880brKP_zO84TNejwhpLwSVhgcguPwxcpBWGe-Mfs-H2NtCTiLKxB_6ikxbtzQxrW1ZoOJgzS_qJrhV1lRBBLlFF7PAaACpbynl_amdusILaw8eW0HJ7KbhOQDWlCgCnJ_GnoziTl4jZff_OcCRGV60Ut5TTJSLvbWl4u2wmLAg5MdYZom8-4ilemevfV08IJaYdO-4864G8mfeXxj08SDDUay9R13wUrMP4G4UDObZlQcekVb3vtZs8Zn_TO0Io-ZBQf6LjkAHDnCb3d5ECZM8OBNh167ZcqpI81NC1trCEjUOb6kNRxBkbIHk56GZATyXYmEwbuHI_XdxY6hqvDzTnpmuBshnB_OjzBtsIohbjCKxO0jKhiex0AE
+
+
+# Visual question answering
 
 # GANs 
 Keras implementations 
