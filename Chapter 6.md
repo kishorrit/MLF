@@ -390,25 +390,30 @@ $$\frac{dD_{KL}}{d\sigma} = -0.5 * \frac{(\sigma - 1)}{\sigma}$$
 You can see that the derivative with respect to $\mu$ is zero if $\mu$ is zero and the derivative with respect to $\sigma$ is zero if $\sigma$ is one. This loss term is added to the reconstruction loss.
 
 ## MNIST Example 
+Now on to our first VAE. This VAE will work with the MNIST dataset, which makes it easier to form an intuition about how VAEs work. In the next section we will build the same VAE for credit card fraud detection.
+
+First we need to do some imports:
 ```Python
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.stats import norm
+from keras.models import Model
 
 from keras.layers import Input, Dense, Lambda
-from keras.models import Model
 from keras import backend as K
 from keras import metrics
 ```
 
+Notice two new imports: The `Lamba` layer and the `metrics` module. The `metrics` module provides metrics, like the crossentropy loss which we will use to build our custom loss function. The `Lambda` layer allows us to use Python functions as layers, which we will use to sample from the encoding distribution. We will see just how the `Lambda` layer works in a bit, but first we need to set up the rest of the neural network.
+
+
+First we define a few hyperparameters. Our data has an original dimensionality of 784, which we compress into a latent vector with 32 dimensions. Our network has an intermediate layer between the input and latent vector which has 256 dimensions. We will train for 50 epochs with a batch size of 100. 
 ```Python 
 batch_size = 100
 original_dim = 784
 latent_dim = 32
 intermediate_dim = 256
 epochs = 50
-epsilon_std = 1.0
 ``` 
+
+For computational reasons, it is easier to learn the log of the standard deviation rather than the standard deviation itself. We create the first half of our network in which the input `x` maps to the intermediate layer `h`. From this layer our network splits into `z_mean` which expresses $\mu$ and `z_log_var` which expresses $log\ \sigma$.
 
 ```Python 
 x = Input(shape=(original_dim,))
@@ -417,47 +422,129 @@ z_mean = Dense(latent_dim)(h)
 z_log_var = Dense(latent_dim)(h)
 ```
 
+## Using the Lambda layer 
+The `Lambda` layer wraps an arbitrary expression, speak python function, as a Keras layer. Yet there are a few requirements. For backpropagation to work, the function needs to be differentiable. After all, we want to update the network weights by the gradient of the loss. Luckily, Keras comes with a number of functions in its `backend` module which are all differentiable. Simple python math, such as `y = x + 4` is fine as well. 
+
+Additionally, a `Lambda` function can take only one input argument. If the layer we want to create, the input is just the previous layer's output tensor. In this case, we want to create a layer with two inputs, $\mu$ and $\sigma$. So we will wrap both into a tuple which we can then take apart. Below you can see the function for sampling.
 
 ```Python 
 def sampling(args):
-    z_mean, z_log_var = args
-    epsilon = K.random_normal(shape=(K.shape(z_mean)[0], latent_dim), mean=0.,
-                              stddev=epsilon_std)
-    return z_mean + K.exp(z_log_var / 2) * epsilon
+    z_mean, z_log_var = args #1
+    epsilon = K.random_normal(shape=(K.shape(z_mean)[0], latent_dim), 
+                              mean=0.,
+                              stddev=1.0) #2
+    return z_mean + K.exp(z_log_var / 2) * epsilon #3
 ```
 
+\#1 We take apart the input tuple and have our two input tensors.
+\#2 We create a tensor containing random, normally distributed noise with a mean of zero and a standard deviation of one. The tensor has the shape as our input tensors (batch_size, latent_dim).
+\#4 Finally, we multiply the random noise with our standard deviation to give it the learned standard deviation and add the learned mean. Since we are learning the log standard deviation, we have to apply the exponent function to our learned tensor. 
+
+All these operations are differentiable since we are using Keras backend functions. Now we can turn this function into a layer and connect it to the previous two layers with one line:
+
 ```Python 
-# note that "output_shape" isn't necessary with the TensorFlow backend
-z = Lambda(sampling, output_shape=(latent_dim,))([z_mean, z_log_var])
+z = Lambda(sampling)([z_mean, z_log_var])
 ```
 
-```Python 
-# we instantiate these layers separately so as to reuse them later
-decoder_h = Dense(intermediate_dim, activation='relu')
-h_decoded = decoder_h(z)
+And voila, we got a custom layer which samples from a normal distribution described by two tensors. Keras can automatically backpropagate through this layer and train the weights of the layers before it.
 
-decoder_mean = Dense(original_dim)
-x_decoded_mean = decoder_mean(h_decoded)
+Now that we have encoded our data, we need to decode it as well. We do this with two `Dense` layers.
+```Python 
+decoder_h = Dense(intermediate_dim, activation='relu')(z)
+
+x_decoded = Dense(original_dim, activation='sigmoid')decoder_mean(h_decoded)
+```
+Our network is now complete. It encodes any MNIST image into a mean and a standard deviation tensor from which the decoding part then reconstructs the image. The only thing missing is the custom loss incentivising the network to both reconstruct images and produce a normal gaussian distribution in its encodings.
+
+## Creating a custom loss 
+The VAE loss is a combination of two losses: A reconstruction loss incentivizing the model to reconstruct its input well, and a KL divergence loss, incentivizing the model to approximate a normal gaussian distribution with its encodings. To create this combined loss, we have to calculate the two loss components separately first before combining them.
+
+The reconstruction loss is the same loss that we applied for the vanilla autoencoder. Binary crossentropy is an appropriate loss for MNIST reconstruction. Since Keras implementation of a binary crossentropy loss already takes the mean across the batch, an operation we only want to do later, we have to scale the loss back up, so we devide it by the output dimensionality.
+```Python 
+reconstruction_loss = original_dim * metrics.binary_crossentropy(x, x_decoded)
 ```
 
-```Python 
-xent_loss = original_dim * metrics.binary_crossentropy(x, x_decoded_mean)
+The KL divergence loss is the simplified versions od KL divergence discussed in the section on KL divergence:
+$$D_{KL} = -0.5 * (1+ log(\sigma) - \mu^2 - \sigma)$$
 
+Expressed in Python:
+```Python 
 kl_loss = - 0.5 * K.sum(1 + z_log_var - K.square(z_mean) 
-                                      - K.exp(z_log_var), axis=-1)
-                                      
-vae_loss = K.mean(xent_loss + kl_loss)
+                                      - K.exp(z_log_var), axis=-1)     
 ```
+
+Our final loss is then the mean of the sum of the reconstruction loss and KL divergence loss. 
+```Python 
+vae_loss = K.mean(reconstruction_loss + kl_loss)
+```
+
+Since we have used Keras backend for all calculations, the resulting loss is a tensor which can be automatically differentiated. 
+
+Now we create our model like usual:
 
 ```Python 
-vae = Model(x, x_decoded_mean)
+vae = Model(x, x_decoded)
 ```
 
+Since we use a custom loss, we have the loss separately, and can't just add it in the compile statement:
 ```Python 
 vae.add_loss(vae_loss)
-vae.compile(optimizer='rmsprop')
-vae.summary()
 ```
+Now we compile the model. Since our model already has a loss, we only have to specify the optimizer. 
+```Python 
+vae.compile(optimizer='rmsprop')
+```
+
+Another side effect of the custom loss is that it compares the output of the VAE with the _input_ of the VAE, which makes sense as we want to reconstruct the input. Therefore we do not have to specify y values, only specifying an input is enough.
+```Python 
+vae.fit(X_train_flat,
+        shuffle=True,
+        epochs=epochs,
+        batch_size=batch_size,
+        validation_data=(X_test_flat, None))
+```
+
+## Using a VAE to generate data 
+So we got our autoencoder, how do we generate more data? We take an input, say a picture of a seven, and run it through the autoencoder multiple times. Since the autoencoder is randomly sampling from a distribution, the output will be slightly different at each run.
+
+From our test data, we take a seven.
+```Python 
+one_seven = X_test_flat[0]
+```
+
+We add a batch dimension and repeat the seven across the batch four times. Now we have a batch of four, identical sevens.
+```Python 
+one_seven = np.expand_dims(one_seven,0)
+one_seven = one_seven.repeat(4,axis=0)
+```
+
+We make a prediction on that batch. We get back the reconstructed sevens.
+```Python 
+s = vae.predict(one_seven)
+```
+
+We now reshape all the sevens back into image form.
+```Python 
+s= s.reshape(4,28,28)
+```
+
+And now we plot them:
+```Python 
+fig=plt.figure(figsize=(8, 8))
+columns = 2
+rows = 2
+for i in range(1, columns*rows +1):
+    img = s[i-1]
+    fig.add_subplot(rows, columns, i)
+    plt.imshow(img)
+plt.show()
+```
+
+![Many sevens](./assets/vae_mult_sevens.png)
+
+As you can see, all images show a seven. They look quite similar, but if you look closely you see there are distinct differences. The seven on the top left has a less pronounced stroke than the seven on the bottom left. The seven on the bottom right has a sight bow at the end. 
+
+The VAE has created new data. Using this data for more training is not as good as using completely new real world data, but it is still very useful. While generative models like this one are nice for eye candy, we will now discuss how this technique can be used for credit card fraud detection.
 
 ## VAEs for end to end fraud detection
 ```Python 
