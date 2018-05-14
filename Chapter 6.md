@@ -7,12 +7,6 @@ In the field of finance, data is frequently sparse. Think about the fraud case f
 In algorithmic trading, data is frequently generated in simulators. Want to know how your algorithm would do in a global selloff? There are not that many global selloffs thankfully, so engineers at quant firms spend a lot of time creating simulations of selloffs. These simulators are often biased by the engineers experience and their feelings about what a selloff should look like. But what if models could learn what a selloff fundamentally looks like, and then create data describing an infinite amount of selloffs?
 
 # Understanding autoencoders
-https://blog.keras.io/building-autoencoders-in-keras.html
-
-https://towardsdatascience.com/intuitively-understanding-variational-autoencoders-1bfe67eb5daf
-
-http://tiao.io/posts/implementing-variational-autoencoders-in-keras-beyond-the-quickstart-tutorial/
-
 Technically, autoencoders are not generative models since they can not create completely new kinds of data. Yet, variational autoencoders, a minor tweak to vanilla autonecoders, can. So it makes sense to first understand autoencoders by themselves, before adding the generative element. Autoencoders by themselves also have some interesting properties which can be exploited for applications like detecting credit card fraud. 
 
 Given an input $x$, an autoencoder learns how to output $x$. It aims to find a function $f$ so that:
@@ -326,9 +320,6 @@ For easier spotting the cluster containing most frauds is marked with a circle. 
 Using our autoencoder, we could now use the encoded information as features for a classifier. But even better, with only a slight modification of the autoencoder, we can generate more data that has the underlying properties of a fraud case while having different features. This is done with a variational autoencoder which we will look at in the next section.
 
 # Variational Autoencoders
-
-https://medium.com/@curiousily/credit-card-fraud-detection-using-autoencoders-in-keras-tensorflow-for-hackers-part-vii-20e0c85301bd
-
 Autoencoders are basically an approximation for PCA. However, they can be extended to become generative models. Given an input, variational autoencoders (VAEs) can create encoding _distributions_. This means, that for a fraud case, the encoder would produce a distribution of possible encodings which all represent the most important characteristics of the transaction so that the decoder could turn all encodings back into the original transaction. This is useful, since it allows us to generate data about transactions. One 'problem' of fraud detection is that there are not all that many fraudulent transactions. Using a variational autoencoder, we can sample any amount of transaction encodings and train our classifier with more fraud transaction data.
 
 How do VAEs do it? Instead of having just one compressed representation vector, a VAE has two: One for the mean encoding $\mu$ and one for the standard deviation of this encoding $\sigma$.
@@ -860,8 +851,6 @@ As GANs are unstable and difficult yet useful, a number of empirical tricks have
 For autoencoders, the latent space was a relatively straight forward approximation of principal component analysis. Variational autoencoders create a latent space of distributions, which is useful but still easy to imagine as a form of PCA. So what is the latent space of a GAN if we just sample randomly from it during training. As it turns out, GANs self structure the latent space. Using the latent space of a GAN, you would still be able to cluster MNIST images by the character they display. Research has shown that the latent space of GANs often has some surprising features, such as 'smile vectors' along which generated face images smile more or less. Researchers have also shown that GANs can be used for latent space algebra, where adding the latent representation of different objects creates realistic, new objects. Yet, research on the latent space of GANs is still in its infancy and drawing conclusions about the world from its latent space representations is an active field of research.
 
 ## GAN training tricks 
-https://github.com/soumith/ganhacks
-
 1. Normalize the inputs
 
 Gans don't work well with extreme values so make sure you always have normalized inputs between -1 and 1. This is also the reason why you should use a `tanh` function as your generator output.
@@ -981,7 +970,17 @@ Note: Better user interface design and smart use of weak models can greatly acce
 Often there is plenty of unlabeled data available, but only little labeled data. That unlabeled data can still be used. First, you train a model on the labeled data that you have. Then you let that model make predictions on your corpus of unlabeled data. You treat those predictions as if they were true labels and train your model on the full, pseudo labeled, dataset. However, actual true labels should be used more often than the pseudo labels. The exact sampling rate for pseudo labels can vary for different circumstances. This works under the condition that errors are random. If they are biased, your model will be biased as well. This simple method is surprisingly effective and can greatly reduce labeling efforts. 
 
 ## Using generative models
-As a final applied project of this chapter, let's consider the credit card problem again.
+As it turns out, GANs extend quite naturally to semi supervised training. By giving the discriminator two outputs we can train it to be a classifier as well.
+
+The first output of the discriminator only classifies data as real or fake, just as it did for the GAN above. The second head classifies the data by its class, say the digit an image represents, or an extra 'is fake' class. In the MNIST example the classifying head would have 11 classes, 10 digits plus the 'is fake class'. The trick is that the generator is one model and only the heads, that is the last layer, are different. This forces the 'real or not' classification to share weights with the 'which digit' classifier. The idea is that to determine if an image is real or fake, the classifier would have to figure out if it can classify this image into one class. If it can, the image is probably real. This approach, called semi-supervised generative adversarial network (SGAN) has been shown to generate more realistic data and improve deliver better results on limited data than standard supervised learning. Of course, GANs can be applied to more than just images. In the next section we will apply them to our fraud detection task.
+
+# Semi-Supervised Generative Adversarial Networks for fraud detection
+As a final applied project of this chapter, let's consider the credit card problem again. We will create an SGAN that looks as follows:
+
+![SGAN Scheme](./assets/sgan_scheme.png)
+
+We will train this model on fewer than 1000 transactions and still recieve a decent fraud detector. You can find the code for the SGAN on Kaggle under this link:
+https://www.kaggle.com/jannesklaas/semi-supervised-gan-for-fraud-detection/code
 
 In this case, our data has 29 dimensions. We choose our latent vectors to have ten dimensions.
 ```Python 
@@ -993,6 +992,9 @@ The generator model is constructed as a fully connected network with `LeakyReLU`
 ```Python 
 model = Sequential()
 model.add(Dense(16, input_dim=latent_dim))
+model.add(LeakyReLU(alpha=0.2))
+model.add(BatchNormalization(momentum=0.8))
+model.add(Dense(32, input_dim=latent_dim))
 model.add(LeakyReLU(alpha=0.2))
 model.add(BatchNormalization(momentum=0.8))
 model.add(Dense(data_dim,activation='tanh'))
@@ -1009,10 +1011,12 @@ generator = Model(noise, img)
 Just as the generator, we build the discriminator in the sequential API. As the discriminator has two heads, one for the classes, one for fake or no fake, we first only construct the base of the model.
 ```Python 
 model = Sequential()
-model.add(Dense(16,input_dim=data_dim))
+model.add(Dense(31,input_dim=data_dim))
 model.add(LeakyReLU(alpha=0.2))
 model.add(BatchNormalization(momentum=0.8))
 model.add(Dropout(0.25))
+model.add(Dense(16,input_dim=data_dim))
+model.add(LeakyReLU(alpha=0.2))
 ```
 
 Now we map the input of the discriminator to its two heads using the functional API.
@@ -1035,25 +1039,47 @@ discriminator = Model(img, [valid, label]) #5
 \#5 We create a model mapping the input to the two heads.
 
 
+To compile the discriminator with two heads, we need to use a few advanced model compiling tricks:
 ```Python 
-optimizer = Adam(0.0002, 0.5)
+optimizer = Adam(0.0002, 0.5) #1
 discriminator.compile(loss=['binary_crossentropy',
-                            'categorical_crossentropy'],
-                            loss_weights=[0.5, 0.5],
-                            optimizer=optimizer,
-                            metrics=['accuracy'])
+                            'categorical_crossentropy'], #2
+                            loss_weights=[0.5, 0.5], #3
+                            optimizer=optimizer, #4
+                            metrics=['accuracy']) #5
 ```
+\#1 We define an adam optimizer with a learning rate of 0.0002 and a momentum of 0.5
 
+\#2 Since we have two model heads, we can specify two losses. Our 'fake or not' head is a binary classifier so we use `'binary_crossentropy'` for it. Our classifying head is a multi class classifier, so we use `'categorical_crossentropy'` for the second head.
+
+\#3 We can specify how we want to weight the two different losses. In this case, we give all losses a 50% weight.
+
+\#4 We optimize our pre-defined adam optimizer.
+
+\#5 As long as we are not using soft labels, we can track progress using the accuracy metric.
+
+
+Finally, we create our combined GAN model.
 ```Python 
-noise = Input(shape=(10,))
-img = generator(noise)
-discriminator.trainable = False
-valid,_ = discriminator(img)
-combined = Model(noise , valid)
-combined.compile(loss=['binary_crossentropy'],
+noise = Input(shape=(latent_dim,)) #1
+img = generator(noise) #2
+discriminator.trainable = False #3
+valid,_ = discriminator(img) #4
+combined = Model(noise , valid) #5
+combined.compile(loss=['binary_crossentropy'], #6
                         optimizer=optimizer)
 ```
+\#1 We create a placeholder for the noise vector input.
 
+\#2 We obtain a tensor representing the generated image by mapping the generator to the noise placeholder.
+
+\#3 We make sure we do not destroy the discriminator by setting it to not trainable.
+
+\#4 We only want the discriminator to believe the generated transactions are real, so we can discard the classification output tensor.
+
+\#5 We map the noise input to the 'fake or not fake' output of the discriminator.
+
+For training we define a train function that handles all the training for us:
 ```Python 
 def train(X_train,y_train,
           X_test,y_test,
@@ -1063,80 +1089,106 @@ def train(X_train,y_train,
           epochs, 
           batch_size=128):
     
-    f1_progress = []
-    half_batch = int(batch_size / 2)
+    f1_progress = [] #1
+    half_batch = int(batch_size / 2) #2
 
-    noise_until = epochs
-
-    # Class weights:
-    # To balance the difference in occurences of digit class labels.
-    # 50% of labels that the discriminator trains on are 'fake'.
-    # Weight = 1 / frequency
-    cw1 = {0: 1, 1: 1}
+    cw1 = {0: 1, 1: 1} #3
     cw2 = {i: num_classes / half_batch for i in range(num_classes)}
     cw2[num_classes] = 1 / half_batch
 
     for epoch in range(epochs):
-
-        # ---------------------
-        #  Train Discriminator
-        # ---------------------
-
-        # Select a random half batch of images
-        idx = np.random.randint(0, X_train.shape[0], half_batch)
+      
+        idx = np.random.randint(0, X_train.shape[0], half_batch) #4
         imgs = X_train[idx]
 
-        # Sample noise and generate a half batch of new images
-        noise = np.random.normal(0, 1, (half_batch, 10))
+        noise = np.random.normal(0, 1, (half_batch, 10)) #5
         gen_imgs = generator.predict(noise)
-
+        
+        #6
         valid = np.ones((half_batch, 1))
         fake = np.zeros((half_batch, 1))
-
+        
+        #7
         labels = to_categorical(y_train[idx], num_classes=num_classes+1)
-        fake_labels = to_categorical(np.full((half_batch, 1), num_classes), num_classes=num_classes+1)
-
-        # Train the discriminator
-        d_loss_real = discriminator.train_on_batch(imgs, [valid, labels], class_weight=[cw1, cw2])
-        d_loss_fake = discriminator.train_on_batch(gen_imgs, [fake, fake_labels], class_weight=[cw1, cw2])
+        
+        #8
+        fake_labels = np.full((half_batch, 1),num_classes)
+        fake_labels = to_categorical(fake_labels,num_classes=num_classes+1)
+        #9
+        d_loss_real = discriminator.train_on_batch(imgs, 
+                                                  [valid, labels],
+                                                  class_weight=[cw1, cw2])
+        #10
+        d_loss_fake = discriminator.train_on_batch(gen_imgs, 
+                                                    [fake, fake_labels],
+                                                    class_weight=[cw1, cw2])
+        #11
         d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
 
-
-        # ---------------------
-        #  Train Generator
-        # ---------------------
-
+        #12
         noise = np.random.normal(0, 1, (batch_size, 10))
         validity = np.ones((batch_size, 1))
+        #13
+        g_loss = combined.train_on_batch(noise, 
+                                          validity, 
+                                          class_weight=[cw1, cw2])
 
-        # Train the generator
-        g_loss = combined.train_on_batch(noise, validity, class_weight=[cw1, cw2])
-
-        # Plot the progress
-        print ("%d [D loss: %f, acc: %.2f%%, op_acc: %.2f%%] [G loss: %f]" % (epoch, d_loss[0], 100*d_loss[3], 100*d_loss[4], g_loss))
+        #14
+        print ("%d [D loss: %f] [G loss: %f]" % (epoch, g_loss))
         
+        #15
         if epoch % 10 == 0:
             _,y_pred = discriminator.predict(X_test,batch_size=batch_size)
-            #print(y_pred.shape)
             y_pred = np.argmax(y_pred[:,:-1],axis=1)
             
             f1 = f1_score(y_test,y_pred)
-            print('Epoch: {}, F1: {:.5f}, F1P: {}'.format(epoch,f1,len(f1_progress)))
+            print('Epoch: {}, F1: {:.5f}'.format(epoch,f1))
             f1_progress.append(f1)
             
     return f1_progress
 ``` 
+\#1 We create an empty array to monitor the F1 Score of the discriminator on the test set.
 
+\#2 Since we use separate batch training steps for real and fake data, we effectively use a half batch for each of the training steps.
+
+\#3 The classification head of the discriminator has a class label for 'this is fake'. Since half of the images are fake, we want to give this class a higher weight.
+
+\#4 We now draw a random sample of real data.
+
+\#5 We generate some random noise vectors and use the generator to create some fake data.
+
+\#6 For the 'fake or not head' we create labels. All real images have the label 1 (real), all fake images have the label 0 (fake).
+
+\#7 We one hot encode the labels of our real data. By specifying that our data has one more classes than it actually has, we leave space for the 'is fake' class.
+
+\#8 Our fake data all has the 'is fake' label. We create a vector of those labels and one hot encode them, too.
+
+\#9 First, we train the discriminator on the real data.
+
+\#10 Then we train the descriminator on the fake data.
+
+\#11 total loss of the discriminator for this epoch is the mean of the loss from the real and fake data.
+
+\#12 Now we train the generator. We generate a batch full of noise vectors as well as a batch full of labels saying 'this is real data'.
+
+\#13 With this data in hand we train the generator.
+
+\#14 To keep track of what is going on, we print out the progress. Remember that we do _not_ want the losses to go down, we want them to stay roughly constant. If either generator or discriminator becomes much better than the other the equilibrium breaks.
+
+\#15 Finally, we calculate and output the F1 score of using the discriminator as a fraud detection classifier for the data. This time, we only care about the classification data and discard the 'real or fake' head. We classify the transactions by the highest value that is not the 'is real' class of the classifier.
+
+
+Now that we have everything set up, we train our SGAN for 5,000 epochs. This takes about 5 minutes on a GPU, but could take much longer if you do not have a GPU.
 ```Python
 f1_p = train(X_res,y_res,
              X_test,y_test,
              generator,discriminator,
              combined,
-             num_classes=2,e
-             pochs=5000, 
+             num_classes=2,
+             epochs=5000, 
              batch_size=128)
 ```
-
+Finally, we plot the F1 score of our semi supervised fraud classifier over time:
 ```Python 
 fig = plt.figure(figsize=(10,7))
 plt.plot(f1_p)
@@ -1146,16 +1198,14 @@ plt.ylabel('F1 Score Validation')
 
 ![SGAN Progress](./assets/sgan_credit_card.png)
 
-General explainer
-https://stackoverflow.com/questions/18944805/what-is-weakly-supervised-learning-bootstrapping
+As you can see, the model learns pretty quickly at first, but then 'collapses' with its F1 score going to zero. This is a textbook example of a collapsing GAN. As mentioned above, GANs are unstable. If the delicate balance between the generator and discriminator breaks, performance quickly deteriorates. It is an active area of reasearch to make GANs more stable. So far, many practitioners just try many runs with different hyperparameters and random seeds and hope to get lucky. Another popular method is to just to save the model every couple of epochs. The model seems to be a pretty decent fraud detector at around epoch 150 despite being trained on less than 1000 transactions.
 
-With humans
-https://becominghuman.ai/accelerate-machine-learning-with-active-learning-96cea4b72fdb
+# Exercises
+- Create an SGAN to train MNIST an image classifier. How few images can you use to achieve over 90% classification accuracy.
 
-Without humans 
-https://shaoanlu.wordpress.com/2017/04/10/a-simple-pseudo-labeling-function-implementation-in-keras/
+- Using LSTMs you can build an autoencoder for stock price movements. Using a dataset such as the DJIA stock prices, build an autoencoder that encodes stock movements. Then visualize what happens to the outputs as you move through the latent space. You can find the dataset here: https://www.kaggle.com/szrlee/stock-time-series-20050101-to-20171231
 
-https://www.kaggle.com/glowingbazooka/semi-supervised-model-using-keras
-
+# Summary
+In this chapter you have learned about the two most important types of generative models: Autoencoders and GANs. You have learned about latent spaces and the use they have for financial analysis. You also got a first impression on how machine learning can solve game-theoretic optimization problems. In the next chapter we will deep dive into exactly that type of optimization as we cover reinforcement learning. 
 
 
