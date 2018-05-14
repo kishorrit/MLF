@@ -586,11 +586,566 @@ model.add(LSTM(nb_features, return_sequences=True)) #4
 ```
 
 \#1 A simple autoencoder can be built using the `Sequential` API. 
+
 \#2 We first feed our sequence length `maxlen` and with the number of features equal to `nb_features` into an `LSTM`. The `LSTM` will return only its last output, a single vector of dimension `latent_dim`. This vector is the encoding of our sequence. 
+
 \#3 To decode the vector, we need to repeat it over the length of the time series. This is done by the `RepeatVector` layer.
+
 \#4 Now we feed the sequence of repeated encodings into a decoding LSTM which this time returns the full sequence.
 
+Variational autoencoders also find their way into trading. They can be used to augment backtesting by generating new, unseen data for testing. They can also be used to generate data about contracts where data is missing. But most interesting, they can be used to learn about the driving variables in limit order book markets for instance. 
+
+It is reasonable to assume that just because two market days look a bit different, the same forces might be at work. Mathematically, we can assume that market data $\{x_k\}$ is sampled from a probability distribution $p(x)$ with a small number of latent variables $h$. Using an autoencoder, we can then approximate $p(h|x)$, the distribution of $h$ given $x$. This will allow us to analyze the driving forces $h$ in a market. 
+
+This solves the problem that a standard maximum likehood model for this kind of problem is computationally intractable. Two other methods performing the same feat are e.g. Markov Chain Monte Carlo or Hamilton Monte Carlo methods. While both will not be covered in this book, it is worthwile to understand that variational autoencoders address longstanding problems in mathematical finance in a computationally tractable way.
+
+But generative models can also be used to solve problems beyond the scope of traditional methods. The financial markets are fundamentally adversarial environments in which investors are trying to achieve something which is impossible in aggregate: Above average returns. Knowing that a company is doing well is not enough, if everyone knows the company does well, the stock price will be high and returns will be low. The key is to know the company is doing well while everyone else believes it is doing poorly. Markets are a zero-sum game theoretic environment. Generative adversarial networks (GANs), make use of these dynamics to generate realistic data.
+
+# GANs 
+Intuitively, GANs work a lot like an art forger and a museum curator. Every day, the art forger tries to sell some fake art to the museum. And every day the curator tries to distinguish if a certain piece is real and fake. The forger learns from his failures. By trying to fool the curator and observing success and failure, he becomes a better forger. But the curator learns too. By trying to stay ahead of the forger, she becomes a better curator. As time passes, the forgeries become better and the distinguishing process as well. After years of battle, the art forger is an expert that can draw just as well as Picasso and the curator is an expert that can distinguish a real painting by tiny details. 
+
+Technically, a GAN consists of two neural networks:
+- A _generator_ which produces data from a random latent vector
+- A _discriminator_ which classifies data as 'real', that is stemming from the training set, or 'fake', that is stemming from the generator.
+
+![GAN Scheme](./assets/gan_scheme.png)
+
+Once again, generative models are easier to understand when images are generated, so in this section we will refer to the data generated as images, although it could be all kinds of data.
+
+The training process for a GAN works as follows:
+1. A latent vector containing random numbers is created.
+2. The latent vector is fed into the _generator_ which produces an image. 
+3. A set of fake images from the generator is mixed with a set of real images from the training set. The discriminator is trained on binary classification of real and fake data.
+4. After the discriminator was trained for a bit, we feed in the fake images again. This time, we set the label of the fake images to 'real'. We backpropagate through the discriminator, and obtain the loss gradient with respect to the _input_ of the discriminator. We do _not_ update the weights of the discriminator based on this information.
+5. We now have gradients describing how we would have to change our fake image so that the discriminator would classify it as a real image. We use these gradients to backpropagate and train the _generator_.
+6. With our new and improved generator, we once again create fake images, which get mixed with real images to train the discriminator and whose gradients are used to train the generator again.
+
+Note: GAN training has a lot of similarities to the visualization of the network layers in chapter 3. Only that this time we do not just create one image that maximizes an activation function but we create a generative network that specializes in maximizing the activation function of another network. 
+
+Mathematically, generator $G$ and discriminator $D$ play a mini-max two player game with the value function $V(G,D)$
+
+$$
+\min_G \ \max_D V(G,D) = 
+\mathbb{E}_{x\sim p_{data}(x)} 
+[\log \ D(x)] + 
+\mathbb{E}_{z\sim p_{z}(z)}
+[\log (1-D(G(z)))]
+$$
+
+Where $x$ is an item drawn from the distribution of real data $p_{data}$ and $z$ is a latent vector dawn from the latent vector space $p_z$. 
+
+The output distribution of the generator is noted as $p_g$. It can be shown, that the global optimum of this game is $p_g = p_{data}$, that is, if the distribution of generated data is equal to the distribution of actual data. For a formal proof, see the original paper by Goodfellow et al. (2014).
+
+GANs get optimized following a game theoretic value function. Solving this type of optimization problem with deep learning is an active area of research, and an area we will visit again in chapter 7 for reinforcement learning. The fact that deep learning can be used to solve mini max games is exciting news for the field of finance and economics, which features many of such problems.
+
+## An MNIST GAN
+
+Without much further ado, lets implement a GAN to generate MNIST characters. Before we start, we need to do some imports.
+
+GANs are large models, in this section you will see how to combine `Sequential` and functional API models for easy model building.
+```Python 
+from keras.models import Model, Sequential
+```
+
+We will use a few new layer types:
+```Python 
+from keras.layers import Input, Dense, Dropout, Flatten
+from keras.layers import LeakyReLU, Reshape
+from keras.layers import Conv2D, UpSampling2D
+```
+- `LeakyReLU` is just like `ReLu`, except that the activation allows for small negative values. This prevents the gradient from becoming zero. This activation function works well for GANs, we will discuss the reasons for it in the next section.
+![Leaky Relu](./assets/leaky_relu.png)
+
+- Keras `Reshape` layer does the same as `np.reshape`: it brings a tensor into a new form.
+
+- `UpSampling2D` scales a 2D feature map up, e.g. by a factor of 2, by repeating all numbers in the feature map. 
+
+We will use an `Adam` optimizer as we often do.
+```Python
+from keras.optimizers import Adam
+```
+
+Neural network layers get initialized randomly. Usually, the random numbers are drawn from a distribution that supports learning well. For GANs it turns out a normal gaussian distribution is better. 
+```Python 
+from keras.initializers import RandomNormal
+```
+
+Now we build the generator model:
+```Python 
+generator = Sequential() #1 
+
+generator.add(Dense(128*7*7, 
+                    input_dim=latent_dim, 
+                    kernel_initializer=RandomNormal(stddev=0.02))) #2
+
+generator.add(LeakyReLU(0.2)) #3
+generator.add(Reshape((128, 7, 7))) #4
+generator.add(UpSampling2D(size=(2, 2))) #5
+
+generator.add(Conv2D(64,kernel_size=(5, 5),padding='same')) #6
+
+generator.add(LeakyReLU(0.2)) #7
+generator.add(UpSampling2D(size=(2, 2))) #8
+
+generator.add(Conv2D(1, kernel_size=(5, 5),
+                        padding='same', 
+                        activation='tanh')) #9
+  
+adam = Adam(lr=0.0002, beta_1=0.5)                      
+generator.compile(loss='binary_crossentropy', optimizer=adam) #10
+```
+
+\#1 We construct the generator as a sequential model.
+
+\#2 The first layer takes in the random latent vector and maps it to a vector with dimensions 128 * 7 * 7 = 6,272. It already significantly expands the dimensionality of our generated data. For this, fully connected layer, it is important to initialize weights from a normal gaussian distribution with a relatively small standard deviation. A gaussian distribution, as opposed to a uniform distribution, will have fewer extreme values, which makes training easier.
+
+\#3 The activation function for the first layer is `LeakyReLU`. We need to specify how steep the slope for negative inputs is, in this case, negative inputs are multiplied with 0.2
+
+\#4 Now we reshape our flat vector into a 3D tensor. This is the opposite to using a `Flatten` layer which we did in chapter 3. We now have a tensor with 128 channels in a 7 by 7 pixel image or feature map. 
+
+\#5 Using `UpSampling2D` we enlarge this image to 14 by 14 pixels. The `size` argument specifies the multiplied factor for width and height.
+
+\#6 Now we can apply a standard `Conv2D` layer. As opposed to most image classifiers we use a relatively large kernel size of 5 by 5 pixels.
+
+\#7 The activation following the `Conv2D` layer is another `LeakyReLU` 
+
+\#8 We upsample again, bringing the image to 28 by 28 pixels, the same dimensions as an MNIST image. 
+
+\#9 The final convolutional layer of our generator outputs only a single channel image, as MNIST images are black and white only. Notice how the activation of this final layer is a `'tanh'` activation. Tanh squishes all values to between negative one and one. This might be unexpected as image data usually does not feature any values below zero. Empirically it turned out however, that `'tanh'` activations work much better for GANs than `'sigmoid'` activations.
+
+\#10 Finally, we compile the generator to train with an `Adam` optimizer with a very small learning rate and smaller than usual momentum.
+
+The discriminator is a relatively standard image classifier that classifies images as real or fake. There are only a few GAN specific modifications
+```Python 
+# Discriminator
+discriminator = Sequential()
+discriminator.add(Conv2D(64, kernel_size=(5, 5), 
+                         strides=(2, 2), 
+                         padding='same', 
+                         input_shape=(1, 28, 28),
+                         kernel_initializer=RandomNormal(stddev=0.02))) #1
+
+discriminator.add(LeakyReLU(0.2))
+discriminator.add(Dropout(0.3))
+discriminator.add(Conv2D(128, kernel_size=(5, 5), 
+                         strides=(2, 2), 
+                         padding='same'))
+discriminator.add(LeakyReLU(0.2))
+discriminator.add(Dropout(0.3)) #2
+discriminator.add(Flatten())
+discriminator.add(Dense(1, activation='sigmoid'))
+discriminator.compile(loss='binary_crossentropy', optimizer=adam)
+```
+\#1 As with the generator, the first layer of the discriminator should be initialized randomly from a gaussian distribution.
+
+\#2 Dropout is commonly used in image classifiers. For GANs it should also be used just before the last layer.
+
+Now we have a generator and a discriminator. To train the generator, we have to get the gradients from the discriminator to backpropagate through and train the generator. This is where the power of Keras modular design comes into play.
+
+Note: Keras models can be treated just like Keras layers.
+
+The code below creates a GAN model which can be used to train the generator from the discriminator gradients.
+```Python 
+discriminator.trainable = False #1
+ganInput = Input(shape=(latent_dim,)) #2
+x = generator(ganInput) #3
+ganOutput = discriminator(x) #4
+gan = Model(inputs=ganInput, outputs=ganOutput) #5
+gan.compile(loss='binary_crossentropy', optimizer=adam) #6
+```
+
+\#1 When training the generator, we do not want to train the `discriminator`. When setting the `discriminator` to not trainable, the weights are frozen, only for the model that is compile with the non trainable weights. That is, we still can train the `discriminator` model on its own, but as soon as it becomes part of the GAN model which is compiled again, its weights are frozen.
+
+\#2 We create a new input for our GAN which takes in the random latent vector.
+
+\#3 We connect the generator model to the `ganInput` layer. The model can be used just as a layer under the functional API.
+
+\#4 We now connect the discriminator with frozen weights to the generator. Again, we call the model just like we would a use a layer in the functional API.
+
+\#5 We create a model which maps the `ganInput` to the output of the discriminator. 
+
+\#6 We compile our GAN model. Since we call compile here, the weights of the discriminator model are frozen for as long as they are part of the GAN model. Keras will throw a warning on training time that the weights are not frozen for the actual discriminator model.
+
+Training our GAN requires some customization of the training process and a couple of GAN specific tricks as well. More specifically, we have to write our own training loop which you can see below:
+```Python 
+epochs=50 
+batchSize=128
+batchCount = X_train.shape[0] // batchSize #1
+
+for e in range(1, epochs+1): #2
+    print('-'*15, 'Epoch %d' % e, '-'*15)
+    for _ in tqdm(range(batchCount)): #3
+      
+        noise = np.random.normal(0, 1, size=[batchSize, latent_dim]) #4
+        imageBatch = X_train[np.random.randint(0, 
+                                              X_train.shape[0],
+                                              size=batchSize)] #5
+
+        
+        generatedImages = generator.predict(noise) #6
+        X = np.concatenate([imageBatch, generatedImages]) #7
+
+        yDis = np.zeros(2*batchSize) #8
+        yDis[:batchSize] = 0.9 
+        
+        labelNoise = np.random.random(yDis.shape) #9
+        yDis += 0.05 * labelNoise + 0.05
+
+        
+        discriminator.trainable = True #10
+        dloss = discriminator.train_on_batch(X, yDis) #11
+
+        
+        noise = np.random.normal(0, 1, size=[batchSize, latent_dim]) #12
+        yGen = np.ones(batchSize) #13
+        discriminator.trainable = False #14
+        gloss = gan.train_on_batch(noise, yGen) #15
+
+    #16
+    dLosses.append(dloss)
+    gLosses.append(gloss)        
+```
+
+\#1 We have to write a custom loop to loop over the batches. To know how many batches there are, we need to make an integer division of our dataset size by our batch size.
+
+\#2 In the outer loop we iterate over the number of epochs we want to train.
+
+\#3 In the inner loop we iterate over the number of batches we want to train on in each epoch. The `tqdm` tool is helping us keep track of progress within the batch.
+
+\#4 We create a batch of random latent vectors.
+
+\#5 We randomly sample a batch of real MNIST images.
+
+\#6 We use the generator to generate a batch of fake MNIST images.
+
+\#7 We stack the real and fake MNIST images together.
+
+\#8 We create the target for our discriminator. Fake images are encoded with a zero, real images with a 0.9. This technique is called soft labels. Instead of hard labels (zero and one) we use something softer to not train the GAN too aggressively. This technique has been shown to make GAN training more stable.
+
+\#9 On top of using soft labels, we add some noise to the labels. This, once again, will make the training more stable.
+
+\#10 We make sure that the discriminator is trainable.
+
+\#11 We train the discriminator on a batch of real and fake data.
+
+\#12 We create some more random latent vectors for training the Generator.
+
+\#13 The target for generator trainings is always one. We want the discriminator the give us the gradients that would have made the fake image look like a real one.
+
+\#14 Just to be sure, we set the discriminator to not trainable, so that we can not break anything by accident.
+
+\#15 We train the GAN model. We feed in a batch of random latent vectors and train the generator part of the GAN so that the discriminator part would classify the generated images as real.
+
+\#16 We save the losses from training.
+
+
+Below you can see some of the generated MNIST characters:
+
+![GAN MNIST](./assets/gan_mnist_crop.png)
+
+Caption: GAN generated MNIST characters
+
+Most of these characters look like identifiable numbers, although some seem a bit off and there are some wired artifacts. 
+
+![Gan Progress](./assets/gan_progress.png)
+Caption: GAN training progress 
+Note: The loss in GAN training is not interpretable as it is for supervised learning. The loss of a GAN will not decrease even as the GAN makes progress.
+
+The loss of generator and discriminator is dependent on how well the other model does. If the generator gets better at fooling the discriminator, the discriminator loss will stay high. If one of the losses goes to zero, it means that the other model lost the race and can not fool or properly discriminate the other model anymore. This is one of the things that makes GAN training so hard: GANs don't converge to a low loss solution, they converge to an _equilibrium_ in which the generator fools the discriminator many times but not always. That equilibrium is not always stable. Part of the reason so much noise is added to labels and the networks themselves is that it increases the stability of the equilibrium.
+
+As GANs are unstable and difficult yet useful, a number of empirical tricks have been developed over time that make GAN training more stable. Knowing these tricks can help you with your GAN building and save you countless hours, even though there is often no theoretical reason for why these tricks work.
+
+## Understanding GAN latent vectors
+
+For autoencoders, the latent space was a relatively straight forward approximation of principal component analysis. Variational autoencoders create a latent space of distributions, which is useful but still easy to imagine as a form of PCA. So what is the latent space of a GAN if we just sample randomly from it during training. As it turns out, GANs self structure the latent space. Using the latent space of a GAN, you would still be able to cluster MNIST images by the character they display. Research has shown that the latent space of GANs often has some surprising features, such as 'smile vectors' along which generated face images smile more or less. Researchers have also shown that GANs can be used for latent space algebra, where adding the latent representation of different objects creates realistic, new objects. Yet, research on the latent space of GANs is still in its infancy and drawing conclusions about the world from its latent space representations is an active field of research.
+
+## GAN training tricks 
+https://github.com/soumith/ganhacks
+
+1. Normalize the inputs
+
+Gans don't work well with extreme values so make sure you always have normalized inputs between -1 and 1. This is also the reason why you should use a `tanh` function as your generator output.
+
+
+2. Don't use the theoretical correct loss function
+
+If you read papers on GANs you will find that they give the generator optimization goal as: 
+$$min\ log\ (1-D)$$
+
+Where $D$ is the discriminator output. In practice it works better if the objective of the generator is:
+
+$$max\ log\ D$$
+
+In other words, instead of minimizing the negative discriminator output it is better to maximize the discriminator output. The reason is that the first objective often has vanishing gradients in the beginning of the GAN training process.
+
+3. Sample from a normal gaussian distribution 
+
+There is two reasons to sample from normal distributions instead of uniform distributions: First, GANs don't work well with extreme values and normal distributions have fewer extreme values than uniform distributions. Additionally, it has turned out that if the latent vectors are sampled from a normal distribution, the latent space becomes a sphere. The relationships between latent vectors in this sphere are easier to describe than latent vectors in a cube space.
+
+4. Use Batch normalization
+
+We already saw that GANs don't work well with extreme values since they are so fragile. Another way to reduce extreme values is to use batch normalization, discussed in chapter 3.
+
+5. Use separate batches for real and fake data 
+
+In the beginning, real and fake data might have very different distributions. As batch norm applies normalization over a batch, using the batches mean and standard deviation, it is more effective to keep the real and fake data separate. While this does lead to slightly less accurate gradient estimates, the gain from fewer extreme values is bigger.
+
+6. Use Soft and Noisy Labels
+
+GANs are fragile, the use of soft labels reduces the gradients and keeps the gradients from tipping over. Adding some random noise to labels also helps stabilizing the system.
+
+7. Use basic GANs
+
+There is now a wide range of GAN models. Many of them claim wild performance improvements, while in fact they do not work much better or often worse than a simple deep convolutional generative adversarial network or (DCGAN). That does not mean they have no justification for being, but for the bulk of tasks, more basic GANs do better. Another well working GAN is the adversarial autonecoder, which combines a VAE with a GAN by training the autocoder on the gradients of a discriminator.
+
+8. Avoid ReLU and MaxPool 
+
+ReLu activations and MaxPool layers are frequently used in deep learning, but they have the disadvantage of producing 'sparse gradients'. A ReLu activation will not have any gradient for negative inputs and a MaxPool layer will not have any gradients for all inputs that were not the maximum input. Since gradients are what the generator is being trained on, sparse gradients hurt generator training.
+
+9. Use the ADAM Optimizer
+
+This optimizer has been shown to work very well with GANs, while many other optimizers do not work well with them.
+
+10. Track failures early
+
+Sometimes, GANs fail for random reasons. Just choosing the 'wrong' random seed could set your training run up for failure. Usually, it is possible to see if a GAN goes completely off track by observing outputs. They should slowly become more like the real data. If the generator goes completely of track and produces only zeros for instance, you will be able to see it before spending days of GPU time on training that will go nowhere.
+
+11. Don't balance loss via statistics
+
+Keeping the balance between the generator and discriminator is a delicate task. Many practitioners therefore try to help the balance by training either the generator or discriminator a bit more depending on statistics. Usually, that does not work. GANs are very counterintuitive, and trying to help them with an intuitive approach usually makes matters worse. That is not to say there are no ways to help out GAN equilibriums. But the help should stem from a principled approach, such as 'train the generator while the generator loss is above X'.
+
+12. If you have labels, use them
+
+A slightly more sophisticated version of a GAN discriminator can not only classify data as real or fake, but also classify the class of the data. In the MNIST case, the discriminator would have 11 outputs, for the 10 real numbers as well as an output for fake. This allows us to create a GAN that can show more specific images. This is useful in the domain of semi-supervised learning which we will cover in the next section.
+
+13. Add noise to inputs, reduce it over time
+
+Noise adds stability to GAN training so it comes at no surprise that noisy inputs can help, especially in the early, unstable phases of training a GAN. Later however it can obfuscate too much and keep the GAN from generating realistic images. So we should reduce the noise applied to inputs over time.
+
+14. Use Dropouts in G in both train and test phase
+
+Some researchers find that using dropout on inference time leads to better results for the generated data. Why that is the case is still an open question.
+
+15. Historical averaging
+
+GANs tend to 'oscillate' with their weights moving rapidly around a mean during training. Historical averaging penelizes weights that are too far away from their historical average and reduces oscillation. It therefore increases the stability of GAN training.
+
+16. Replay buffers
+
+Replay buffers keep a number of older generated images so they can be reused for training the discriminator. This has a similar effect as historical averaging, reduces oscillation and increases stability. It also reduces the correlation between training data.
+
+17. Target networks
+
+Another 'anti-oscillation' trick is to use target networks. That is, to create copies of both the generator and discriminator, and then train the generator with a frozen copy of the discriminator and the discriminator with a frozen copy of the generator.
+
+18. Entropy regularization
+
+Entropy regularization means rewarding the network for outputting more different values. This can prevent the generator network from settling on a few things to produce, say, only the number seven. It is a regularization method as it prevents overfitting.
+
+20. Use Dropout or noise layers
+
+Noise is good for GANs. Keras does not only feature dropout layers, it also features a number of noise layers that add different kinds of noise to activations in a network. Read the documentation of these layers and see if they are helping for your specific GAN application: 
+https://keras.io/layers/noise/
+
+
 # Using less data: Active Learning
+Part of the motivation for generative models, be it GANs or VAEs, was always that it would allow us to generate data and therefore use less data. As data is inherently sparse and we never have enough of it, generative models seems as they are the free lunch economists warn about. But even the best GAN works with _no_ data. In this section we will have a look at the different methods to bootstrap models with as little data as possible. This is also called active learning or semi-supervised learning.
+
+Unsupervised learning uses no labels, but unlabeled data, to cluster this data in different ways. An example are autoencoders, where images can be transformed into learned, latent vectors which can then be clustered without the need for labels that describe the image.
+
+Supervised learning uses data with labels. An example is the image classifier we built in chapter 3 or most other models we build in this book. 
+
+Semi-supervised learning aims to perform tasks usually done by supervised models, but with less data by using unsupervised or generative methods. There is three ways this can work: First, by making smarter use of humans. Second, by making better use of unlabeled data. Third, by using generative models. 
+
+## Let humans label frontier points
+For all the talk about AI replacing humans, there are sure an awful lot of humans required to train AI systems. Although the numbers are not clear, it seems as there are between 500,000 and 750,000 registered 'Mechanical Turkers' on amazons Mechanical Turk (or MTurk) service. MTurk is a website that offers 'Human intelligence through an API', which in practice means that companies and researchers post simple jobs like filling out a survey or classifying an image and people all over the world perform these tasks for a few cents per task. For an AI to learn, humans need to provide labeled data. If the task is large scale, many companies hire MTurk to let humans do the labeling. If it is a small task you will often find the companies staff labeling data. 
+
+Surprisingly little thought goes into what these humans label. Because not all labels are equally useful. The image below shows a linear classifier. As you can see, the frontier point, that is close to the frontier between the two classes, shapes where the decision boundary, while the points further in the back are not as relevant.
+
+![Frontier points](./assets/frontier_point.png)
+Caption: Frontier points are more valuable
+
+Note: Frontier points close to the decision boundary are more valuable than points further away from it. You can train on less data by (1) labeling only a few images, (2) train a weak model (3) let that weak model make predictions for some unlabeled images, (4) label the images where the model is least confident about and add them to your training set, (5) repeat.
+
+This process of labeling data is much more efficient than just randomly labeling data and can accelerate your efforts quite drastically.
+
+## Leverage machines for human labeling
+In labeling, many companies rely on excel. They have human labelers look at something to label, such as an image or a text, and then type in the label in an excel spreadsheet. This is incredibly inefficient and error prone, but common practice. Some slightly more advanced labeling operations build simple web apps that let the user see the item to label and directly click on the label or press a hot key. This can accelerate the labeling process quite substantially, but is still not the optimal if there are many label categories. A better way is to once again, label a few images and pre-train a weak model. On labeling time, the computer shows the labeler the data as well as a label. The labeler only has to decide if this label is correct. This can be done easily with hot keys and the time to label a single item goes down dramatically. If the label was wrong, the label interface can either bring up a list of possible options, sorted by the probability the model assigned to them, or just put the item back on the stack and display the next most likely label the next time. A great implementation of this technique is 'Prodigy', a labeling tool by the company that makes SpaCy, which we learned about in chapter 5.
+
+![Prodigy](./assets/prodigy.png)
+Caption: Prodigy is a labeling tool that leverages machines. Source: https://prodi.gy/
+
+Note: Better user interface design and smart use of weak models can greatly accelerate labeling.
+
+## Pseudo labeling for unlabeled data
+Often there is plenty of unlabeled data available, but only little labeled data. That unlabeled data can still be used. First, you train a model on the labeled data that you have. Then you let that model make predictions on your corpus of unlabeled data. You treat those predictions as if they were true labels and train your model on the full, pseudo labeled, dataset. However, actual true labels should be used more often than the pseudo labels. The exact sampling rate for pseudo labels can vary for different circumstances. This works under the condition that errors are random. If they are biased, your model will be biased as well. This simple method is surprisingly effective and can greatly reduce labeling efforts. 
+
+## Using generative models
+As a final applied project of this chapter, let's consider the credit card problem again.
+
+In this case, our data has 29 dimensions. We choose our latent vectors to have ten dimensions.
+```Python 
+latent_dim=10
+data_dim=29
+```
+
+The generator model is constructed as a fully connected network with `LeakyReLU` activations and batch normalization. The output activation is a `tanh` activation.
+```Python 
+model = Sequential()
+model.add(Dense(16, input_dim=latent_dim))
+model.add(LeakyReLU(alpha=0.2))
+model.add(BatchNormalization(momentum=0.8))
+model.add(Dense(data_dim,activation='tanh'))
+``` 
+
+To later use the generator model better, we wrap the model we created into a functional API model that maps the noise vector to a generated transaction record. Since most GAN literature is about images, and 'transaction record' is a bit of a mouthful, we just name our transaction records 'images'.
+```Python 
+noise = Input(shape=(latent_dim,))
+img = model(noise)
+        
+generator = Model(noise, img)
+```
+
+Just as the generator, we build the discriminator in the sequential API. As the discriminator has two heads, one for the classes, one for fake or no fake, we first only construct the base of the model.
+```Python 
+model = Sequential()
+model.add(Dense(16,input_dim=data_dim))
+model.add(LeakyReLU(alpha=0.2))
+model.add(BatchNormalization(momentum=0.8))
+model.add(Dropout(0.25))
+```
+
+Now we map the input of the discriminator to its two heads using the functional API.
+```Python 
+img = Input(shape=(data_dim,)) #1
+features = model(img) #2
+valid = Dense(1, activation="sigmoid")(features) #3
+label = Dense(num_classes+1, activation="softmax")(features) #4
+
+discriminator = Model(img, [valid, label]) #5
+```
+\#1 We create an input placeholder for the noise vector.
+
+\#2 We get the feature tensor from the discriminator base model.
+
+\#3 We create a `Dense` layer for classifying an transactions as real or not and map it to the feature vector.
+
+\#4 We create a second `Dense` layer for classifying transactions as fraudulent, genuine or fake.
+
+\#5 We create a model mapping the input to the two heads.
+
+
+```Python 
+optimizer = Adam(0.0002, 0.5)
+discriminator.compile(loss=['binary_crossentropy',
+                            'categorical_crossentropy'],
+                            loss_weights=[0.5, 0.5],
+                            optimizer=optimizer,
+                            metrics=['accuracy'])
+```
+
+```Python 
+noise = Input(shape=(10,))
+img = generator(noise)
+discriminator.trainable = False
+valid,_ = discriminator(img)
+combined = Model(noise , valid)
+combined.compile(loss=['binary_crossentropy'],
+                        optimizer=optimizer)
+```
+
+```Python 
+def train(X_train,y_train,
+          X_test,y_test,
+          generator,discriminator,
+          combined,
+          num_classes,
+          epochs, 
+          batch_size=128):
+    
+    f1_progress = []
+    half_batch = int(batch_size / 2)
+
+    noise_until = epochs
+
+    # Class weights:
+    # To balance the difference in occurences of digit class labels.
+    # 50% of labels that the discriminator trains on are 'fake'.
+    # Weight = 1 / frequency
+    cw1 = {0: 1, 1: 1}
+    cw2 = {i: num_classes / half_batch for i in range(num_classes)}
+    cw2[num_classes] = 1 / half_batch
+
+    for epoch in range(epochs):
+
+        # ---------------------
+        #  Train Discriminator
+        # ---------------------
+
+        # Select a random half batch of images
+        idx = np.random.randint(0, X_train.shape[0], half_batch)
+        imgs = X_train[idx]
+
+        # Sample noise and generate a half batch of new images
+        noise = np.random.normal(0, 1, (half_batch, 10))
+        gen_imgs = generator.predict(noise)
+
+        valid = np.ones((half_batch, 1))
+        fake = np.zeros((half_batch, 1))
+
+        labels = to_categorical(y_train[idx], num_classes=num_classes+1)
+        fake_labels = to_categorical(np.full((half_batch, 1), num_classes), num_classes=num_classes+1)
+
+        # Train the discriminator
+        d_loss_real = discriminator.train_on_batch(imgs, [valid, labels], class_weight=[cw1, cw2])
+        d_loss_fake = discriminator.train_on_batch(gen_imgs, [fake, fake_labels], class_weight=[cw1, cw2])
+        d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
+
+
+        # ---------------------
+        #  Train Generator
+        # ---------------------
+
+        noise = np.random.normal(0, 1, (batch_size, 10))
+        validity = np.ones((batch_size, 1))
+
+        # Train the generator
+        g_loss = combined.train_on_batch(noise, validity, class_weight=[cw1, cw2])
+
+        # Plot the progress
+        print ("%d [D loss: %f, acc: %.2f%%, op_acc: %.2f%%] [G loss: %f]" % (epoch, d_loss[0], 100*d_loss[3], 100*d_loss[4], g_loss))
+        
+        if epoch % 10 == 0:
+            _,y_pred = discriminator.predict(X_test,batch_size=batch_size)
+            #print(y_pred.shape)
+            y_pred = np.argmax(y_pred[:,:-1],axis=1)
+            
+            f1 = f1_score(y_test,y_pred)
+            print('Epoch: {}, F1: {:.5f}, F1P: {}'.format(epoch,f1,len(f1_progress)))
+            f1_progress.append(f1)
+            
+    return f1_progress
+``` 
+
+```Python
+f1_p = train(X_res,y_res,
+             X_test,y_test,
+             generator,discriminator,
+             combined,
+             num_classes=2,e
+             pochs=5000, 
+             batch_size=128)
+```
+
+```Python 
+fig = plt.figure(figsize=(10,7))
+plt.plot(f1_p)
+plt.xlabel('10 Epochs')
+plt.ylabel('F1 Score Validation')
+```
+
+![SGAN Progress](./assets/sgan_credit_card.png)
+
 General explainer
 https://stackoverflow.com/questions/18944805/what-is-weakly-supervised-learning-bootstrapping
 
@@ -603,15 +1158,4 @@ https://shaoanlu.wordpress.com/2017/04/10/a-simple-pseudo-labeling-function-impl
 https://www.kaggle.com/glowingbazooka/semi-supervised-model-using-keras
 
 
-
-# Visual question answering
-
-# GANs 
-Keras implementations 
-https://github.com/eriklindernoren/Keras-GAN
-
-https://medium.com/jungle-book/towards-data-set-augmentation-with-gans-9dd64e9628e6
-
-WGAN
-https://www.alexirpan.com/2017/02/22/wasserstein-gan.html
 
