@@ -44,15 +44,15 @@ There are many ways this can work in practice. Here, we are going to look at Q-L
 
 A good way to understand Q-learning is to compare playing Catch with playing chess.
 
-In both games you are given a state, $S$. With chess, this is the positions of the figures on the board. In Catch, this is the location of the fruit and the basket.
+In both games you are given a state, $s$. With chess, this is the positions of the figures on the board. In Catch, this is the location of the fruit and the basket.
 
-The player then has to take an action, $A$. In chess, this is moving a figure. In Catch, this is to move the basket left or right, or remain in the current position.
+The player then has to take an action, $a$. In chess, this is moving a figure. In Catch, this is to move the basket left or right, or remain in the current position.
 
-As a result, there will be some reward $R$, and a new state $S’$.
+As a result, there will be some reward $r$, and a new state $s'$.
 
 The problem with both Catch and chess is that the rewards do not appear immediately after the action.
 
-In Catch, you only earn rewards when the fruits hit the basket or fall on the floor, and in chess you only earn a reward when you win or lose the game. This means that rewards are sparsely distributed. Most of the time, $R$ will be zero.
+In Catch, you only earn rewards when the fruits hit the basket or fall on the floor, and in chess you only earn a reward when you win or lose the game. This means that rewards are sparsely distributed. Most of the time, $r$ will be zero.
 
 When there is a reward, it is not always a result of the action taken immediately before. Some action taken long before might have caused the victory. Figuring out which action is responsible for the reward is often referred to as the credit assignment problem.
 
@@ -64,17 +64,17 @@ In Q-learning, we choose our action based on the highest expected future reward.
 
 We can write this as: $Q(state, action)$
 
-While in state $S$, we estimate the future reward for each possible action $A$. We assume that after we have taken action $A$ and moved to the next state $S’$, everything works out perfectly.
+While in state $s$, we estimate the future reward for each possible action $a$. We assume that after we have taken action $a$ and moved to the next state $s'$, everything works out perfectly.
 
-The expected future reward $Q(S,A)$ for a given a state $S$ and action $A$ is calculated as the immediate reward $R$, plus the expected future reward thereafter $Q(S',A')$. We assume the next action $A'$ is optimal.
+The expected future reward $Q(s,a)$ for a given a state $s$ and action $a$ is calculated as the immediate reward $r$, plus the expected future reward thereafter $Q(s',a')$. We assume the next action $a'$ is optimal.
 
-Because there is uncertainty about the future, we discount $Q(S’,A’)$ by the factor gamma $\gamma$. We therefore arrive at an expected reward of:
+Because there is uncertainty about the future, we discount $Q(s’,a’)$ by the factor gamma $\gamma$. We therefore arrive at an expected reward of:
 
-$$Q(S,A) = R + \gamma * \max Q(S’,A’)$$
+$$Q(s,a) = r + \gamma * \max Q(s’,a’)$$
 
 Note: We discount future rewards in RL for the same reason we discount future returns in finance. They are uncertain. Our choice of $\gamma$ reflects how much we value future returns.
 
-Good chess players are very good at estimating future rewards in their head. In other words, their Q-function $Q(S,A)$ is very precise.
+Good chess players are very good at estimating future rewards in their head. In other words, their Q-function $Q(s,a)$ is very precise.
 
 Most chess practice revolves around developing a better Q-function. Players peruse many old games to learn how specific moves played out in the past, and how likely a given action is to lead to victory.
 
@@ -82,28 +82,28 @@ But how can a machine estimate a good Q-function? This is where neural networks 
 
 ## Q-Learning turns RL into supervised learning
 When playing a game, we generate lots of “experiences”. These experiences consist of:
-- The initial state, $S$
-- The action taken, $A$
-- The reward earned, $R$
-- And the state that followed, $S’$
+- The initial state, $s$
+- The action taken, $a$
+- The reward earned, $r$
+- And the state that followed, $s’$
 
-These experiences are our training data. We can frame the problem of estimating $Q(S,A)$ as a regression problem. To solve this, we can use a neural network.
+These experiences are our training data. We can frame the problem of estimating $Q(s,a)$ as a regression problem. To solve this, we can use a neural network.
 
-Given an input vector consisting of $S$ and $A$, the neural net is supposed to predict the value of $Q(S,A)$ equal to the target: $R + γ * max Q(S’,A’)$. If we are good at predicting $Q(S,A)$ for different states $S$ and actions $A$, we have a good approximation of the Q-function. 
+Given an input vector consisting of $s$ and $a$, the neural net is supposed to predict the value of $Q(s,a)$ equal to the target: $r + γ * max Q(s’,a’)$. If we are good at predicting $Q(s,a)$ for different states $s$ and actions $a$, we have a good approximation of the Q-function. 
 
-Note: We estimate $Q(S’,A’)$ through the same neural net as $Q(S,A)$. This leads to some instability as our targets now change as the networks learn. Just as with GANs.
+Note: We estimate $Q(s’,a’)$ through the same neural net as $Q(s,a)$. This leads to some instability as our targets now change as the networks learn. Just as with GANs.
 
-Given a batch of experiences $<S, A, R, S’>$, the training process then looks as follows:
+Given a batch of experiences $<s, a, r, s’>$, the training process then looks as follows:
 
-1. For each possible action $A’$ (left, right, stay), predict the expected future reward $Q(S’,A’)$ using the neural net.
+1. For each possible action $a’$ (left, right, stay), predict the expected future reward $Q(s’,a’)$ using the neural net.
 
-2. Choose the highest value of the three predictions as max $Q(S’,A’)$.
+2. Choose the highest value of the three predictions as max $Q(s’,a’)$.
 
-3. Calculate $r + γ * max Q(S’,A’)$. This is the target value for the neural net.
+3. Calculate $r + γ * max Q(s’,a’)$. This is the target value for the neural net.
 
-4. Train the neural net using a loss function. This is a function that calculates how near or far the predicted value is from the target value. Here, we will use $0.5 * (predicted_Q(S,A) — target)^2$ as the loss function.
+4. Train the neural net using a loss function. This is a function that calculates how near or far the predicted value is from the target value. Here, we will use $0.5 * (predicted_Q(s,a) — target)^2$ as the loss function.
 
-During gameplay, all the experiences are stored in a replay memory. This acts like a simple buffer in which we store $< S, A, R, S’ >$ pairs. The experience replay class also handles preparing the data for training. Check out the code below:
+During gameplay, all the experiences are stored in a replay memory. This acts like a simple buffer in which we store $< s, a, r, s’ >$ pairs. The experience replay class also handles preparing the data for training. Check out the code below:
 
 ```Python 
 class ExperienceReplay(object): #1
@@ -164,7 +164,7 @@ where `experience` is a tuple holding the experience information and `game_over`
 
 \#3 When we want to remember a new experience, we add it to our list of experiences. Since we can not store infinite experiences, we delete the oldest experience if our buffer exceeds its maxumum length.
 
-\#4 With the `get_batch` function we can obtain a single batch of training data. To calculate $Q(S’,A’)$, we need a neural network as well, so we need to pass a Keras model to use the function.
+\#4 With the `get_batch` function we can obtain a single batch of training data. To calculate $Q(s’,a’)$, we need a neural network as well, so we need to pass a Keras model to use the function.
 
 \#5 Before we start generating a batch, we need to know how many experiences we have stored in our replay buffer, how many possible actions there are and how many dimensions a game state has. 
 
@@ -174,13 +174,13 @@ where `experience` is a tuple holding the experience information and `game_over`
 
 \#8 We load the experience data as well as the `game_over` indicator from the replay buffer.
 
-\#9 We add the state $S$ to the input matrix. Later the model will train to map from this state to the expected reward.
+\#9 We add the state $s$ to the input matrix. Later the model will train to map from this state to the expected reward.
 
 \#10 Next, we fill the expected reward for all actions with the expected reward calculated by the current model. This ensures that our model only trains on the action that was actually taken since the loss for all other actions is zero.
 
-\#11 Next we calculate $Q(S', A')$. We simply assume that for the next state $S'$ or `state_tp1` in code, the neural network will estimate the expected reward perfectly. As the network trains, this assumption slowly becomes true.
+\#11 Next we calculate $Q(s', a')$. We simply assume that for the next state $s'$ or `state_tp1` in code, the neural network will estimate the expected reward perfectly. As the network trains, this assumption slowly becomes true.
 
-\#12 If the game ended after state $S$, the expected reward from the action $A$ should be the received reward $R$. If it did not end, then the expected reward should be the received reward as well as the discounted expected future reward.
+\#12 If the game ended after state $S$, the expected reward from the action $a$ should be the received reward $r$. If it did not end, then the expected reward should be the received reward as well as the discounted expected future reward.
 
 ## Defining the Q-Learning model
 Now it is time to define the model that will learn a Q-function for Catch. It turns out that already a relatively simple model can learn the function well. 
@@ -270,8 +270,17 @@ def train(model,epochs):
 
 \#9 We then sample a new training batch from the experience replay and train on that batch.
 
+The graph below shows the rolling mean of successful games. After about 2,000 epochs of training, the neural network should be quite good at playing catch. 
+![Catch Progress](./assets/catch_progress.png)
+Caption: Progress of a Q-Learning neural network playing catch.
+
+You have now successfully created your first reinforcement learning system. In the next section, we will explore the theoretical foundations of reinforcement learning and discover how the same system that learns to play catch can learn to rout orders in the futures market.
 # Markov processes and the bellman equation - A more formal introduction to RL 
 http://www.ecmlpkdd2013.org/wp-content/uploads/2013/09/Multiagent-Reinforcement-Learning.pdf
+
+https://joshgreaves.com/reinforcement-learning/introduction-to-reinforcement-learning/
+
+
 
 # A market example
 Blog post
