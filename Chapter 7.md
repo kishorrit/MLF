@@ -1,4 +1,4 @@
-# Chapter 6
+# Chapter 7
 
 Humans do not learn with million of labeled examples. Instead, we often learn from positive or negative experiences that we associate with our actions. Children that touch the hot stove once never touch it again. Learning from experiences and associated rewards or punishments is the core idea behind reinforcement learning (RL). RL allows us to learn sophisticated decision making rules with no data at all. This approach powered several high profile breakthroughs in AI, such as AlphaGo, which beat the world Go champion in 2016.
 
