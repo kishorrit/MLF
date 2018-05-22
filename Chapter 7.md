@@ -10,12 +10,6 @@ This chapter will start with an intuitive introduction to RL using a simple 'cat
 
 The examples in this chapter rely on visualizations that are not easily rendered in Kaggle Kernels. The example algorithms are also not optimized for GPU usage to simplify them. It is therefore best to run these examples on your local machine. The algorithms run relatively fast so you won't have to wait too long for them to run.
 
-introduction
-http://www.wildml.com/2018/02/introduction-to-learning-to-trade-with-reinforcement-learning/
-
-MAN AHL using RL for order routing 
-https://www.ahl.com/the-rise-of-machine-learning
-
 # Catch! - A quick guide to reinforcement learning 
 
 Catch is a very simple arcade game, which you might have played as a child. Fruits fall from the top of the screen, and the player has to catch them with a basket. For every fruit caught, the player scores a point. For every fruit lost, the player loses a point.
@@ -278,10 +272,6 @@ Caption: Progress of a Q-Learning neural network playing catch.
 
 You have now successfully created your first reinforcement learning system. In the next section, we will explore the theoretical foundations of reinforcement learning and discover how the same system that learns to play catch can learn to rout orders in the futures market.
 # Markov processes and the bellman equation - A more formal introduction to RL 
-http://www.ecmlpkdd2013.org/wp-content/uploads/2013/09/Multiagent-Reinforcement-Learning.pdf
-
-https://joshgreaves.com/reinforcement-learning/introduction-to-reinforcement-learning/
-
 Following the long history of modern deep learning being a continuation of quantitative finance with more GPUs, the theoretical foundation of reinforcement learning lies in Markov models. A Markov model model describes a stochastic process with different states in which the probability of ending up in a specific state is purely dependent on the state one is currently in. Below you can see a simple Markov model describing recommendations given for a stock.
 
 ![Markov Model](./assets/markov_model.png)
@@ -420,12 +410,6 @@ While recursive economics still has many problems, including the large compute p
 
 
 # (Asynchronous) Advantage Actor Critic models
-https://towardsdatascience.com/reinforcement-learning-w-keras-openai-actor-critic-models-f084612cfd69
-
-https://jaromiru.com/2017/02/16/lets-make-an-a3c-theory/#fn-544-4
-
-https://www.youtube.com/watch?v=KHZVXao4qXs
-
 Q-Learning as we saw above is quite useful, but has its drawbacks. For example as we have to estimate a Q value for each action, there has to be a discrete, limited set of actions. But what if the action space is continuous or extremely large? Say, you are using an RL algorithm to build a portfolio of stocks. Even if your universe of stocks consisted only of two stocks, say AMZN and AAPL, there would be an infinite amount of ways to balance them, 10% AMZN & 90% AAPL, 11% AMZM & 89% AAPL and so on. If your universe gets bigger, the amount of ways you can combine stocks explodes. 
 
 You could divide the continuous steps into discrete separations by say, allowing only full percent allocations, but even then you would have a potentially trillion dimensional action space. A workaround to having to select from such an action space is to learn the policy $\pi$ directly. Once you have learned a policy, you can just give it a state and it will give back a distribution of actions. This means that your actions will not be deterministic. A stochastic policy has advantages, especially in a game theoretic setting.
@@ -873,17 +857,6 @@ def run_experiment(render=False, agent=None, epochs = 3000):
 \#17 The agent usually does pretty well after 700 epochs. We declare the game solved if the average reward over the last 20 games was better than -20. If that is the case, we exit the function and return the trained agent together with its scores.
 
 ## Learning to trade 
-Blog post
-https://hackernoon.com/the-self-learning-quant-d3329fcc9915
-Code 
-https://github.com/danielzak/sl-quant
-
-https://github.com/deependersingla/deep_trader/blob/master/deep_thoughts.md
-
-https://github.com/talolard/MarketVectors
-
-https://launchpad.ai/blog/trading-bitcoin
-
 Reinforcement learning algorithms are largely developed in games and simulations where a failing algorithm won't cause any damage. However, once developed, an algorithm can be adapted to other, more serious tasks. Do demonstrate this, we will now create an A2C agent that learns how to balance a portfolio of stocks in a large universe of stocks. Please do not trade based on this algorithm, it is only a simplified and slightly naive implementation to demonstrate the concept.
 
 To train a new reinforcement learning algorithm, we first need to create a training environment. In this environment, the agent trades on real life stock data. The environment can be interfaced just like an OpenAI gym environment. Following the gym conventions for interfacing reduces complexity of development. Given a 100 day look back of the percentile returns of stocks in the universe, the agent has to return an allocation in form of a 100 dimensional vector. The allocation vector describes the share of assets the agent wants to allocate on one stock. A negative allocation means the agent is short trading the stock. For simplicities sake, transaction costs and slippage are not added to the environment. It would not be too difficult to add them however. The full implementation of the environment and agent can be found at:
