@@ -872,7 +872,7 @@ def run_experiment(render=False, agent=None, epochs = 3000):
 
 \#17 The agent usually does pretty well after 700 epochs. We declare the game solved if the average reward over the last 20 games was better than -20. If that is the case, we exit the function and return the trained agent together with its scores.
 
-# A market example
+## Learning to trade 
 Blog post
 https://hackernoon.com/the-self-learning-quant-d3329fcc9915
 Code 
@@ -883,6 +883,13 @@ https://github.com/deependersingla/deep_trader/blob/master/deep_thoughts.md
 https://github.com/talolard/MarketVectors
 
 https://launchpad.ai/blog/trading-bitcoin
+
+Reinforcement learning algorithms are largely developed in games and simulations where a failing algorithm won't cause any damage. However, once developed, an algorithm can be adapted to other, more serious tasks. Do demonstrate this, we will now create an A2C agent that learns how to balance a portfolio of stocks in a large universe of stocks. Please do not trade based on this algorithm, it is only a simplified and slightly naive implementation to demonstrate the concept.
+
+To train a new reinforcement learning algorithm, we first need to create a training environment. In this environment, the agent trades on real life stock data. The environment can be interfaced just like an OpenAI gym environment. Following the gym conventions for interfacing reduces complexity of development. Given a 100 day look back of the percentile returns of stocks in the universe, the agent has to return an allocation in form of a 100 dimensional vector. The allocation vector describes the share of assets the agent wants to allocate on one stock. A negative allocation means the agent is short trading the stock. For simplicities sake, transaction costs and slippage are not added to the environment. It would not be too difficult to add them however. The full implementation of the environment and agent can be found at:
+https://www.kaggle.com/jannesklaas/a2c-stock-trading
+
+The environment looks like this:
 
 ```Python 
 class TradeEnv():    
@@ -977,6 +984,8 @@ class TradeEnv():
 
 \#17 The last thing to do is to transform the data into time series. The first 100 steps are the basis for the agents decision. The 101st element is the next days return, on which the agent will be evaluated. 
 
+
+We only have to make minor edits in the `A2CAgent` agent class. Namely, we only have to modify the model so that it can take in the time series of returns. To this end, we add 2 `LSTM` layers which actor and critic share.
 ```Python
 def build_model(self):
         state = Input(batch_shape=(None, #1
@@ -1015,9 +1024,73 @@ def build_model(self):
         return actor, critic
 ```
 
-# RL + Monte Carlo Tree search = <3
+\#1 The state now has a time dimension.
+
+\#2 The two `LSTM` layers are shared across actor and critic.
+
+\#3 Since the action space is larger, we also have to increase the size of the actors hidden layer.
+
+\#4 Outputs should lie between -1 and 1 ,100% short and 100% long, so we can save ourselves the step of multiplying the mean by two.
+
+And that is it! This algorithm can now learn to balance a portfolio just as it could learn to balance before.
 
 # Evolutionary strategies and genetic algorithms
+
+Recently, a decades old optimization algorithm for reinforcement learning algorithms has come back into fashion. Evolutionary strategies (ES) are much simpler than Q-Learning or A2C.
+
+Instead of training one model through backpropagation, we create a population of models by adding random noise to the weights of the original model. We then let each model run in the environment and evaluate its performance. The new model is the performance weighted average of all the models.
+
+![Evoltionary Strategy](./assets/evolutionary_strategy.png)
+
+
+To get a better grip on how this works, consider the following brief example. We want to find a vector that minimizes the mean squared error to a solution vector. The learner is not given the solution, but only the total error as a reward signal. 
+```Python 
+solution = np.array([0.5, 0.1, -0.3])
+def f(w):
+  reward = -np.sum(np.square(solution - w))
+  return reward
+```
+
+A key advantage of evolutionary strategies is that they have fewer hyper parameters. In this case, we need just three:
+```Python 
+npop = 50 #1 
+sigma = 0.1 #2 
+alpha = 0.1 #3 
+```
+\#1 Population size, we will create 50 versions of the model at each iteration.
+
+\#2 Noise standard deviation, the noise we add will have mean zero and a standard deviation of 0.1
+
+\#3 Learning rate, weights don't just simply get set to the new average, but are slowly moved in the direction to avoid overshooting.
+
+The optimization algorithm looks as follows:
+```Python 
+w = np.random.randn(3) #1
+for i in range(300): #2
+  N = np.random.randn(npop, 3) * sigma #3 
+  R = np.zeros(npop)
+  for j in range(npop): #4
+    w_try = w + N[j]
+    R[j] = f(w_try)
+
+  A = (R - np.mean(R)) / np.std(R) #5
+  w = w + alpha * np.dot(N.T, A)/npop #6
+```
+\#1 We start off with a random solution.
+
+\#2 Just like with the other RL algorithm, we train for a number of epochs, here 300.
+
+\#3 We create a noise matrix of 50 noise vectors with mean zero and standard deviation of `sigma`. 
+
+\#4 We now create and immediately evaluate our population by adding noise to the original weights and running the resulting vector through the evaluation function.
+
+\#5 We standardize the rewards by subtracting the mean and dividing by the standard deviation. The result can be interpreted as an advantage, that a particular member of the population has over the rest.
+
+\#6 Finally, we add the weighted average noise vector to the weight solution. We use a learning rate to slow down the process and avoid overshooting. 
+
+Similar to neural networks themselves, evolutionary strategies are loosely inspired by nature. In nature, species optimize themselves for survival using natural selection. Researchers have come up with many algorithms to imitate this process. The neural evolution strategy algorithm presented above works not only for single vectors, but for large neural networks as well. Evolutionary strategies are still a field of active research, and at the time of writing, no best practice has been settled on.
+
+Reinforcement learning and evolutionary strategies are the go to techniques if no supervised learning is possible but a reward signal is available. There are many applications in the financial industry where this is the case. From simple 'multi armed bandit' problems, such as the AHL order routing system, to complex trading systems. The next section will introduce some practical tips for building RL systems and highlight some current research frontiers which are highly relevant to financial practitioners.
 
 # Multi agent RL 
 https://github.com/crazymuse/snakegame-numpy
