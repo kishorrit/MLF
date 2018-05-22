@@ -1090,13 +1090,96 @@ for i in range(300): #2
 
 Similar to neural networks themselves, evolutionary strategies are loosely inspired by nature. In nature, species optimize themselves for survival using natural selection. Researchers have come up with many algorithms to imitate this process. The neural evolution strategy algorithm presented above works not only for single vectors, but for large neural networks as well. Evolutionary strategies are still a field of active research, and at the time of writing, no best practice has been settled on.
 
-Reinforcement learning and evolutionary strategies are the go to techniques if no supervised learning is possible but a reward signal is available. There are many applications in the financial industry where this is the case. From simple 'multi armed bandit' problems, such as the AHL order routing system, to complex trading systems. The next section will introduce some practical tips for building RL systems and highlight some current research frontiers which are highly relevant to financial practitioners.
+Reinforcement learning and evolutionary strategies are the go to techniques if no supervised learning is possible but a reward signal is available. There are many applications in the financial industry where this is the case. From simple 'multi armed bandit' problems, such as the AHL order routing system, to complex trading systems. The next sections will introduce some practical tips for building RL systems and highlight some current research frontiers which are highly relevant to financial practitioners.
 
-# Multi agent RL 
-https://github.com/crazymuse/snakegame-numpy
+# Practical tips for RL engineering
+## Designing good reward functions
+Reinforcement learning is the field of designing algorithms that maximize a reward function. But creating good reward functions is surprisingly hard, as everyone who has ever managed people knows. People game the system and machines do, too. The literature on RL is full of examples of researchers finding bugs in Atari games that had been hidden for years by an agent exploiting it. In the game 'Fishing' for example, OpenAI has reported a reinforcement learning agent achieving a higher score than is possible according to the game makers - without catching a single fish. 
 
-# Many agent RL 
-https://github.com/geek-ai/MAgent
+While it is fun for games, such behavior can be dangerous when happening in financial markets. An agent trained on maximizing returns from trading for example could resort to illegal trading activities like spoofing trades, without its owners knowing about it. There are three methods to create better reward functions:
 
-# Stability in RL 
-http://www.offconvex.org/2016/03/14/stability/
+### Careful, manual reward shaping 
+ 
+By manually creating rewards, practitioners can aid the system learn. This works especially well if the natural rewards of the environment are sparse. If, say a reward is usually only given if a trade is successful, and this is a rare event, it helps to manually add a function that gives a reward if the trade was nearly successful. Equally, if an agent is engaging in illegal trading, a hard coded 'robot policy' can be set up that gives a huge negative reward to the agent if it breaks the law. Reward shaping works if the rewards and the environment are relatively simple. In complex environments, it can defeat the purpose of using machine learning in the first place. Creating a complex reward function in a very complex environment can be just as big as a task as writing a rule based system acting in the environment.
+
+Yet, especially in finance, and especially in trading, hand crafted reward shaping is useful. Risk averse trading is an example of creating a clever objective function. Instead of maximizing the expected reward, risk adverse reinforcement learning maximizes an evaluation function $\mathcal{U}$ which is an extension of utility based shortfall to a multistage setting.
+
+$$
+\mathcal{U}_{s,a}(X) = 
+\sup\{ m \in \mathbb{R} |
+\mathbb{E}_{s\sim p^\pi, a\sim \pi(s)}[u(X-m) \geq 0]\}
+$$
+
+Where $u$ is a concave, continuous and strictly increasing function which can be freely chosen according to how much risk the trader is willing to take. The RL algorithm now maximizes:
+
+$$J(\pi) = \mathcal{U}[V(s_0)]$$
+
+### Inverse reinforcement learning
+In inverse reinforcement learning (IRL), a model is trained to predict the reward function of a human expert. A human expert is performing a task and the model observes states and actions. It then tries to find a value function that explains the human experts behavior. More specifically, by observing the expert, a policy trace of states and actions is created. One example is the the maximum likelihood inverse reinforcement learning algorithm which works as follows:
+
+- Guess a reward function $R$.
+- Compute the policy $\pi$ that follows from R, by training an RL agent.
+- Compute the probability that the actions observed $D$ were a result of $\pi$, $p(D|\pi)$. 
+- Compute the gradient with respect to $R$ and update it.
+- Repeat this process until $p(D|\pi)$ is very high. 
+
+
+### Learning from human preferences
+Similar IRL that produces a reward function from human examples, there are also algorithms that learn from human preferences. A reward predictor produces a reward function under which a policy is trained. The goal of the reward predictor is to produce a reward function which results in a policy which has a large human preference. Human preference is measured by showing the human the results of two policies and letting the human indicate which one is more preferable.
+
+![Learning from preferences](./assets/inverse_rl.png)
+
+## Robust RL
+Much like for GANs, RL can be fragile and not train to good results. RL algorithms are quite sensitive to hyperparmeter choices. But there are a few ways to make RL more robust:
+
+1. Using a larger experience replay buffer: The goal of using experience replay buffers is to collect uncorrelated experiences. This can be achieved by just creating a larger buffer, or a whole buffer database which can store millions of examples, possibly from different agents.
+
+2. Target networks: RL is unstable in part because the neural network relies on its own output for training. By using a frozen target network for generating training data, we can mitigate problems. The frozen target network should be updated only slowly by e.g. moving the weights of the target network only a few percent every few epochs in the direction of the trained network.
+
+3. Noisy inputs: Adding noise to the state representation helps the model generalize to other situations and avoids overfitting. It has been proven especially useful if the agent is trained in a simulation but needs to generalize to the real, more complex world.
+
+4. Adversarial examples: In a GAN like setup, an adversarial network can be trained to fool the model by changing the state representations. The model can in turn learn to ignore the adversarial attacks. This makes learning more robust.
+
+5. Separating policy learning from feature extraction. The most well known results in reinforcement learning have learned a game from raw inputs. However, this requires the neural network to interpret e.g. an image by learning how that image leads to rewards. It is easier, to separate the steps by e.g. first train an autoencoder that compresses state representations, then train a dynamics model that can predict the next compressed state and then training a relatively small policy network from the two inputs. 
+
+# Frontiers of RL 
+
+You have now seen the theory behind and application of the most useful RL techniques. Yet, RL is a moving field. This book can not cover all current trends that might be interesting to practitioners, but it can highlight some that are particularly useful for practitioners in the financial industry.
+
+## Multi & Many agent RL 
+Markets, by definition, include many agents. Lowe et al. 2017 'Multi-Agent Actor-Critic for Mixed Cooperative-Competitive Environments', see https://arxiv.org/abs/1706.02275, shows that reinforcement learning can be used to train agents that cooperate, compete and communicate depending on the situation. In an experiment, they let agents communicate, by including a communication vector into the action space. The communication vector one agent outputted was then made available to other agents. They showed that the agents learned to communicate to solve a task. Similar research showed that agents adopted collaborating or competing strategies based on the environment. In a task where agent had to collect reward tokens, agents collaborated as long as plenty of tokens were availeble and showed competitive behavior as tokens got sparse. Zheng et al. 2017 'MAgent: A Many-Agent Reinforcement Learning Platform for Artificial Collective Intelligence', see https://arxiv.org/abs/1712.00600, scaled the environment to include hundreds of agents. They showed that agents developed more complex strategies such as an encirclement attack on other agents through a combination of RL algorithms and clever reward shaping. Foerster et al. 2017 'Learning with Opponent-Learning Awareness', see https://arxiv.org/abs/1709.04326, developed a new kind of RL algorithm which allows agent to learn how another agent will behave and develop actions to influence the other agent.
+
+## Learning how to learn
+A shortcoming of deep learning is that skilled humans have to develop neural networks. A longstanding dream of researchers, and companies having to pay PhDs, is to automate the process of designing neural networks. One example of 'Auto-ML' is the neural evolution of augmenting topologies, NEAT, algorithm. NEAT uses an evolutionary strategy to design a neural network which is then trained by standard back-propagation.
+
+![A network developed by the NEAT algorithm](./assets/neat_net.png)
+
+As you can see in the image above, the network developed by NEAT are often smaller than traditional, layer based neural nets. They are hard to intuitively come up with. This is the strength of Auto-ML, it can find efficient strategies that humans would not have discovered. An alternative to using evolutionary algorithms for network design is to use reinforcement learning, which yields similar results. There are a couple 'off the shelf' Auto-ML solutions:
+- tpot (https://github.com/EpistasisLab/tpot), is a data science assistant that optimizes machine learning pipelines using genetic algorithms. It is built on top of scikit learn so it does not create deep learning models but models useful for strucutred data, such as random forests.
+
+- auto-sklearn (https://github.com/automl/auto-sklearn) is also based on scikit learn but focuses more on creating models rather than feature extraction.
+
+- AutoWEKA (https://github.com/automl/autoweka) is similar to auto-sklearn, except that it is built on the WEKA package which runs on Java. 
+
+- H2O AutoML (http://docs.h2o.ai/h2o/latest-stable/h2o-docs/automl.html) is an auto ML tool that is part of the H2O software package, which provides model selection and ensembling.
+
+- Google cloud Auto-ML (https://cloud.google.com/automl/) so far is focused on pipelines for computer vision.
+
+For the subfield of hyperparmeter search, there are a few packages availeble as well:
+
+- Hyperopt (https://github.com/hyperopt/hyperopt) allows for distributed, asynchronous hyperparameter search in python. 
+
+- Spearmint (https://github.com/HIPS/Spearmint), similar to Hyperopt, optimizes hyperparmeters, but using a more advances Bayesian optimization process.
+
+Auto-ML is still an active field of research, but it holds great promise. Many firms struggle to use machine learning due to a lack of skilled employees. If ML could optimize itself, more firms could start using ML.
+
+## Understanding the brain through RL
+The other emerging field in finance and economics is behavioral economics. But recently, reinforcement learning has been used to understand how the human brain works. Wang et al. 2018 'Prefrontal cortex as a meta-reinforcement learning system', see http://dx.doi.org/10.1038/s41593-018-0147-8, for example derive new insights into the frontal cortex and the function of dopamine. Similary, Banino et al. 2018 'Vector-based navigation using grid-like representations in artificial agents', see https://doi.org/10.1038/s41586-018-0102-6, replicate so called 'grid cells' that allow mammals to navigate using reinforcement learning. The method is similar: Both papers train RL algorithms on tasks related to the area of research, e.g. navigation. They then examine the learned weights of the model for emergent properties. Such insight can be used to create more capable RL agents but also to further the field of neuroscience. As economics comes to grip with the idea that humans are not rational, but irrational in predictable ways, understanding the brain becomes more important to understand economics. Results of neuroeconomics are particularly relevant to finance as they deal with how humans act under uncertainty, deal with risk why humans are loss averse. Using RL is a promising avenue to yield further insight into human behavior.
+
+# Exercises 
+- A simple RL task: Go to https://github.com/openai/gym, install the gym environment and train an agent to solve the 'Cartpole' problem.
+
+- A multi agent RL task: Go to https://github.com/crazymuse/snakegame-numpy, it is a gym like environment that lets you play multiple agents in a 'Snake' game. Experiment with different strategies. Can you create an agent that fools the other agent? What is the emergent behavior of the snakes? 
+
+# Summary 
+In this chapter, you learned about the main algorithms in RL, Q-Learning, policy gradients and evolutionary strategies. You saw how these algorithms can be applied to trading and learned about some of the pitfalls of applying RL. You also saw the direction of current research and how you can benefit from this research today. At this point in the book you are now equipped with a number of advanced machine learning algorithms, which are hopefully useful to you. In the next section we will discuss the practicalities of developing, debugging and deploying ML systems. We will break out of the data-science sandbox and get our models into the real world.
