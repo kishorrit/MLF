@@ -52,84 +52,174 @@ pip install marbles
 
 You can not run unit tests on Kaggle notebooks, so you need to install marbles and all dependencies like `pandas` or `numpy` on your local machine to try this example. You can find the example code as `7_marbles_test.py` in the GitHub repository of this book.
 
+The code sample below shows a simple marbles unit test. Imagine you are gathering information about company CEOs to inform your investment decisions. You need to make sure that this data is sensible. In our case, we test to ensure that no CEO is unreasonably old.
 ```Python 
 import marbles.core #1
-from marbles.mixins import mixins #2
+from marbles.mixins import mixins
 
-import pandas as pd #3
+import pandas as pd #2
 import numpy as np
 from datetime import datetime, timedelta
 
-class AgeTestCase(marbles.core.TestCase,mixins.DateTimeMixins): #4
-    def setUp(self): #5
-        self.df = pd.DataFrame({'parent':[datetime(1959,1,1)],
-                                'child':[datetime(2001,1,1)]},
-                                index=[0]) #6
+class AgeTestCase(marbles.core.TestCase,mixins.DateTimeMixins): #3
+    def setUp(self): #4
+        self.df = pd.DataFrame({'ceo_name':['Jeff Bezos'],
+                                'ceo_birth':[datetime(1800,1,1)],
+                                'ceo_company':['Amazon']},
+                                index=[0]) #5
         
-    def tearDown(self): #7
+    def tearDown(self): #6
         self.df = None
         
-    def test_parent_older_child(self): #8
-        self.assertDateTimesBefore(sequence=self.df.parent,
-                                  target=self.df.child,
-                                  note='Parents have to be born after \
-                                  their children') #9
-        
-    def test_old_age(self): #10
-        max_td = timedelta(365*100) #11
+    def test_old_age(self): #7
+        max_td = timedelta(365*130) #8
         today = datetime.today()
+        earliest_birth = today-max_td
         
-        self.assertDateTimesAfter(sequence=self.df.child, #12
-                                  target=today - max_td)
+        self.assertDateTimesAfter(sequence=self.df.ceo_birth, #9
+                                  target=earliest_birth,
+                                  note = 'No CEO can be born \
+                                  before {earliest_birth}')
         
 if __name__ == '__main__':       
-    marbles.core.main() #13
+    marbles.core.main()
 ```
+\#1 Marbles features two main components. The `core` module does the actual testing. The `mixins` module provides a number of useful tests for different types of data. This simplifies your test writing and gives you more readable and semantically interpretable tests.
+
+\#2 You can use all libraries you usually use to handle and process data for testing.
+
+\#3 Now it is time to define our test class. A new test class must inherit marbles `TestCase` class. This way, our test class is automatically set up to run as a marbles test. If you want to use a mixin, you also need to inherit the corresponding mixin class. In this example we are working with dates, so we need to inherit the `DateTimeMixins` class which gives us a number of time related tests. If you are coming from Java programming, the concept of multiple inheritance might strike you as wired, but in Python, classes can easily inherit multiple other classes. This is useful if you want your class to inherit two different capabilities, such as running a test and testing time related concepts.
+
+\#4 The `setUp` function is a standard test function in which we can load the data and prepare for the test. In this case, we just define a pandas dataframe by hand. But you could also load a CSV file, load a web resource or do whatever it takes to get your data.
+
+\#5 In our dataframe, we have only a single CEO, his company and his birthdate. But as you can see, there must be an error with the birthdate, Jeff Bezos is not over 200 years old yet. A marbles test will ensure this failure does not silently slip through but causes a crash.
+
+\#6 The `tearDown` method is also a standard test method which allows us to clean up after our test is done. In this case we just free RAM, but you can also delete files or databases just created for testing.
+
+\#7 Methods describing actual tests should start with `test_`. Marbles will automatically run all test methods after set up.
+
+\#8 In our test, we want to ensure that no CEO is older than the oldest person alive. We need to first calculate what the earliest birth that we accept would be. Marbles reports the local variables defined for this calculation in the test report so we can inspect them later.
+
+\#9 We assert that CEOs were born strictly after the earliest birthdate we allow using a handy mixin assertion written. You can also see that notes are format strings. We just need to write the variable name we want to include into our failure report in curly brackets and marbles will fill the value of this variable for us,
+
+\#10 Finally, we set marbles up to run. You can not run a unit test in a Jupyter notebook, so you need to save the code in a file. The test for main  ensures this is only run if you run the script from the command line and not if you just import the file for example.
+
+If you save or download this file as `7_marbles_test.py` you can run it by entering the following command in the command line:
 
 ```
-FF
+python -m marbles 7_marbles_test.py
+```
+
+Of course, there are problems in our data. Luckily for us, our test ensure that this error does not get passed on to our model where it would cause a silent failure in the form of a bad prediction. Instead, the test will fail with the following error output. The comments were added to explain the output.
+
+```
+F #1
 ======================================================================
-FAIL: test_old_age (7_marbles_test.AgeTestCase)
+FAIL: test_old_age (Desktop.mlfin_code.7_marbles_test.AgeTestCase) #2
 ----------------------------------------------------------------------
 marbles.core.marbles.ContextualAssertionError: 0   1800-01-01
-Name: child, dtype: datetime64[ns] is not strictly greater than 1918-06-24 22:13:09.499508
+Name: ceo_birth, dtype: datetime64[ns] is not strictly greater than 1888-07-02
+11:31:21.274022 #3
 
-Source (/Users/jannes/Desktop/mlfin_code/7_marbles_test.py):
-     25 
- >   26 self.assertDateTimesAfter(sequence=self.df.child,target=today-max_td)
+Source (/Users/jannes/Desktop/mlfin_code/7_marbles_test.py): #4
+     22 
+ >   23 self.assertDateTimesAfter(sequence=self.df.ceo_birth,
+     24                           target=earliest_birth,
+     25                           note = 'No CEO can be born \
+     26                           before {earliest_birth}')
      27 
-Locals:
-	today=2018-05-30 22:13:09.499508
-	max_td=36500 days, 0:00:00
-
-
-======================================================================
-FAIL: test_parent_older_child (7_marbles_test.AgeTestCase)
-----------------------------------------------------------------------
-marbles.core.marbles.ContextualAssertionError: 0   1959-07-12
-Name: parent, dtype: datetime64[ns] is not strictly less than 0   1800-01-01
-Name: child, dtype: datetime64[ns]
-
-Source (/Users/jannes/Desktop/mlfin_code/7_marbles_test.py):
-     17 def test_parent_older_child(self):
- >   18     self.assertDateTimesBefore(sequence=self.df.parent,
-     19                                 target=self.df.child,
-     20                                 note='Parents have to be born after their children')
-     21 
-Locals:
-
-Note:
-	Parents have to be born after their children
+Locals: #5
+	max_td=47450 days, 0:00:00
+	today=2018-06-01 11:31:21.274022
+	earliest_birth=1888-07-02 11:31:21.274022
+Note: #6
+	No CEO can be born before 1888-07-02 11:31:21.274022
 
 
 ----------------------------------------------------------------------
-Ran 2 tests in 0.008s
+Ran 1 test in 0.020s
 
-FAILED (failures=2)
-
+FAILED (failures=1) #7
 ```
 
+\#1 The top line shows the status of the entire test. In this case, there was only one test method, and it failed. Your test might have many test methods and marbles would display progress by showing how tests fail or pass.
+
+\#2 The next couple of lines describe the failed test method. This line describes that the `test_old_age` method of the `AgeTestCase` class failed.
+
+\#3 Marbles shows precisely how the test failed. The variable `ceo_birth` with value `1800-01-01` was not strictly greater than 1888-07-02 11:31:21.274022, the earliest accepted birth.
+
+\#4 In addition to the actual failure, marbles displays a traceback showing the actual code where our test failed.
+
+\#5 A special feature of marbles is the ability to display local variables. This way we can ensure that there was not problem with the setup of the test. It also helps us in getting context to see how exactly the test failed.
+
+\#6 Finally, marbles displays our note with the earliest accepted birth. This note helps you, or whoever reads your tests, understand what is going on in the test.
+
+\#7 As a summary, marbles displays that the test failed with one failure. Sometimes, you can accept data even though it failed some tests, but often you want to dig in and see what is going on.
+
+The point of unit testing data is to make failures low and prevent data issues to give you bad predictions. A failure with an error message is much better than a failure without. Often, the failure is cause by your data vendor, testing all data you get from all vendors allows you to be aware when a vendor makes a mistake.
+
+Unit testing data also help you ensure you have no data that you should not have, such as personal data. Vendors need to clean datasets of all personally identifying information, such as social security numbers, but of course they sometimes forget. Complying with ever stricter data privacy regulation is a big concern for many financial institutions engaging in machine learning. The next section therefore discusses how to preserve privacy while still gaining benefits from machine learning.
+ 
+## Keeping data private
+
+In recent years, consumers have woken up to the fact that their data is being harvested and analyzed in ways they can not control and that is sometimes against their own interest. Naturally, they are not happy about it and regulators have come up with some new data regulations. At the time of writing, the European Union introduced the General Data Protection Regulation (GDPR), but it is likely that other jurisdictions will develop stricter privacy protections, too. This text will not go in depth on how to comply with this law specifically. It will rather outline some principles of recent privacy legislation and some technological solutions to comply with these principles.
+
+First, **delete what you don't need**. For a long time, companies have just stored all data they could get their hands on but this is a bad idea. Storing personal data is a liability for your business. It is owned by someone else and you are on the hook for taking care of it. The next time you hear a statement like 'We have 500,000 records in our database', think of it like 'We have 500,000 liabilities on our books'. It can be a good idea to take on liabilities, but only if there is an economic value that justifies these liabilities. Astonishingly often, you might collect personal data by accident. Say you are tracking device usage, but accidentally include the customer ID in records. You need practices in place that monitor and prevent such accidents.
+
+**Be transparent and obtain consent**. Customers want good products and they understand how their data can make your product better for them. Rather than pursuing an adversarial approach in which you wrap all your practices in a very long agreement and then make users agree to it, it is usually more sensible to clearly tell users what you are doing, how their data is used, and how that improves the product. If you need personal data, you need consent. Being transparent will help you down the line as users trust you more, and can be used to improve your product through feedback.
+
+**Remember that breaches happen to the best**. No matter how good your security is, there is a chance that you get hacked. So you should design your personal data storage under the assumption that the entire database might be dumped on the internet one day. This assumption helps you to create stronger privacy and avoid disaster once you actually get hacked.
+
+**Be mindful about what can be inferred from data**. You might not be tracking personally identifying information in your database, but when combined with another database, your customers can still be individually identified. Say you went for coffee with a friend, paid by credit card and posted a picture of the coffee on instagram. The bank might collect anonymous credit card records, but if someone wen't to crosscheck the credit card records against the instagram pictures, there would be only one customer who bought a coffee and posted a picture of coffee at the same time in the same area. This way, all your credit card transactions were no longer anonymous. Consumers expect companies to be mindful of these effects.
+
+One way to reduce the risk of crosschecking, is to **encrypt and obfuscate data**. Apple for instance collects phone data but adds random noise to the collected data. The noise renders each individual record incorrect, but in aggregate the records still give a picture of user behavior. There are a few caveats to this approach, for example you can only collect so many data-points from a user before the noise chancels out and the individual behavior is revealed. Similarly, recent research has shown that deep learning models can learn on homomorphically encrypted data. Homomorphic encryption is a method of encryption that preserves the underlying algebraic properties of the data. Mathematically this can be expressed as:
+
+$$
+E(m_1) + E(m_2) = E(m_1 + m_2)
+$$
+
+$$
+D(E(m_1 + m_2)) = m_1 + m_2
+$$
+
+Where $E$ is an encryption function, $m$ is some plain text data and $D$ is a decryption function. As you can see, adding the encrypted data is the same as first adding the data and then encrypting it. Adding the data, encrypting it and then decrypting it is the same as just adding the data.
+
+This means you can encrypt the data and still train a model on it. Homomorphic encryption is still in its infancy, but through approaches like this you can ensure that in case of a data breach, no sensitive individual information is leaked.
+
+**Train locally, upload only a few gradients**. One way to avoid uploading user data is to train your model on the user's device. The user accumulates data on the device. You can then download your model on to the device, and perform a single forward and backward pass on the device. To avoid the possibility of inference of user data from the gradients, you only upload a few gradients at random. You can then apply the gradients to your master model. To further increase the overall privacy of the system, you do not download all newly update weights from the master model to the users device, but only a few. This way, you train your model asynchronously without ever accessing any data. If your database gets breached, no user data is lost. This only works if you have a large enough user base.
+
+http://www.comp.nus.edu.sg/~reza/files/Shokri-CCS2015.pdf
+
 ## Preparing data for training
+In earlier chapters, we have seen the benefits of normalizing and scaling features. In general, you should scale all numerical features. There are four ways of feature scaling.
+
+**Standardization** ensures all data has a mean of zero and a standard deviation of one. It is computed by subtracting the mean and dividing by the standard deviation of the data.
+
+$$x' = \frac{x-\mu}{\sigma}$$
+
+This is probably the most common way of scaling features. It is especially useful if you suspect your data to contain outliers as it is quite robust. On the flip side, it does not ensure that your features are between zero and one, which is the range in which neural networks learn best.
+
+**Min-Max** rescaling does exactly that. It scales all data between zero and one by first subtracting the minimum value and then dividing by the range of values.
+
+$$x' = \frac{x-\min(x)}{\max(x)-\min(x)}$$
+
+If you know for sure that your data contains no outliers, which is the case in images for instance, Min-Max scaling will give you a nice scaling of values between zero and one.
+
+Similar to Min-Max, **mean normalization** ensures your data has values between minus one and one with a mean of zero by subtracting the mean and then dividing by the range of data:
+
+$$x' = \frac{x-\mu}{\max(x)-\min(x)}$$ 
+
+Mean normalization is done less frequently but depending on your application might be a good approach.
+
+For some applications, it is better to not scale individual features, but vectors of features. In this case, you would apply **unit length scaling** by dividing each element in the vector by the total length of the vector:
+
+$$x' = \frac{x}{||x||}$$ 
+
+The length of the vector usually means the  L2 norm, of the vector, $\lVert x \lVert_2$,speak the square root of the sum of squares. For some applications, the vector length means the l1 norm of the vector, $\lVert x \lVert_1$, which is the sum of vector elements.
+
+However you scale, it is important to only measure the scaling factors, mean and standard deviation, on the test set. These factors include some information about the data. If you measure them over your entire dataset, the algorithm might do better on the test set than it will in production, due to this information advantage.
+
+Equally important, you should check that your production code has proper feature scaling as well. Over time, you should recalculate your feature distribution and adjust your scaling.
 
 # Your model is not right 
 
@@ -160,7 +250,5 @@ https://github.com/marcotcr/lime
 
 # Deployment 
 
-# Testing Data 
-https://marbles.readthedocs.io/en/stable/
 
 
