@@ -363,12 +363,112 @@ We ran the hyperparemeter search only for a few trials. Usually you would run a 
 
 ## Efficient learning rate search 
 
+One of the most important hyperparameters is the learning rate. Finding a good learning rate is hard. Too small and your model might train so slow that you believe it is not training at all. Too large and it will overshoot and not reduce the loss as well. For finding a learning rate, standard hyperparameter search techniques are not the best choice. For the learning rate, it is better to perform a line search, and visualize the loss for different learning rates. This will give you an understanding of how the loss function behaves. 
+
+When doing a line search, it is better to increase the learning rate exponentially. You are more likely to care about the region of smaller learning rates than about very large learning rates. In our example, we perform 20 evaluations, and double the learning rate in every evaluation.
+
+```Python 
+init_lr = 1e-6 #1
+losses = [] 
+lrs = []
+for i in range(20): #2
+    model = Sequential()
+    model.add(Dense(512, input_shape=(784,)))
+    model.add(Activation('relu')) 
+    model.add(Dropout(0.2))
+    model.add(Dense(512))
+    model.add(Activation('relu'))
+    model.add(Dropout(0.2))
+    model.add(Dense(10))
+    model.add(Activation('softmax'))
+
+    opt = Adam(lr=init_lr*2**i) #3
+    model.compile(loss='categorical_crossentropy',
+                  optimizer=opt,
+                  metrics=['acc'])
+
+
+    hist = model.fit(X_train, Y_train, batch_size = 128, epochs=1) #4
+
+    loss = hist.history['loss'][0] #5
+    losses.append(loss)
+    lrs.append(init_lr*2**i)
+```
+
+\#1 We specify a low, but still reasonable initial learning rate from which we start our search.
+
+\#2 We then perform training 20 times with different learning rates. We need to set up the model from scratch each time.
+
+\#3 We calculate our new learning rate. In our case we double the learning rate in each evaluation step. You could also use a smaller increase if you want a more fine grained picture.
+
+\#4 We then fit the model with our new learning rate.
+
+\#5 Finally we keep track of the loss.
+
+If your dataset is very large, you can perform this learning rate search on a subset of the data. The interesting part comes from the visualization of learning rates:
+
+```Python 
+fig, ax = plt.subplots(figsize = (10,7))
+plt.plot(lrs,losses)
+ax.set_xscale('log')
+```
+
+![Learning Rate Find](./assets/lr_search.png)
+
+As you can see, the loss is optimal between 1e-3 and 1e-2. We can also see that the loss surface is relatively flat in this area. This gives us insight that we should use a learning rate around 1e-3. To avoid overshooting, we select a learning rate somewhat lower than the optimum found by line search. 
+
 ## Learning rate scheduling
-Cosine annealing
-With restarts
+Why stop at using one learning rate? In the beginning, your model might be far away from the optimal solution, so you want to move as fast as possible. As you approach the minimum loss however you want to move slower to avoid overshooting. A popular method is to anneal the learning rate so that it represents a cosine function. To this end, we need to the fine a learning rate scheduling function, that given a time step t in epochs returns a learning rate. The learning rate becomes a function of t:
+
+$$
+\alpha(t) = \frac{\alpha_0}{2}\big (\cos \big( 
+  \frac{\pi \mod(t-1,l)}{l}
+  \big)\big)
+$$
+
+Where $l$ is the cycle length and $\alpha_0$ is the initial learning rate. We modify this function to ensure that t does not become larger than the cycle length.
+
+```Python 
+def cosine_anneal_schedule(t):
+    lr_init = 1e-2 #1
+    anneal_len = 5 
+    if t >= anneal_len: t = anneal_len -1 #2
+    cos_inner = np.pi * (t % (anneal_len))  #3
+    cos_inner /= anneal_len
+    cos_out = np.cos(cos_inner) + 1
+    return float(lr_init / 2 * cos_out)
+```
+
+\#1 In our function, we need to set up a starting point from which we anneal. This can be a relatively large learning rate. We also need to specify over how many epochs we want to anneal.
+
+\#2 A cosine function does not monotonically decrease, it goes back up after a cycle. We will use this property later, for now we will just make sure that the learning rate does not go back up.
+
+\#3 Next, we calculate the new learning rate using the formula above. This is the new learning rate.
+
+
+To get a better understanding of what the learning rate scheduling function does, we can plot the learning rate it would set over 10 epochs:
+```Python 
+srs = [cosine_anneal_schedule(t) for t in range(10)]
+plt.plot(srs)
+```
+
+![Cosine Anneal](./assets/cosine_anneal.png)
+
+We can use this function to schedule learning rates with Keras `LearningRateScheduler` callback:
+```Python 
+from keras.callbacks import LearningRateScheduler
+cb = LearningRateScheduler(cosine_anneal_schedule)
+```
+
+We now have a callback that Keras will call at the end of each epoch to get a new learning rate. We pass this callback to the `fit` method and voila, our model trains with a decreasing learning rate:
+```Python
+model.fit(x_train,y_train,batch_size=128,epochs=5,callbacks=[cb])
+```
+
 
 ## Snapshot ensembles
 https://github.com/titu1994/Snapshot-Ensembles
+
 
 ## Exploding and vanishing gradients
 
