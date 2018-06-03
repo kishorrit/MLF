@@ -221,7 +221,147 @@ However you scale, it is important to only measure the scaling factors, mean and
 
 Equally important, you should check that your production code has proper feature scaling as well. Over time, you should recalculate your feature distribution and adjust your scaling.
 
-# Your model is not right 
+# Debugging your model  
+
+## Hyperparameter search with Hyperas
+Manually tuning the hyperparameters of a neural network can be a tedious task. And while you might have some intuition about what works and what does not, there are no hard rules to apply. This is why practitioners with lots of compute power on hand use automatic hyperparameter search. After all, hyperparameters form a search space just like the models parameters do. The difference is that we can not apply backpropagation to them and can not take derivatives off them. We can still apply all non-gradient based optimization algorithms to them. There are a number of different hyperparameter optimization tools, but for its ease of use we will look at hyperas. Hyperas is a wraper for hyperopt, a popular optimization library, made for working with Keras. You can find hyperas on GitHub: https://github.com/maxpumperla/hyperas
+
+And install it with pip:
+```
+pip install hyperas
+``` 
+
+Depending on your setup, you might need to make a few adjustments to the installation. See hyperas GitHub page for more information.
+
+Hyperas offers two optimization methods: Random Search and Tree of Parzen Estimators. Within a range of parameters we think are reasonable, random search will sample randomly and train a model with random hyperparameters. It will then pick the best performing model as the final solution. Random search is simple and robust and it can be scaled easily. It makes basically no assumption about the hyperparameters, their relation and the loss surface. On the flip side, it is relatively slow.
+
+The Tree of Parzen (TPE) algorithm models the relation $P(x|y)$ where $x$ represents the hyperparameters and $y$ the associated performance. This is the exact opposite modeling of gaussian processes which model $P(y|x)$ and are popular with many researchers. Empirically, it turns out that TPE performs better. For the precise details see Bergstra et al. 2011 'Algorithms for Hyper-Parameter Optimization'. TPE is faster than random search but can get stuck in local minima and struggles with some difficult loss surfaces. As a rule of thumb, it makes sense to start with TPE, and if TPE struggles move to random search.
+
+The following example will show how to use hyperas and hyperopt for an MNIST classifier. The code for this example can be found on Kaggle: https://www.kaggle.com/jannesklaas/hyperas
+
+```Python 
+from hyperopt import Trials, STATUS_OK, tpe #1
+from hyperas import optim #2
+from hyperas.distributions import choice, uniform 
+
+```
+
+\#1 As hyperas is built on hyperopt, we need to import some pieces directly from hyperopt. The `Trials` class runs the actual trials, `STATUS_OK` helps communicate that a test went well and `tpe` is an implementation of the TPE algorithm.
+
+\#2 Hyperas provides a number of handy functions that make working with hyperopt easier. The `optim` function finds optimal hyperparameters and can be used just like keras `fit` function. `choice` and `uniform` can be used to choose between discrete and continuous hyperparameters respectively.
+
+
+```Python 
+def data(): #1
+    import numpy as np #2
+    from keras.utils import np_utils
+    
+    from keras.models import Sequential 
+    from keras.layers import Dense, Activation, Dropout
+    from keras.optimizers import RMSprop
+    
+    path = '../input/mnist.npz' #3
+    with np.load(path) as f:
+        X_train, y_train = f['x_train'], f['y_train']
+        X_test, y_test = f['x_test'], f['y_test']
+
+    X_train = X_train.reshape(60000, 784) #4
+    X_test = X_test.reshape(10000, 784)
+    X_train = X_train.astype('float32')
+    X_test = X_test.astype('float32')
+    X_train /= 255
+    X_test /= 255
+    nb_classes = 10
+    y_train = np_utils.to_categorical(y_train, nb_classes)
+    y_test = np_utils.to_categorical(y_test, nb_classes)
+    
+    return X_train, y_train, X_test, y_test #5
+```
+
+\#1 Hyperas expects a function which loads the data, we can not just pass on a dataset from memory.
+
+\#2 To scale the search, hyperas creates a new runtime in which it does model creation and evaluation. This also means that imports we did in a notebook do not always transfer into the runtime. To be sure that all modules are available we need to do all imports in the data function. This is also true for modules which will only be used for the model.
+
+\#3 We now load the data. Since Kaggle kernels do not have access to the internet, we need to load the MNIST data from disk.
+
+\#4 The data function also needs to preprocess the data. We do the standard reshaping and scaling that we also did in when we worked with MNIST earlier.
+
+\#5 Finally, we return the data. This data will be passed into the function that builds and evaluates the model.
+
+```Python 
+def model(X_train, y_train, X_test, y_test): #1
+    model = Sequential() #2
+    model.add(Dense(512, input_shape=(784,)))
+    
+    model.add(Activation('relu'))
+    
+    model.add(Dropout({{uniform(0, 0.5)}})) #3
+    
+    model.add(Dense({{choice([256, 512, 1024])}})) #4
+    
+    model.add(Activation({{choice(['relu','tanh'])}})) #5
+    
+    model.add(Dropout({{uniform(0, 0.5)}}))
+    
+    model.add(Dense(10))
+    model.add(Activation('softmax'))
+
+    rms = RMSprop()
+    model.compile(loss='categorical_crossentropy', 
+                  optimizer=rms, 
+                  metrics=['accuracy'])
+
+    model.fit(X_train, y_train, #6
+              batch_size={{choice([64, 128])}},
+              epochs=1,
+              verbose=2,
+              validation_data=(X_test, y_test))
+    score, acc = model.evaluate(X_test, y_test, verbose=0) #7
+    print('Test accuracy:', acc)
+    return {'loss': -acc, 'status': STATUS_OK, 'model': model} #8
+```
+
+\#1 The `model` function both defines the model and evaluates it. Given a training dataset from the `data` function, it returns a set of quality metrics.
+
+\#2 When fine tuning with Hyperas, we can define a Keras model just as we usually would. We only have to replace the hyperparameters we want to tune with hyperas functions.
+
+\#3 To tune dropout for instance, we replace the dropout hyperparameter with `{{uniform(0, 0.5)}}`. Hyperas will automatically sample and evaluate dropout rates between 0 and 0.5, sampled from a uniform distribution.
+
+\#4 To sample from discrete distributions, for instance the size of a hidden layer, we replace the hyperparameter with `{{choice([256, 512, 1024])}}`. Hyperas will choose from a hidden layer size of 256, 512 and 1024 now.
+
+\#5 We can do the same to choose activation functions.
+
+\#6 To evaluate the model, we need to compile and fit it. In this process, we can also choose between different batch sizes for instance. In this case we only train for one epoch, to keep the time needed for this example short. You could also run a whole trainings process with hyperas.
+
+\#7 To get insight into how well the model is doing, we evaluate it on test data.
+
+\#8 Finally, we return the models score, the model itself and an indicator that everything went okay. Hyperas tries to minimize a loss function. To maximize accuracy, we set the loss to be the negative accuracy. You could also pass the model loss here, depending on what the best optimization method is for your problem.
+
+```Python
+best_run, best_model = optim.minimize(model=model,
+                                      data=data,
+                                      algo=tpe.suggest,
+                                      max_evals=5,
+                                      trials=Trials(),
+                                      notebook_name='__notebook_source__')
+```
+
+Finally, we run the optimization. We pass the model method and the data method, we specify how many trials we want to run and which class should govern the trials. Hyperopt also offers a distributed trials class in which workers communicate via MongoDB. When working in a Jupyter notebook we need to provide the name of the notebook we are working in. Kaggle notebooks all have the file name `'__notebook_source__'`, independent of the name you gave them.
+
+After your run, hyperas returns the best performing model as well as the hyperparameters of the best model. If you print out `best_run` you should see output similar to this:
+```
+{'Activation': 1,
+ 'Dense': 1,
+ 'Dropout': 0.3462695171578595,
+ 'Dropout_1': 0.10640021656377913,
+ 'batch_size': 0}
+```
+For `choice` selections, hyperas shows the index. In this case, the activation function `tanh` was chosen.
+
+We ran the hyperparemeter search only for a few trials. Usually you would run a few hundred or thousand trials. Automated hyperparameter search can be a great tool to improve model performance if you have enough compute power available. However, it won't get a model that does not work at all to work. Be sure to have a somewhat working aproach first before investing into hyperparameter search.
+
+
+## Efficient learning rate search 
 
 ## Learning rate scheduling
 Cosine annealing
@@ -229,6 +369,8 @@ With restarts
 
 ## Snapshot ensembles
 https://github.com/titu1994/Snapshot-Ensembles
+
+## Exploding and vanishing gradients
 
 # You are solving the wrong problem 
 
