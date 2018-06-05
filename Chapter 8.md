@@ -42,7 +42,7 @@ Remember, that for data, quality trumps quantity in the majority of cases. Getti
 ## Unit testing data
 If you build a model, you make assumptions about your data. For example, you assume that the data you feed into your time series model is actually a time series with dates that follow each other in order. You need to test your data to make sure this assumption is true. Especially live data that you receive once your model is already in production. Bad data might lead to poor model performance, which can be dangerous especially in a high stakes environment.
 
-Additionally, you need to test if your data is clean from things like personal information. If you buy data from a vendor and the vendor forgot to delete social security numbers from the dataset, you might still be on the hook for using peoples data without consent.
+Additionally, you need to test if your data is clean from things like personal information. As described in the section on privacy below, personal information is a liability you want to get rid of, unless you have good reasons and consent to use it.
 
 Since monitoring data quality is important when trading based on many data sources, Two Sigma, a hedge-fund, has created and open sourced a library for data monitoring. It is called marbles, see https://github.com/twosigma/marbles and builds on Pythons `unittest` library. You can install it with 
 
@@ -50,9 +50,9 @@ Since monitoring data quality is important when trading based on many data sourc
 pip install marbles
 ```
 
-You can not run unit tests on Kaggle notebooks, so you need to install marbles and all dependencies like `pandas` or `numpy` on your local machine to try this example. You can find the example code as `7_marbles_test.py` in the GitHub repository of this book.
+You can not run unit tests on Kaggle notebooks, so you need to install marbles and all dependencies like `pandas` or `numpy` on your machine to try this example. You can find the example code as `7_marbles_test.py` in the GitHub repository of this book.
 
-The code sample below shows a simple marbles unit test. Imagine you are gathering information about company CEOs to inform your investment decisions. You need to make sure that this data is sensible. In our case, we test to ensure that no CEO is unreasonably old.
+The code sample below shows a simple marbles unit test. Imagine you are gathering information about company CEOs to inform your investment decisions. You need to make sure that this data is sensible. In our case, we test to ensure that no CEO is unreasonably old:
 ```Python 
 import marbles.core #1
 from marbles.mixins import mixins
@@ -98,7 +98,7 @@ if __name__ == '__main__':
 
 \#7 Methods describing actual tests should start with `test_`. Marbles will automatically run all test methods after set up.
 
-\#8 In our test, we want to ensure that no CEO is older than the oldest person alive. We need to first calculate what the earliest birth that we accept would be. Marbles reports the local variables defined for this calculation in the test report so we can inspect them later.
+\#8 In our test, we want to ensure that no CEO is older than 130 years, which would be way older than anyone could possibly be. We need to first calculate what the earliest birth that we accept would be. Marbles reports the local variables defined for this calculation in the test report so we can inspect them later.
 
 \#9 We assert that CEOs were born strictly after the earliest birthdate we allow using a handy mixin assertion written. You can also see that notes are format strings. We just need to write the variable name we want to include into our failure report in curly brackets and marbles will fill the value of this variable for us,
 
@@ -156,7 +156,7 @@ FAILED (failures=1) #7
 
 \#7 As a summary, marbles displays that the test failed with one failure. Sometimes, you can accept data even though it failed some tests, but often you want to dig in and see what is going on.
 
-The point of unit testing data is to make failures low and prevent data issues to give you bad predictions. A failure with an error message is much better than a failure without. Often, the failure is cause by your data vendor, testing all data you get from all vendors allows you to be aware when a vendor makes a mistake.
+The point of unit testing data is to make failures loud and prevent data issues to give you bad predictions. A failure with an error message is much better than a failure without one. Often, the failure is cause by your data vendor. Testing all data you get from all vendors allows you to be aware when a vendor makes a mistake.
 
 Unit testing data also help you ensure you have no data that you should not have, such as personal data. Vendors need to clean datasets of all personally identifying information, such as social security numbers, but of course they sometimes forget. Complying with ever stricter data privacy regulation is a big concern for many financial institutions engaging in machine learning. The next section therefore discusses how to preserve privacy while still gaining benefits from machine learning.
  
