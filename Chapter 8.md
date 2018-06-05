@@ -465,12 +465,107 @@ We now have a callback that Keras will call at the end of each epoch to get a ne
 model.fit(x_train,y_train,batch_size=128,epochs=5,callbacks=[cb])
 ```
 
+A version of learning rate annealing is to add restarts. At the end of a annealing cycle, we move the learning rate back up. This is a method to avoid overfitting. With a small learning rate, our model might find a very narrow minimum. If the data we want to use our model on is slightly different from the training data, the loss surface might change a bit and our model could be out of the narrow minimum for this new loss surface. If we set the learning rate back up, our model will get out of narrow minima. Broad minima however are stable enough for the model to stay in them.
 
-## Snapshot ensembles
-https://github.com/titu1994/Snapshot-Ensembles
+![Shallow Broad Minima](./assets/shallow_broad_minima.png)
+
+The cosine function goes back up by itself, so we only have to remove the line to stop it from doing so.
+```Python 
+def cosine_anneal_schedule(t):
+    lr_init = 1e-2 
+    anneal_len = 10 
+    cos_inner = np.pi * (t % (anneal_len))  
+    cos_inner /= anneal_len
+    cos_out = np.cos(cos_inner) + 1
+    return float(lr_init / 2 * cos_out)
+```
+The new learning rate schedule now looks like this:
+![LR Restarts](./assets/lr_restarts.png)
 
 
-## Exploding and vanishing gradients
+## Monitoring training with tensorboard
+An important part of debugging a model is knowing when things go wrong before you have invested significant amounts of time training the model. TensorBoard is a tensorflow extension that allows you to easily monitor your model in a browser. Next to providing an interface from which you can watch your models progress, TensorBoard also offers some options useful for debugging. For example, you can observe the distributions of the models weights and and gradients during training.
+
+Note: TensorBoard does not run on Kaggle. To try out TensorBoard, install Keras and tensorflow on your own machine.
+
+To use TensorBoard with Keras, we set up a new callback. TensorBoard has many options, so lets walk through them step by step:
+```Python 
+from keras.callbacks import TensorBoard
+
+tb = TensorBoard(log_dir='./logs/test2', #1
+                 histogram_freq=1, #2
+                 batch_size=32, #3
+                 write_graph=True, #4
+                 write_grads=True, 
+                 write_images=True, 
+                 embeddings_freq=0, #5
+                 embeddings_layer_names=None, 
+                 embeddings_metadata=None)
+```
+
+\#1 First, we need to specify where Keras should save the data which TensorBoard later visualizes. Generally, it is a good idea to save all logs of your different runs in one `'logs'` folder and giving every run its subfolder, like `'test2'` in this case. This way, you can easily compare different runs within TensorBoard but also keep different runs separate.
+
+\#2 By default, TensorBoard would just show you the loss and accuracy of your model. In this case we are interested in histograms showing weights and distributions. We save the data for the histograms every epoch.
+
+\#3 To generate data, TensorBoard runs batches through the model. We need to specify a batch size for this process.
+
+\#4 We need to tell TensorBoard what to save. TensorBoard can visualize the model's computational graph, its gradients and images showing weights. The more we save, the slower the training of course.
+
+\#5 TensorBoard also can visualize trained embeddings nicely. Our model does not have embeddings, so we are not interested in saving them.
+
+Once we have the callback set up, we can pass it to the training process. We will train the MNIST model once again. We multiply the inputs with 255, making training much harder.
+
+```Python 
+hist = model.fit(x_train*255,y_train,
+                 batch_size=128,
+                 epochs=5,
+                 callbacks=[tb],
+                 validation_data=(x_test*255,y_test))
+```
+
+To start TensorBoard, open your console and type in:
+```
+tensorboard --logdir=/full_path_to_your_logs
+```
+
+Where `full_path_to_your_logs` is the path you saved your logs in, e.g. `logs` in our case. TensorBoard runs on port 6006 by default, so in your browser go to http://localhost:6006 to see TensorBoard.
+
+Navigate to the histograms section, your view should look something like this:
+
+![Tensorboard histograms](./assets/tensorboard_hist.png)
+
+You can see the distribution of gradients and weights in the first layer. As you can see, the gradients are uniformly distributed and extremely close to zero. The weights hardly change at all over the different epochs. We are dealing with a **vanishing gradient problem**. We will cover this problem in depth later. It can arise through unstable gradients which chancel each other out over a batch, which is causes by the large inputs in this case.
+
+Armed with the real time insight that this problem is happening, we can react faster.
+
+If you really want to dig into your model, TensorBoard also offers a visual debugger. In this debugger you can step through the execution of your tensorflow model and examine every single value inside it. This is especially useful if you are working on complex models, like GANs, and are trying to understand why some complex thing goes wrong.
+
+To use the tensorflow debugger, you have to set your models runtime to a special debugger runtime. In specifying the debugger runtime, you also need to specify on which port you want the debugger to run, in this case port 2018.
+
+Note: The tensorflow debugger does not work well with models trained in Jupyter notebooks. Save your model training code to a python .py script and run that script.
+
+```Python 
+import tensorflow as tf
+from tensorflow.python import debug as tf_debug
+import keras
+
+keras.backend.set_session(
+    tf_debug.TensorBoardDebugWrapperSession(tf.Session(), "localhost:2018"))
+```
+
+Once Keras works with the debugger runtime you can debug your model. For the debugger to work, you need to name your keras model `model`. You do not need to train the model with a TensorBoard callback.
+
+Now you start TensorBoard and activate the debugger by specifying the debugger port:
+
+```
+tensorboard --logdir=/full_path_to_your_logs --debugger_port 2018
+```
+
+You open TensorBoard as usual in your browser on port 6006. TensorBoard now has a new section called debugger:
+
+![TB Debugger](./assets/tb_debugger.png)
+
+By clicking STEP you execute the next step in the training process. With CONTINUE you can train your model for one or more epochs. By navigating the tree on the left side, you can view the components of your model. You can visualize individual elements of your model, to see how different actions affect them. Using the debugger effectively requires a bit of practice, but if you are working with complex models, it is a great tool.
 
 # You are solving the wrong problem 
 
