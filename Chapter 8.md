@@ -50,9 +50,9 @@ Since monitoring data quality is important when trading based on many data sourc
 pip install marbles
 ```
 
-You can not run unit tests on Kaggle notebooks, so you need to install marbles and all dependencies like `pandas` or `numpy` on your machine to try this example. You can find the example code as `7_marbles_test.py` in the GitHub repository of this book.
+You can find a Kaggle Kernel demoing marbles here: https://www.kaggle.com/jannesklaas/marbles-test
 
-The code sample below shows a simple marbles unit test. Imagine you are gathering information about company CEOs to inform your investment decisions. You need to make sure that this data is sensible. In our case, we test to ensure that no CEO is unreasonably old:
+The code sample below shows a simple marbles unit test. Imagine you are gathering data about the unemployment rate in Ireland. For your models to work, you need to ensure that you actually get the data from consecutive months, and don't count one month double for instance:
 ```Python 
 import marbles.core #1
 from marbles.mixins import mixins
@@ -61,53 +61,49 @@ import pandas as pd #2
 import numpy as np
 from datetime import datetime, timedelta
 
-class AgeTestCase(marbles.core.TestCase,mixins.DateTimeMixins): #3
+class AgeTestCase(marbles.core.TestCase,mixins.MonotonicMixins): #3
     def setUp(self): #4
-        self.df = pd.DataFrame({'ceo_name':['Jeff Bezos'],
-                                'ceo_birth':[datetime(1800,1,1)],
-                                'ceo_company':['Amazon']},
-                                index=[0]) #5
+        self.df = pd.DataFrame({'dates':[datetime(2018,1,1),
+                                         datetime(2018,2,1),
+                                         datetime(2018,2,1)],
+                                'ireland_unemployment':[6.2,6.1,6.1]}) #5
         
     def tearDown(self): #6
         self.df = None
         
-    def test_old_age(self): #7
-        max_td = timedelta(365*130) #8
-        today = datetime.today()
-        earliest_birth = today-max_td
+    def test_date_order(self): #7
         
-        self.assertDateTimesAfter(sequence=self.df.ceo_birth, #9
-                                  target=earliest_birth,
-                                  note = 'No CEO can be born \
-                                  before {earliest_birth}')
-        
-if __name__ == '__main__':       
-    marbles.core.main()
+        self.assertMonotonicIncreasing(sequence=self.df.dates, #8
+                                  note = 'Dates need to increase monotonically')
 ```
+
 \#1 Marbles features two main components. The `core` module does the actual testing. The `mixins` module provides a number of useful tests for different types of data. This simplifies your test writing and gives you more readable and semantically interpretable tests.
 
 \#2 You can use all libraries you usually use to handle and process data for testing.
 
-\#3 Now it is time to define our test class. A new test class must inherit marbles `TestCase` class. This way, our test class is automatically set up to run as a marbles test. If you want to use a mixin, you also need to inherit the corresponding mixin class. In this example we are working with dates, so we need to inherit the `DateTimeMixins` class which gives us a number of time related tests. If you are coming from Java programming, the concept of multiple inheritance might strike you as wired, but in Python, classes can easily inherit multiple other classes. This is useful if you want your class to inherit two different capabilities, such as running a test and testing time related concepts.
+\#3 Now it is time to define our test class. A new test class must inherit marbles `TestCase` class. This way, our test class is automatically set up to run as a marbles test. If you want to use a mixin, you also need to inherit the corresponding mixin class. In this example we are working with a series of dates which should be increasing monotonically. The `MonotonicMixins` class provides a range of tools to test for monotonic increasing series automatically. If you are coming from Java programming, the concept of multiple inheritance might strike you as wired, but in Python, classes can easily inherit multiple other classes. This is useful if you want your class to inherit two different capabilities, such as running a test and testing time related concepts.
 
 \#4 The `setUp` function is a standard test function in which we can load the data and prepare for the test. In this case, we just define a pandas dataframe by hand. But you could also load a CSV file, load a web resource or do whatever it takes to get your data.
 
-\#5 In our dataframe, we have only a single CEO, his company and his birthdate. But as you can see, there must be an error with the birthdate, Jeff Bezos is not over 200 years old yet. A marbles test will ensure this failure does not silently slip through but causes a crash.
+\#5 In our dataframe, we have the Irish unemployment rate for two months. As you can see, the last month has been counted double. This should not happen and cause an error.
 
 \#6 The `tearDown` method is also a standard test method which allows us to clean up after our test is done. In this case we just free RAM, but you can also delete files or databases just created for testing.
 
 \#7 Methods describing actual tests should start with `test_`. Marbles will automatically run all test methods after set up.
 
-\#8 In our test, we want to ensure that no CEO is older than 130 years, which would be way older than anyone could possibly be. We need to first calculate what the earliest birth that we accept would be. Marbles reports the local variables defined for this calculation in the test report so we can inspect them later.
+\#8 We assert that the time indicator of our data strictly increases. If our assertion would have required intermediate variables, such as a maximum value, marbles would display it in the error report as well. To make our error more readable we can attach a handy note.
 
-\#9 We assert that CEOs were born strictly after the earliest birthdate we allow using a handy mixin assertion written. You can also see that notes are format strings. We just need to write the variable name we want to include into our failure report in curly brackets and marbles will fill the value of this variable for us,
+To run a unit test in Jupyter, we need to tell marbles to ignore the first argument.
+```Python 
+if __name__ == '__main__':
+    marbles.core.main(argv=['first-arg-is-ignored'], exit=False)
+```
 
-\#10 Finally, we set marbles up to run. You can not run a unit test in a Jupyter notebook, so you need to save the code in a file. The test for main  ensures this is only run if you run the script from the command line and not if you just import the file for example.
 
-If you save or download this file as `7_marbles_test.py` you can run it by entering the following command in the command line:
+It is more common to run unit tests directly from the command line. To if you saved the code above in the command line, you could run it with:
 
 ```
-python -m marbles 7_marbles_test.py
+python -m marbles marbles_test.py
 ```
 
 Of course, there are problems in our data. Luckily for us, our test ensure that this error does not get passed on to our model where it would cause a silent failure in the form of a bad prediction. Instead, the test will fail with the following error output. The comments were added to explain the output.
@@ -115,44 +111,41 @@ Of course, there are problems in our data. Luckily for us, our test ensure that 
 ```
 F #1
 ======================================================================
-FAIL: test_old_age (Desktop.mlfin_code.7_marbles_test.AgeTestCase) #2
+FAIL: test_date_order (__main__.TimeSeriesTestCase) #2
 ----------------------------------------------------------------------
-marbles.core.marbles.ContextualAssertionError: 0   1800-01-01
-Name: ceo_birth, dtype: datetime64[ns] is not strictly greater than 1888-07-02
-11:31:21.274022 #3
+marbles.core.marbles.ContextualAssertionError: Elements in 0   2018-01-01
+1   2018-02-01
+2   2018-02-01 #3
+Name: dates, dtype: datetime64[ns] are not strictly monotonically increasing
 
-Source (/Users/jannes/Desktop/mlfin_code/7_marbles_test.py): #4
+Source (<ipython-input-1-ebdbd8f0d69f>): #4
+     19 
+ >   20 self.assertMonotonicIncreasing(sequence=self.df.dates,
+     21                           note = 'Dates need to increase monotonically')
      22 
- >   23 self.assertDateTimesAfter(sequence=self.df.ceo_birth,
-     24                           target=earliest_birth,
-     25                           note = 'No CEO can be born \
-     26                           before {earliest_birth}')
-     27 
 Locals: #5
-	max_td=47450 days, 0:00:00
-	today=2018-06-01 11:31:21.274022
-	earliest_birth=1888-07-02 11:31:21.274022
+
 Note: #6
-	No CEO can be born before 1888-07-02 11:31:21.274022
+	Dates need to increase monotonically
 
 
 ----------------------------------------------------------------------
-Ran 1 test in 0.020s
+Ran 1 test in 0.007s
 
 FAILED (failures=1) #7
 ```
 
 \#1 The top line shows the status of the entire test. In this case, there was only one test method, and it failed. Your test might have many test methods and marbles would display progress by showing how tests fail or pass.
 
-\#2 The next couple of lines describe the failed test method. This line describes that the `test_old_age` method of the `AgeTestCase` class failed.
+\#2 The next couple of lines describe the failed test method. This line describes that the `test_date_order` method of the `TimeSeriesTestCase` class failed.
 
-\#3 Marbles shows precisely how the test failed. The variable `ceo_birth` with value `1800-01-01` was not strictly greater than 1888-07-02 11:31:21.274022, the earliest accepted birth.
+\#3 Marbles shows precisely how the test failed. The values of the dates tested are shown, together with the cause for failure.
 
 \#4 In addition to the actual failure, marbles displays a traceback showing the actual code where our test failed.
 
 \#5 A special feature of marbles is the ability to display local variables. This way we can ensure that there was not problem with the setup of the test. It also helps us in getting context to see how exactly the test failed.
 
-\#6 Finally, marbles displays our note with the earliest accepted birth. This note helps you, or whoever reads your tests, understand what is going on in the test.
+\#6 Finally, marbles displays our note which helps the test consumer understand what went wrong.
 
 \#7 As a summary, marbles displays that the test failed with one failure. Sometimes, you can accept data even though it failed some tests, but often you want to dig in and see what is going on.
 
@@ -221,7 +214,56 @@ However you scale, it is important to only measure the scaling factors, mean and
 
 Equally important, you should check that your production code has proper feature scaling as well. Over time, you should recalculate your feature distribution and adjust your scaling.
 
+## Understanding which inputs led to which predictions
+Why did your model make the prediction it made? For complex models, this question is pretty hard to answer. A global explanation for a very complex model might be very complex itself. LIME popular algorithm for model explanation focuses on local explanations. Rather than trying to answer 'How does this model make predictions?', LIME tries to answer 'Why did the model make _this_ prediction on _this_ data?'. The authors Ribeiro, Singh and Guestrin curated a great GitHub repository around their algorithm with many explanations and tutorials which you can find here:
+https://github.com/marcotcr/lime
+
+You can install lime locally with 
+
+```
+pip install lime
+```
+
+On Kaggle Kernels lime is installed by default.
+
+LIME stands for Local Interpretable Model-Agnostic Explanations. The algorithm works with any classifier, which is why it is model agnostic. To make an explanation, LIME cuts up the data into several sections such as areas of an image or utterances in a text. It then creates a new dataset by removing some of these features. It runs the new dataset through the black box classifier and obtains the classifiers predicted probabilities for different classes. Lime then encodes the data as vectors describing which features were present. It then trains a linear model to predict the outcomes of the black box model with different features removed. As linear models are easy to interpret, LIME will use the linear model to determine the most important features.
+
+Say you have some text classifier like TF-IDF to classify emails like the 20 Newsgroup Dataset. To get explanations from this classifier, you would use the following snippet:
+
+```Python 
+from lime.lime_text import LimeTextExplainer #1
+explainer = LimeTextExplainer(class_names=class_names) #2
+exp = explainer.explain_instance(test_example, #3
+                                 classifier.predict_proba, #4
+                                 num_features=6) #5
+                                 
+exp.show_in_notebook() #6
+```
+
+\#1 The LIME package has several classes for different types of data.
+
+\#2 To create a new blank explainer, we need to pass the names of classes of our classifier.
+
+\#3 We provide one text example for which we wish an explanation.
+
+\#4 We provide the prediction function of our classifier. We need to provide a function that provivides probabilities. For Keras, this is just `model.predict`, for SciKit models we need to use the `predict_proba` method.
+
+\#5 Lime shows a maximum number of features. We want to show only the importance of the six most important features in this case.
+
+\#6 Finally, we can render a visualization of our prediction which looks like this:
+
+![LIME Text](./assets/lime_text.png)
+
+The explanation shows the classes the text gets classified as most often with different features. It shows the words that most contribute to the classification in the two most frequent classes. Below you can see the words that contributed to the classification highlighted in the text.
+
+As you can see, our model picked up on parts of the email address of the sender as distinguishing features, as well as the name of the university 'Rice'. It sees 'Caused' to be a strong indicator that the text is about atheism. All these are things we want to know when debugging datasets.
+
+LIME does not perfectly solve the problem of explaining models. It struggles if the interaction of multiple features lead to a certain outcome for instance. But it does well enough to be a useful data debugging tool. Often, models pick up on things they should not be picking up on. To debug a dataset, we need to remove all these 'give-away' features that statistical models like to overfit to. 
+
+You have now seen a wide range of tools to debug your dataset. But even with a perfect dataset, there can be issues training. The next section is about how to debug your model.
+
 # Debugging your model  
+Especially complex deep learning models are prone to error. With millions of parameters, many things can go wrong. Luckily, the field has developed a number of useful tools to improve model performance.
 
 ## Hyperparameter search with Hyperas
 Manually tuning the hyperparameters of a neural network can be a tedious task. And while you might have some intuition about what works and what does not, there are no hard rules to apply. This is why practitioners with lots of compute power on hand use automatic hyperparameter search. After all, hyperparameters form a search space just like the models parameters do. The difference is that we can not apply backpropagation to them and can not take derivatives off them. We can still apply all non-gradient based optimization algorithms to them. There are a number of different hyperparameter optimization tools, but for its ease of use we will look at hyperas. Hyperas is a wraper for hyperopt, a popular optimization library, made for working with Keras. You can find hyperas on GitHub: https://github.com/maxpumperla/hyperas
@@ -534,7 +576,7 @@ Navigate to the histograms section, your view should look something like this:
 
 ![Tensorboard histograms](./assets/tensorboard_hist.png)
 
-You can see the distribution of gradients and weights in the first layer. As you can see, the gradients are uniformly distributed and extremely close to zero. The weights hardly change at all over the different epochs. We are dealing with a **vanishing gradient problem**. We will cover this problem in depth later. It can arise through unstable gradients which chancel each other out over a batch, which is causes by the large inputs in this case.
+You can see the distribution of gradients and weights in the first layer. As you can see, the gradients are uniformly distributed and extremely close to zero. The weights hardly change at all over the different epochs. We are dealing with a **vanishing gradient problem**. We will cover this problem in depth later.
 
 Armed with the real time insight that this problem is happening, we can react faster.
 
@@ -567,8 +609,52 @@ You open TensorBoard as usual in your browser on port 6006. TensorBoard now has 
 
 By clicking STEP you execute the next step in the training process. With CONTINUE you can train your model for one or more epochs. By navigating the tree on the left side, you can view the components of your model. You can visualize individual elements of your model, to see how different actions affect them. Using the debugger effectively requires a bit of practice, but if you are working with complex models, it is a great tool.
 
-# You are solving the wrong problem 
+## Exploding and vanishing gradients
+The vanishing gradient problem describes the issue that sometimes gradients in a deep neural network become very very small so that training is slow. Exploding gradients are the opposite problem: Gradients become so large that the network does not converge. 
 
+Of the two, the vanishing gradient problem is more persistent. Vanishing gradients are caused by the fact that in deep networks, gradients of earlier layers depend on gradients of layers closer to the output. If the output gradients are small, the gradients behind them are even smaller. Thus, the deeper the network, the more issues with vanishing gradients.
+
+One key cause of small gradients are this sigmoid and the tanh activation functions. If you look at the sigmoid function below, you see that it is very flat towards large values:
+
+![Sigmoid vanishing](./assets/sigmoid_vanishing.png)
+
+The small gradients of the sigmoid function are the reason why the ReLu activation function has become popular for training deep neural networks. Its gradient is equal to one for all positive input values. However it is zero for all negative input values.
+
+A second cause of vanishing gradients are saddle points in the loss function. Although no minimum was reached, the loss function is very flat in some areas, producing small gradients. 
+
+To combat the vanishing gradient problem, you should use the ReLu activation. If you see your model is training only slowly, consider increasing the learning rate to move out of a saddle point faster. Finally, you might just want to let the model train longer if it suffers from small gradients.
+
+The exploding gradient problem is usually caused by large absolute weight values. As back-propagation multiplies the later layers gradients with the layers weights, large weights amplify gradients. To counteract the exploding gradient problem, you can use weight regularization, which incentives smaller weights. Using a method called 'gradient clipping', you can ensure that gradients do not become larger than a certain value. In Keras, you can clip both the norm and the absolute value of gradients: 
+
+```Python 
+from keras.optimizers import SGD
+
+clip_val_sgd = SGD(lr=0.01, clipvalue=0.5)
+clip_norm_sgd = SGD(lr=0.01, clipnorm=1.)
+```
+
+Convolutional layers and LSTMs are less susceptible to both vanishing and exploding gradients. ReLu and batchnorm generally stabilize the network. Both problems might be caused by non-regularized inputs, so you should check your data, too.
+
+You now have seen a wide range of tools to debug your models. As a final step, we will learn some methods to run models in production and speed up machine learning.
+
+# Deployment 
+- Launch fast
+Keep it simple, get the infrastructure right, gather data, measure effects of system
+- Understand and monitor metrics 
+Choose a simple number that relates to your higher order metrics. You will likely need to update your metric later. Use simple metrics you can measure reliably
+- Understand where your data comes from 
+Assign an owner of every feature, be mindful of changes in data you access
+
+# Performance tips
+https://www.tensorflow.org/performance/performance_guide
+
+- Ensure your GPUs are fully utilized / Optimize your pipeline
+- Use optimized layers such as `CuDNNLSTM`
+- Use batchprocessing, use large batches
+- Convert your Keras models to TF Estimators 
+https://www.tensorflow.org/api_docs/python/tf/keras/estimator/model_to_estimator
+- Use the right hardware for your problem (GPUs are not always better)
+- Consider caching frequent requests
 
 # Debugging Overview
 https://medium.com/machine-learning-world/how-to-debug-neural-networks-manual-dc2a200f10f2
@@ -581,11 +667,5 @@ https://blog.slavv.com/37-reasons-why-your-neural-network-is-not-working-4020854
 
 https://medium.com/@skyetetra/so-your-data-science-project-isnt-working-7bf57e3f12f1
 
-# Interpretability
-https://github.com/marcotcr/lime
 
-
-# Deployment 
-
-
-
+ 
