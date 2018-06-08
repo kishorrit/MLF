@@ -804,11 +804,78 @@ def gen():
 
 You can also use the `tf.data` API together with an estimator which does most of the work for you. 
 
-**Combine files into large files with TF Record**. Reading a file takes time. If you have to read thousands of small files, this can significantly slow you down. TensorFlow offers its own data format called TF Record. You can also just fuse an entire batch into a single numpy array and save that array instead of every example.
+**Combine files into large files**. Reading a file takes time. If you have to read thousands of small files, this can significantly slow you down. TensorFlow offers its own data format called TF Record. You can also just fuse an entire batch into a single numpy array and save that array instead of every example.
 
 In case you have truly large datasets, the more you can parallelize, the better. Parallelization comes with overhead costs however, and not every problem actually features huge datasets. In these cases, refrain from trying to do too much in parallel and focus on slimming down your network, using CPUs and keeping all your data in RAM if possible.
 
 ## Speed up your code with Cython 
+
+Python is a popular language because developing code in Python is easy and fast. However, Python can be slow, which is why many production applications are written in C or C++. Cython is Python with C datatypes, which significantly speeds up execution. You can write pretty much normal Python code, and Cython converts it to fast running C code. You can read the full Cython documentation here: http://cython.readthedocs.io/
+This section is a short introduction to Cython, if performance is important to your application you should consider diving deeper.
+
+Say you have a Python function which prints out the Fibonacci series up to a specified point. This code snippet is taken straight from the Python documentation:
+```Python 
+from __future__ import print_function
+def fib(n):
+    a, b = 0, 1
+    while b < n:
+        print(b, end=' ')
+        a, b = b, a + b
+    print()
+
+```
+Note that we have to import the `print_function` to make sure that `print()` works in the Python 3 style. To use this snippet with Cython, save it as `cython_fib_8_5.pyx`.
+
+Now create a new file called `8_5_cython_setup.py`:
+```Python 
+from distutils.core import setup #1
+from Cython.Build import cythonize #2
+
+setup( #3
+    ext_modules=cythonize("cython_fib_8_5.pyx"),
+)
+```
+
+\#1 The `setup` function is a Python function to create modules, such as the ones you install with `pip`.
+
+\#2 `cythonize` is a function to turn a `pyx` python file into Cython C code.
+
+\#3 We create a new model by calling setup and passing on our cythonized code.
+
+To run this, we now run the following command in terminal:
+```
+python 8_5_cython_setup.py build_ext --inplace
+```
+
+This will create a C file as well as a build file and a compiled module. We can import this module now:
+
+```Python 
+import cython_fib_8_5
+cython_fib_8_5.fib(1000)
+```
+
+This will print out the Fibonacci numbers up to 1000. Cython also comes with a handy debugger that shows where Cython has to fall back on Python code which slows things down. Type the following command in your terminal:
+```
+cython -a cython_fib_8_5.pyx
+```
+This will create an HTML file which looks something like this when opened in a browser:
+
+![Cython Profile](./assets/cython_profile.png)
+
+As you can see, Cython has to fall back on Python all the time in our script because we did not specify the types of variables. By letting Cython know what data type a variable has we can speed up code significantly. To define a variable with a type we use `cdef`: 
+
+```Python 
+from __future__ import print_function
+def fib(int n):
+    cdef int a = 0
+    cdef int b = 1
+    while b < n:
+        print(b, end=' ')
+        a, b = b, a + b
+    print()
+```
+
+This snippet is already better. Further optimization is certainly possible, by e.g. first calculating the numbers before printing them, to reduce the reliance on Python print statements. Overall, Cython is a great way to keep the development speed and ease of Python and gain execution speed.
 
 ## Cache frequent requests
 An under-appreciated way to make models run faster is to cache frequent requests in a database. You can go so far to cache millions of predictions in a database and then look them up. This has the advantage that you can make your model as large as you like and expand a lot of compute power to make predictions. By using a map-reduce database, looking up requests in a very large pool of possible requests and predictions is entirely possible. Of course this requires requests to be somewhat discrete. If you have continuous features you can round them if precision is not as important.
