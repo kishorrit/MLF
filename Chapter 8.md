@@ -638,34 +638,184 @@ Convolutional layers and LSTMs are less susceptible to both vanishing and explod
 You now have seen a wide range of tools to debug your models. As a final step, we will learn some methods to run models in production and speed up machine learning.
 
 # Deployment 
-- Launch fast
-Keep it simple, get the infrastructure right, gather data, measure effects of system
-- Understand and monitor metrics 
-Choose a simple number that relates to your higher order metrics. You will likely need to update your metric later. Use simple metrics you can measure reliably
-- Understand where your data comes from 
-Assign an owner of every feature, be mindful of changes in data you access
+
+Deployment into production is often seen as separate from the creation of models. At many companies, data scientists create models in isolated development environments on training, validation and testing data which was collected to create models. Once the model does well on the test set, it gets passed on to deployment engineers, who know little about how and why the model works the way it does. This is a mistake. After all, you are developing models to use them, not for the fun of developing them.
+
+Models tend to perform worse over time for several reasons. The world changes so the data you trained on might no longer represent the real world. Your model might rely on the outputs of some other systems which are subject to change. There might be unintended side effects and weaknesses of your model which only show with extended usage. Your model might influence the world which it tries to model. **Model decay** describes how models have a live span, after which performance deteriorates. 
+
+Datascientists should have the full life cycle of their models in mind. They need to be aware of how their model works in production in the long run.
+
+But models in production are not only a liability. In fact, the production environment is the perfect environment to optimize your model. Your datasets are only an approximation or the real world. Live data gives a much fresher and more accurate view on the world. By using online learning or active learning methods you can drastically reduce the need for training data. This section describes some best practices for getting your models to work in the real world. The exact method of serving your model can vary depending on your application. See the next section on performance for more details on choosing a deployment method.
+
+## Launch fast
+The process of developing models depends on real world data as well as insight in how the performance of the model influences business outcomes. The earlier you can gather data and observe how model behavior influences outcomes the better. Do not hesitate to launch your product with a simple heuristic. Take the case of fraud detection for instance. Not only do you need to gather transaction data together with information about occurring frauds. You also want to know how quick fraudsters are at finding ways around your detection. You want to know how customers whose transactions have been falsely flagged as fraud react. All this information influences your model design and your model evaluation metrics. If you can come up with a simple heuristic, deploy the heuristic and then work on the machine learning approach.
+
+When developing a machine learning model, try simple models first. A surprising number of tasks can be modeled with simple, linear models. Not only do you obtain results faster, you can also quickly identify features your model likes to overfit to. Debugging your dataset before working on a complex model can save you many headaches.
+
+A second advantage of getting a simple approach out of the door quickly is that you can prepare your infrastructure. Your infrastructure team is likely different people from the modeling team. If the infrastructure team does not have to wait for the modeling team but can start optimizing the infrastructure immediately, you gain a time advantage. 
+
+## Understand and monitor metrics 
+To ensure that optimizing metrics like mean squared error or cross entropy loss actually lead to better outcome, you need to be mindful of how your model metric relate to higher order metrics. Imagine you have some consumer facing app in which you recommend different investment products to retail investors. 
+
+![Higher order effects](./assets/higher_order_effects.png)
+
+You might predict if the user is interested in a given product, measured by the user reading the product description. However, the metric you want to optimize in your application is not your model accuracy, but the click through rate of users going to the description screen. On a higher order, your business is not designed to maximize the click through rate, but revenue. If your users only click on low revenue products, your click through rate does not help you. Finally, your businesses revenue might be optimized to the detriment of society. In this case, regulators will step in. Higher order effects are influenced by your model. The higher the order of the effect, the harder it is to attribute to a single model. Higher order effects have large impacts however. Effectively, **higher order effects serve as meta metrics to lower order effects**. To judge how well your application is doing, you align its metrics (e.g. click through rates) with the metrics relevant for the higher order effect (e.g. revenue). Equally, your model metrics need to be aligned with your application metrics. 
+
+This alignment is often an emergent feature. Product managers eager to maximize their own metrics pick the model that maximizes their metrics, regardless of what metrics the modelers were optimizing. Product managers that bring home a lot of revenue get promoted. Businesses that are good for society receive subsidies and favorable policy. By making the alignment explicit, you can design a better monitoring process. For instance if you have two models, you can A/B test them to see which one improves the application metrics.
+
+Often, you will find that to align with a higher order metric, you need to combine several metrics such as accuracy and speed of predictions. In this case, you should craft a formula that combines the metrics into one single number. A single number will allow you to doubtlessly choose between two models and helps your engineers to create better models. For instance, you could set a maximum latency of 200 milliseconds and your metric would be: 'Accuracy if latency is below 200ms, otherwise zero'. If you do not wish to set one maximum latency value you could choose 'Accuracy divided by latency in milliseconds'. The exact design of this formula depends on your application. As you observe how your model influences its higher order metric, you can adapt your model metric. The metric should be simple and easy to quantify.
+
+Next to regularly testing your models impact on higher order metrics, you should regularly test your models own metrics like accuracy. To this end, you need a constant stream of ground truth labels together with your data. In some cases, such as detecting fraud, ground truth data is easily collected, although it might come in with some latency. Customers might need a few weeks to find out they have been overcharged. In other cases, you might not have ground truth labels. Often, you can hand label data for which you have not ground truth labels coming in. Through good UI design, the process of checking model predictions can be fast. Testers only have to decide if your models prediction was correct or not, something they can do through button presses in a web or mobile app. If you have a good review system in place, data scientists who work on the model should regularly check the models outputs. This way, patterns in failures ('Our model does poorly on dark images') can be detected quickly and the model can be improved.
+
+## Understand where your data comes from 
+More often than not, your data gets collected by some other system that you as the model developer have no control over. Your data might be collected by a data vendor or by a different department in your firm. It might be collected for different purposes than your model. The collectors of the data might not even know you are using the data for your model. If say the collection method of the data changes, the distribution of your data might change too. This could break your model. Equally, the real world might just change, and with it the data distribution. To avoid changes in the data breaking your model, first be aware what data you are using and assign an owner to each feature. The job of the feature owner is to investigate where the data is coming from and alerting the team if changes in the data are coming. The feature owner should also write down the assumptions underlying the data. In the best case, you test these assumptions for all new data streaming in. If the data does not pass the tests, investigate and eventually modify your model.
+
+Equally, your model outputs might get used as inputs of other models. Help consumers of your data reach you by clearly identifying yourself as the owner of the model. Alert users of your model of changes to your model. Before deploying a model, compare the new models predictions to the old models predictions. Treat models as software and try to identify 'breaking changes', that would significantly alter your models behavior. Many times you might not know who is accessing your models predictions. Try to avoid this by clear communication and setting access controls if necessary.
+
+Just like software has dependencies, libraries that need to be installed for the software to work, machine learning models have data dependencies. Data dependencies are not as well understood as software dependencies. By investigating your models dependencies, you can reduce the risk of your model breaking with some data change.
 
 # Performance tips
-https://www.tensorflow.org/performance/performance_guide
 
-- Ensure your GPUs are fully utilized / Optimize your pipeline
-- Use optimized layers such as `CuDNNLSTM`
-- Use batchprocessing, use large batches
-- Convert your Keras models to TF Estimators 
-https://www.tensorflow.org/api_docs/python/tf/keras/estimator/model_to_estimator
-- Use the right hardware for your problem (GPUs are not always better)
-- Consider caching frequent requests
+In many financial applications, speed is of essence. Machine learning, especially deep learning has a reputation for being slow. But recently there have been many advances in hardware and software that enable fast machine learning applications.
 
-# Debugging Overview
-https://medium.com/machine-learning-world/how-to-debug-neural-networks-manual-dc2a200f10f2
+## Use the right hardware for your problem
+Much progress in deep learning has been driven by the use of graphics processing units (GPUs). GPUs enable highly parallel computing at the expense of operation frequency. Recently, multiple manufacturers started working on specialized deep learning hardware. Most of the times GPUs are a good choice for deep learning models or other parallelizable algorithms such as XGboost gradient boosted trees. However, not all applications benefit equally. In natural language processing for instance, batch sizes often need to be small, so the parellization of operations does not work as well since not that many samples are processed at the same time. Additionally, some words appear much more often than others, giving large benefits to caching frequent words. Thus, many NLP tasks run faster on CPU than GPU. If you can work with large batches however, a GPU or even specialized hardware is preferable.
 
-https://engineering.semantics3.com/debugging-neural-networks-a-checklist-ca52e11151ec
+## Make use of distributed training with TF Estimators
+Keras is not only a standalone library that can use TensorFlow, it is also an integrated part of TensorFlow. TensorFlow features multiple high level APIs to create and train models. As of in version 1.8, the estimators API features distributed training on multiple machines with multiple GPUs, while the Keras API does not feature them yet. Estimators can also easily be trained on the TensorFlow `Dataset` API, which allows for parallel loading and prepocessing of datasets.
 
-https://www.quora.com/How-do-I-debug-an-artificial-neural-network-algorithm
+You can find information on how to set up your cluster for distributed TensorFlow here: https://www.tensorflow.org/deploy/distributed
 
-https://blog.slavv.com/37-reasons-why-your-neural-network-is-not-working-4020854bd607
+By changing the import statements you can easily use Keras as part of TensorFlow and don't have to change your main code.
+```Python 
+import tensorflow as tf
+from tensorflow.python import keras
 
-https://medium.com/@skyetetra/so-your-data-science-project-isnt-working-7bf57e3f12f1
+from tensorflow.python.keras.models import Sequential
+from tensorflow.python.keras.layers import Dense,Activation
+```
+
+In this section we will create a model to learn the MNIST problem and then train it using the estimator API. First we load and prepare the dataset as usual. For more efficient dataset loading see the next section.
+```Python 
+(x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
+x_train.shape = (60000, 28 * 28)
+x_train = x_train / 255
+y_train = keras.utils.to_categorical(y_train)
+``` 
+
+We can create a keras model as usual.
+
+```Python 
+model = Sequential()
+model.add(Dense(786, input_dim = 28*28))
+model.add(Activation('relu'))
+model.add(Dense(256))
+model.add(Activation('relu'))
+model.add(Dense(160))
+model.add(Activation('relu'))
+model.add(Dense(10))
+model.add(Activation('softmax'))
+
+model.compile(optimizer=keras.optimizers.SGD(lr=0.0001, momentum=0.9),
+              loss='categorical_crossentropy',
+              metric='accuracy')
+```
+
+The TensorFlow version of Keras offers a one line conversion to a TF Estimator.
+```Python 
+estimator = keras.estimator.model_to_estimator(keras_model=model)
+```
+
+To set up training, we need to know the name assigned to the model input. We quickly check this with:
+```Python
+model.input_names
+```
+```
+['dense_1_input']
+```
+
+Estimators get trained with an input function. The input function allows us to specify a whole pipeline which will be executed efficiently. In this case we only want an input function that yields our training set:
+
+```Python 
+train_input_fn = tf.estimator.inputs.numpy_input_fn(
+    x={'dense_1_input': x_train},
+    y=y_train,
+    num_epochs=1,
+    shuffle=False)
+``` 
+
+Finally, we train the estimator on the input. And that is it, now you can utilize distributed TensorFlow with estimators.
+```Python
+estimator.train(input_fn=train_input_fn, steps=2000)
+```
+
+## Use optimized layers such as `CuDNNLSTM`
+You will often find that someone created a special layer optimized to perform certain asks on certain hardware. Keras `CuDNNLSTM` layer for example only runs on GPUs supporting CUDA, a programming language specifically for GPUs. While you lock in your model to specialized hardware, you can often gain significantly in performance. If you have the resources, it might even make sense to write your own specialized layer in CUDA. If you want to change hardware later, you usually can export weights and import them to a different layer.
+
+## Optimize your pipeline
+With the right hardware and optimized software in place, your model often ceases to be the bottleneck. You should check your GPU utilization by entering the following command in your terminal:
+```
+nvidia-smi -l 2
+```
+If GPU utilization is not around 80% to 100%, you can gain significantly by optimizing your pipeline. There are several steps you can take to optimize your pipeline:
+
+**Create a pipeline running parallel to the model**. Otherwise, your GPU will be idle while the data is loading. Keras does this by default. If you have a generator, and want to have a larger queue of data to be held ready for preprocessing, change the `max_queue_size` parameter of the `fit_generator` method. If you set the `workers` argument of the `fit_generator` method to zero, the generator will run on the main thread, which slows things down.
+
+**Preprocess data in parallel**. Even if you have a generator working independent of the model training, it might not keep up with the model. So it is better to run multiple generators in parallel. In Keras you can do this with by setting `use_multiprocessing` to true and setting the number of workers to anything larger than one, preferably to the number of CPUs available.
+
+```Python 
+model.fit_generator(generator, 
+                    steps_per_epoch = 40, 
+                    workers=4, 
+                    use_multiprocessing=False)
+```
+You need to make sure your generator is thread safe. You can make any generator thread safe with the following code snippet:
+
+```Python 
+import threading
+
+class thread_safe_iter: #1
+    def __init__(self, it):
+        self.it = it
+        self.lock = threading.Lock()
+
+    def __iter__(self):
+        return self
+
+    def next(self): #2
+        with self.lock:
+            return self.it.next()
+
+def thread_safe_generator(f): #3
+    def g(*a, **kw):
+        return thread_safe_iter(f(*a, **kw))
+    return g
+
+@thread_safe_generator #4
+def gen():
+  ...
+```
+
+\#1 The `thread_safe_iter` class makes any iterator thread safe by locking threads when the iterator has to produce the next yield.
+
+\#2 When `next()` is called on the iterator, the iterators thread is locked. Locking means that no other function, say another variable, can access variables from the thread while it is locked. Once the thread is locked, it yields the next element.
+
+\#3 The `thread_safe_generator` is a Python decorator that turns any iterator it decorates into a thread safe iterator. It takes the function, passes it to the thread safe iterator and then returns the thread safe version of the function.
+
+You can also use the `tf.data` API together with an estimator which does most of the work for you. 
+
+**Combine files into large files with TF Record**. Reading a file takes time. If you have to read thousands of small files, this can significantly slow you down. TensorFlow offers its own data format called TF Record. You can also just fuse an entire batch into a single numpy array and save that array instead of every example.
+
+In case you have truly large datasets, the more you can parallelize, the better. Parallelization comes with overhead costs however, and not every problem actually features huge datasets. In these cases, refrain from trying to do too much in parallel and focus on slimming down your network, using CPUs and keeping all your data in RAM if possible.
+
+## Speed up your code with Cython 
+
+## Cache frequent requests
+An under-appreciated way to make models run faster is to cache frequent requests in a database. You can go so far to cache millions of predictions in a database and then look them up. This has the advantage that you can make your model as large as you like and expand a lot of compute power to make predictions. By using a map-reduce database, looking up requests in a very large pool of possible requests and predictions is entirely possible. Of course this requires requests to be somewhat discrete. If you have continuous features you can round them if precision is not as important.
+
+# Exercises
+- Try to build any model that features exploding gradients in training. Hint: Do not normalize inputs and play with the initialization of layers.
+- Go to any example in this book, try to optimize performance by improving the data pipeline.
 
 
  
