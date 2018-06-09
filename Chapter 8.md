@@ -633,7 +633,12 @@ clip_val_sgd = SGD(lr=0.01, clipvalue=0.5)
 clip_norm_sgd = SGD(lr=0.01, clipnorm=1.)
 ```
 
-Convolutional layers and LSTMs are less susceptible to both vanishing and exploding gradients. ReLu and batchnorm generally stabilize the network. Both problems might be caused by non-regularized inputs, so you should check your data, too.
+Convolutional layers and LSTMs are less susceptible to both vanishing and exploding gradients. ReLu and batchnorm generally stabilize the network. Both problems might be caused by non-regularized inputs, so you should check your data, too. Batch normalization also counteracts exploding gradients. If exploding gradients are a problem, you can add a batchnorm layers to your model with:
+
+```Python 
+from keras.layers import BatchNormalization
+model.add(BatchNormalization())
+```
 
 You now have seen a wide range of tools to debug your models. As a final step, we will learn some methods to run models in production and speed up machine learning.
 
