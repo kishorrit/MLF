@@ -640,6 +640,8 @@ from keras.layers import BatchNormalization
 model.add(BatchNormalization())
 ```
 
+Batchnorm also reduces the risk of vanishing gradients and has enabled the construction of much deeper networks recently.
+
 You now have seen a wide range of tools to debug your models. As a final step, we will learn some methods to run models in production and speed up machine learning.
 
 # Deployment 
@@ -810,6 +812,9 @@ def gen():
 You can also use the `tf.data` API together with an estimator which does most of the work for you. 
 
 **Combine files into large files**. Reading a file takes time. If you have to read thousands of small files, this can significantly slow you down. TensorFlow offers its own data format called TF Record. You can also just fuse an entire batch into a single numpy array and save that array instead of every example.
+
+**Train with the tf.data.Dataset API**
+https://www.tensorflow.org/versions/r1.9/programmers_guide/keras#from_tfdata_datasets
 
 In case you have truly large datasets, the more you can parallelize, the better. Parallelization comes with overhead costs however, and not every problem actually features huge datasets. In these cases, refrain from trying to do too much in parallel and focus on slimming down your network, using CPUs and keeping all your data in RAM if possible.
 
