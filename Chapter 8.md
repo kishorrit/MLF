@@ -919,5 +919,7 @@ An under-appreciated way to make models run faster is to cache frequent requests
 - Try to build any model that features exploding gradients in training. Hint: Do not normalize inputs and play with the initialization of layers.
 - Go to any example in this book, try to optimize performance by improving the data pipeline.
 
+# Summary 
+In this chapter, you have learned a number of practical tips to debug and improve your model. From testing your data with marbles, to inspecting the computational graph in TensorBoard to speeding up Python with Cython, you now have a number of tools in your toolbox that help you with model development.
 
- 
+In the next and final chapter, we will look at a special, persistent and dangerous problem with machine learning models: Bias. Statistical models tend to fit to and amplify human biases. Financial institutions have to follow strict regulations to prevent them from being racially or gender biased. In the next chapter we will see how we can detect and remove biases from our models, to make them fair and compliant.
