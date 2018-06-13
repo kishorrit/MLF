@@ -689,7 +689,7 @@ In many financial applications, speed is of essence. Machine learning, especiall
 Much progress in deep learning has been driven by the use of graphics processing units (GPUs). GPUs enable highly parallel computing at the expense of operation frequency. Recently, multiple manufacturers started working on specialized deep learning hardware. Most of the times GPUs are a good choice for deep learning models or other parallelizable algorithms such as XGboost gradient boosted trees. However, not all applications benefit equally. In natural language processing for instance, batch sizes often need to be small, so the parellization of operations does not work as well since not that many samples are processed at the same time. Additionally, some words appear much more often than others, giving large benefits to caching frequent words. Thus, many NLP tasks run faster on CPU than GPU. If you can work with large batches however, a GPU or even specialized hardware is preferable.
 
 ## Make use of distributed training with TF Estimators
-Keras is not only a standalone library that can use TensorFlow, it is also an integrated part of TensorFlow. TensorFlow features multiple high level APIs to create and train models. As of in version 1.8, the estimators API features distributed training on multiple machines with multiple GPUs, while the Keras API does not feature them yet. Estimators can also easily be trained on the TensorFlow `Dataset` API, which allows for parallel loading and prepocessing of datasets.
+Keras is not only a standalone library that can use TensorFlow, it is also an integrated part of TensorFlow. TensorFlow features multiple high level APIs to create and train models. As of in version 1.8, the estimators API features distributed training on multiple machines, while the Keras API does not feature them yet. Estimators also have a number of other speed up tricks, so they are usually faster than Keras models.
 
 You can find information on how to set up your cluster for distributed TensorFlow here: https://www.tensorflow.org/deploy/distributed
 
@@ -813,8 +813,33 @@ You can also use the `tf.data` API together with an estimator which does most of
 
 **Combine files into large files**. Reading a file takes time. If you have to read thousands of small files, this can significantly slow you down. TensorFlow offers its own data format called TF Record. You can also just fuse an entire batch into a single numpy array and save that array instead of every example.
 
-**Train with the tf.data.Dataset API**
-https://www.tensorflow.org/versions/r1.9/programmers_guide/keras#from_tfdata_datasets
+**Train with the tf.data.Dataset API**. If you are using the TensorFlow version of Keras, you can use the `Dataset` API, which optimizes data loading and processing for you. The `Dataset` API is the recommended way to load data into TensorFlow. It offers a wide range of ways to load data, for instance from a CSV file with `tf.data.TextLineDataset` or from TFRecord files with `tf.data.TFRecordDataset`. For a more comprehensive guide to the `Dataset` API, see https://www.tensorflow.org/get_started/datasets_quickstart
+
+In this example, we will use the dataset API with numpy arrays which we already loaded into RAM, such as the MNIST database.
+
+First, we create two plain datasets for data and targets:
+```Python 
+dxtrain = tf.data.Dataset.from_tensor_slices(x_test)
+dytrain = tf.data.Dataset.from_tensor_slices(y_train)
+```
+
+The `map` function allows us to perform operations on data before passing it to the model. In this case we apply one-hot encoding to our targets. But this could be any function. By setting the `num_parallel_calls` argument, we can specify how many processes we want to run in parallel:
+```Python 
+def apply_one_hot(z):
+    return tf.one_hot(z,10)
+
+dytrain = dytrain.map(apply_one_hot,num_parallel_calls=4)
+```
+
+We zip the data and targets into one dataset. We instruct TensorFlow to shuffle the data when loading, keeping 200 instances in memory from which to draw samples. Finally, we make the dataset yield batches of batch size 32.
+```Python 
+train_data = tf.data.Dataset.zip((dxtrain,dytrain)).shuffle(200).batch(32)
+```
+
+We can now fit a Keras model on this dataset just as we would fit it to a generator.
+```Python 
+model.fit(dataset, epochs=10, steps_per_epoch=60000 // 32)
+```
 
 In case you have truly large datasets, the more you can parallelize, the better. Parallelization comes with overhead costs however, and not every problem actually features huge datasets. In these cases, refrain from trying to do too much in parallel and focus on slimming down your network, using CPUs and keeping all your data in RAM if possible.
 
