@@ -61,19 +61,19 @@ import pandas as pd #2
 import numpy as np
 from datetime import datetime, timedelta
 
-class AgeTestCase(marbles.core.TestCase,mixins.MonotonicMixins): #3
-    def setUp(self): #4
+class TimeSeriesTestCase(marbles.core.TestCase,mixins.MonotonicMixins):
+    def setUp(self):
         self.df = pd.DataFrame({'dates':[datetime(2018,1,1),
                                          datetime(2018,2,1),
                                          datetime(2018,2,1)],
-                                'ireland_unemployment':[6.2,6.1,6.1]}) #5
+                                'ireland_unemployment':[6.2,6.1,6.0]})
         
-    def tearDown(self): #6
+    def tearDown(self):
         self.df = None
         
-    def test_date_order(self): #7
+    def test_date_order(self):
         
-        self.assertMonotonicIncreasing(sequence=self.df.dates, #8
+        self.assertMonotonicIncreasing(sequence=self.df.dates,
                                   note = 'Dates need to increase monotonically')
 ```
 
@@ -859,15 +859,15 @@ def fib(n):
     print()
 
 ```
-Note that we have to import the `print_function` to make sure that `print()` works in the Python 3 style. To use this snippet with Cython, save it as `cython_fib_8_5.pyx`.
+Note that we have to import the `print_function` to make sure that `print()` works in the Python 3 style. To use this snippet with Cython, save it as `cython_fib_8_7.pyx`.
 
-Now create a new file called `8_5_cython_setup.py`:
+Now create a new file called `8_7_cython_setup.py`:
 ```Python 
 from distutils.core import setup #1
 from Cython.Build import cythonize #2
 
 setup( #3
-    ext_modules=cythonize("cython_fib_8_5.pyx"),
+    ext_modules=cythonize("cython_fib_8_7.pyx"),
 )
 ```
 
@@ -879,19 +879,19 @@ setup( #3
 
 To run this, we now run the following command in terminal:
 ```
-python 8_5_cython_setup.py build_ext --inplace
+python 8_7_cython_setup.py build_ext --inplace
 ```
 
 This will create a C file as well as a build file and a compiled module. We can import this module now:
 
 ```Python 
-import cython_fib_8_5
-cython_fib_8_5.fib(1000)
+import cython_fib_8_7
+cython_fib_8_7.fib(1000)
 ```
 
 This will print out the Fibonacci numbers up to 1000. Cython also comes with a handy debugger that shows where Cython has to fall back on Python code which slows things down. Type the following command in your terminal:
 ```
-cython -a cython_fib_8_5.pyx
+cython -a cython_fib_8_7.pyx
 ```
 This will create an HTML file which looks something like this when opened in a browser:
 
