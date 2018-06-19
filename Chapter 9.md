@@ -39,6 +39,48 @@ https://blog.godatadriven.com/fairness-in-ml
 Data 
 https://archive.ics.uci.edu/ml/datasets/Adult
 
+Equality is often seen as a purely qualitative issue, and as such, often dismissed buy quantitative minded modelers. As this section shows, equality can be seen from a quantitative perspective, too. 
+Consider a classifier $c$ with input $X$, some sensitive input $A$, a target $Y$ and output C. Usually we note the classifier output as $\hat{Y}$, but for readability we follow CS 294 and name it $C$.
+
+Say our classifier is used to decide who gets a loan. When would we consider this classifier to be fair? In order to answer this question, picture two demographics, Group A and B, of loan applicants. Given a credit score, our classifier has to find a cutoff point. Below you can see the distribution of applicants. In orange are applicants who would not have repaid the loan and did not get accepted, true negatives (TN). In blue are applicants who would have repaid the loan but did not get accepted, false negatives (FN). In yellow are applicants who did get the loan but did not pay it back, false positives (FN). In grey are applicants who did receive the loan and paid it back, true positives (TP). The data for this example is synthetic, you can find the excel file used for these calculations in the GitHub repository of this book.
+
+For this exercise we assume that a successful applicant and pays yields a profit of \$300 while a defaulting successful applicant costs \$700. The cutoff point below has been chosen to maximize profits:
+
+![Max Profit](./assets/max_profit.png)
+
+As you can see, there are several issues with this choice of cutoff point. group B applicants need to have a better score to get a loan than group A applicants, indicating disparate treatment. At the same time, about 51% of group A applicants get a loan but only 37% of group B applicants, indicating disparate impact. A **group unaware threshold** would give both groups the same minimum score:
+
+![Equal Cutoff](./assets/equal_cutoff.png)
+
+Both groups have the same cutoff rate, but group A has been given fewer loans. At the same time, predictions for group A have a lower accuracy than for group B. It seems, that although both groups face the same score threshold, group A is at a disadvantage.
+
+**Accuracy parity** prescribes that the accuracy of predictions should be the same for both groups. Mathematically this can be expressed as:
+
+$$P(C=Y∣A=1)=P(C=Y∣A=0)$$
+
+The probability that the classifier is correct should be the same for the two possible values of the sensitive variable $A$. When we apply this criteria to our data, we arrive at the following output:
+
+![Max Profit Equal Cutoff](./assets/equal_acc.png)
+
+The downside becomes apparent from the graphic above. In order to satisfy the accuracy constraint, members of Group B are given much easier access to loans. 
+
+
+**Demographic parity** aims to achieve fairness by ensuring that both groups have the same chance of recieving the loan.
+
+
+$$P(C=1∣A=1)=P(C=1∣A=0)$$
+
+Precision parity, both demographics have the same precision rate
+$$P(Y=1∣C=1,A=1)=P(Y=1∣C=1,A=0)$$
+
+$$Precision = \frac{TP}{TP + FP}$$
+
+True positive parity, both demographics have the same true positive rate 
+$$P(C=1∣Y=1,A=1)=P(C=1∣Y=1,A=0)$$
+
+Tradeoffs are nessecary, no classifier can have precision parity, true positive parity _and_ false positive parity, unless the classifier is perfect, $C=Y$ or both demographics have the same base rates:
+$$P(Y=1|A=1)=P(Y=1|A=0)$$
+
 # Beyond observational fairness 
 
 - Interpretability
