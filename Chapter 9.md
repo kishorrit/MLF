@@ -33,12 +33,6 @@ Given the complex legal and technical situation around fairness in machine learn
 Thresholds and equal opportunity
 https://research.google.com/bigpicture/attacking-discrimination-in-ml/
 
-Training models to be fair
-https://blog.godatadriven.com/fairness-in-ml
-
-Data 
-https://archive.ics.uci.edu/ml/datasets/Adult
-
 Equality is often seen as a purely qualitative issue, and as such, often dismissed buy quantitative minded modelers. As this section shows, equality can be seen from a quantitative perspective, too. 
 Consider a classifier $c$ with input $X$, some sensitive input $A$, a target $Y$ and output C. Usually we note the classifier output as $\hat{Y}$, but for readability we follow CS 294 and name it $C$.
 
@@ -54,32 +48,44 @@ As you can see, there are several issues with this choice of cutoff point. group
 
 Both groups have the same cutoff rate, but group A has been given fewer loans. At the same time, predictions for group A have a lower accuracy than for group B. It seems, that although both groups face the same score threshold, group A is at a disadvantage.
 
+**Demographic parity** aims to achieve fairness by ensuring that both groups have the same chance of receiving the loan. This method aims to achieve the same selection rate for both groups, which is what impact disparity is measured by. Mathematically this can be expressed as:
+
+$$P(C=1∣A=1)=P(C=1∣A=0)$$
+
+If we apply this rule to our data, we arrive at the following cutoff points:
+![Equal Pick Rate](./assets/equal_pick_rate.png)
+
+While this method can not be blamed for statistical discrimination and disparate impact, it can be blamed for disparate treatment. Group A is given a lower threshold score and more successful group A applicants default on their loans. In fact, group A is not profitable and gets subsidized by group B. Accepting a worse economic outcome to favor a certain group is also called taste based discrimination. It could be said that the higher thresholds for group B are unfair, as they have a lower false positive rate.
+
+**True positive parity**, also called equal opportunity, means that both demographics have the same true positive rate. For people who can pay back the loan, the same chance of getting a loan should exist. Mathematically:
+$$P(C=1∣Y=1,A=1)=P(C=1∣Y=1,A=0)$$
+
+Applied to our data, this policy looks similar to demographic parity, except that the group A cutoff point is even lower:
+![Equal opportunity](./assets/equal_opportunity.png)
+
+Equal opportunity can address many of the problems of demographic parity. Most people believe that everyone should be given the same opportunity. Still, our classifier is less accurate for group A and there is a form of disparate treatment in place.
+
 **Accuracy parity** prescribes that the accuracy of predictions should be the same for both groups. Mathematically this can be expressed as:
 
 $$P(C=Y∣A=1)=P(C=Y∣A=0)$$
 
 The probability that the classifier is correct should be the same for the two possible values of the sensitive variable $A$. When we apply this criteria to our data, we arrive at the following output:
 
-![Max Profit Equal Cutoff](./assets/equal_acc.png)
+![Equal Accuracy](./assets/equal_acc.png)
 
 The downside becomes apparent from the graphic above. In order to satisfy the accuracy constraint, members of Group B are given much easier access to loans. 
 
-
-**Demographic parity** aims to achieve fairness by ensuring that both groups have the same chance of recieving the loan.
-
-
-$$P(C=1∣A=1)=P(C=1∣A=0)$$
-
-Precision parity, both demographics have the same precision rate
-$$P(Y=1∣C=1,A=1)=P(Y=1∣C=1,A=0)$$
-
-$$Precision = \frac{TP}{TP + FP}$$
-
-True positive parity, both demographics have the same true positive rate 
-$$P(C=1∣Y=1,A=1)=P(C=1∣Y=1,A=0)$$
-
-Tradeoffs are nessecary, no classifier can have precision parity, true positive parity _and_ false positive parity, unless the classifier is perfect, $C=Y$ or both demographics have the same base rates:
+Tradeoffs are necessary, no classifier can have precision parity, true positive parity _and_ false positive parity, unless the classifier is perfect, $C=Y$ or both demographics have the same base rates:
 $$P(Y=1|A=1)=P(Y=1|A=0)$$
+
+There are many more ways to express fairness in different ways. The key takeaway however is that none of them perfectly satisfies all fairness criteria. For any two populations with unequal base rates, unequal chances of repaying their loan, establishing statistical parity requires introducing a treatment disparity. This fact has led to much debate and the best practice to express and eliminate discrimination has not been agreed on, yet. Yet, even if the perfect mathematical expression of fairness was found, it would not immediately lead to perfectly fair systems. Any machine learning algorithm is part of a bigger system. Inputs $X$ are often not clearly defined as different algorithm in the same system might use different inputs. Demographic groups $A$ are often not clearly defined or inferred. Even the output $C$ of the classifier can often not be clearly distinguished, as many algorithms together might perform the classification task while each algorithm is predicting a different output, like a credit score and a profitability estimate. **Good technology is not a substitute for good policy**. Blindly following an algorithm without an opportunity for individual consideration or appeal will always lead to unfairness. But while mathematical fairness criteria can not solve all fairness issues, it is surely worth trying to make machine learning algorithms more fair. This is what the next section is about.
+
+# Training to be fair 
+Training models to be fair
+https://blog.godatadriven.com/fairness-in-ml
+
+Data 
+https://archive.ics.uci.edu/ml/datasets/Adult
 
 # Beyond observational fairness 
 
