@@ -87,6 +87,261 @@ https://blog.godatadriven.com/fairness-in-ml
 Data 
 https://archive.ics.uci.edu/ml/datasets/Adult
 
+There are multiple ways to train models to be more fair. A simple approach could be to use the different fairness measures we have listed above as an additional loss. In practice, this approach has turned out to not work very well. The models produced with such 'fairness regularization' turn out to have poor performance on the actual classification task. An alternative approach is to use and adversarial network. In 2016, Louppe, Kagan and Cranmer published 'Learning to Pivot with Adversarial Networks', a paper which shows how to use an adversarial network to train a classifier to ignore a nuisance parameter, such as a sensitive feature.
+
+In this example, we will train a classifier to predict if an adult makes over \$50K in annual income. The challenge is to make our classifier unbiased from influences of race and gender, and only focus on features we can discriminate on such as their occupation and gains they make from capital. To this end we train a classifier and an adversarial network. The adversarial aims to classify the sensitive attributes $a$, gender and race, from the predictions of the classifier.
+
+![pivot](./assets/pivot.png)
+
+The classifier aims to classify by income but also aims to fool the adversarial. The classifiers minimization objective is:
+
+$$\min[L_y - \lambda L_A]$$
+
+Where $L_y$ is a binary cross-entropy loss of the classification and $L_A$ is the adversarial's loss. $\lambda$ is a hyper parameter we can use to amplify or reduce the impact of the adversarial loss.
+
+This implementation of the adverserial fairness method follows an implementation by Stijn Tonk and Henk Griffioen. You can find the code to this chapter on Kaggle under: https://www.kaggle.com/jannesklaas/learning-how-to-be-fair
+
+To train fair, we need not only data X and targets y, but also data about sensitive attributes, A. We take data from the 1994 US census provided by the UCI repository https://archive.ics.uci.edu/ml/datasets/Adult
+
+To make loading the data easier, it has been transformed into a CSV with column headers. Please refer to the online version to see the data as well.
+
+First we load the data. The dataset contains data about people from many races, but for simplicity we will only focus on white and black people for the race attribute.
+```Python 
+path = '../input/adult.csv'
+input_data = pd.read_csv(path, na_values="?")
+input_data = input_data[input_data['race'].isin(['White', 'Black'])]
+```
+
+We select the sensitive attributes race and gender into our sensitive dataset A. We one hot encode the data so that 'Male' equals one for the gender attribute and 'White' equals one for the race attribute.
+```Python 
+sensitive_attribs = ['race', 'gender']
+A = input_data[sensitive_attribs]
+A = pd.get_dummies(A,drop_first=True)
+A.columns = sensitive_attribs
+```
+
+Our target is the income attribute. We encode '>50K' as 1 and everything else as zero.
+```python 
+y = (input_data['income'] == '>50K').astype(int)
+```
+
+To get our training data, we first remove the sensitive and target attributes. We then fill all missing values and one hot encode all data.
+```Python 
+X = input_data.drop(labels=['income', 'race', 'gender'],axis=1)
+
+X = X.fillna('Unknown')
+
+X = pd.get_dummies(X, drop_first=True)
+```
+
+Finally, we split the data into train and test split. We stratify the data to ensure that the same amount of high earners are in test and training data.
+```Python 
+X_train, X_test, y_train, y_test, A_train, A_test = \
+train_test_split(X, y, A, test_size=0.5, 
+                stratify=y, random_state=7)
+```
+
+To ensure the data works nicely with the neural network, we scale the data using scikit learn's `StandardScaler`:
+```Python 
+scaler = StandardScaler().fit(X_train)
+
+X_train = pd.DataFrame(scaler.transform(X_train), 
+                       columns=X_train.columns, 
+                       index=X_train.index)
+                       
+X_test = pd.DataFrame(scaler.transform(X_test), 
+                      columns=X_test.columns, 
+                      index=X_test.index)
+```
+
+We need a metric how fair our model is. We are using the disparate impact selection rule. The `p_rule` method calculates the share of people classified to have over \$50K income from both groups and returns the ratio of selections in the disadvantaged demographic over the ratio of selections in the advantaged group. The goal is for the `p_rule` method to return at least 80% the meet the four fifths rule for both race and gender. This function is only used for monitoring, and not as a loss function. 
+
+```Python 
+def p_rule(y_pred, a_values, threshold=0.5):
+    y_a_1 = y_pred[a_values == 1] > threshold if threshold else y_pred[a_values == 1] #1
+    y_a_0 = y_pred[a_values == 0] > threshold if threshold else y_pred[a_values == 0] 
+    odds = y_a_1.mean() / y_a_0.mean() #2
+    return np.min([odds, 1/odds]) * 100 
+```
+\#1 First, select who is selected given a selection threshold. Here, we classify everyone whom the model assigns a chance of over 50% to make \$50K as a high earner. 
+
+\#2 Then we calculate the selection ratio of both demographics. We divide the ratio of the one group by the ratio of the other group. By returning the minimum of either the odds or one divided by the odds, we ensure to returns a value below 1.
+
+
+```Python 
+n_features=X_train.shape[1]
+n_sensitive=A_train.shape[1]
+lambdas=[130., 30.]
+```
+
+```Python 
+clf_inputs = Input(shape=(n_features,)) # Classifier input = All features
+
+############### Create CLF net ########################
+x = Dense(32, activation='relu')(clf_inputs)
+x = Dropout(0.2)(x)
+x = Dense(32, activation='relu')(x)
+x = Dropout(0.2)(x)
+x = Dense(32, activation='relu')(x)
+x = Dropout(0.2)(x)
+outputs = Dense(1, activation='sigmoid', name='y')(x)
+clf_net = Model(inputs=[clf_inputs], outputs=[outputs])
+#######################################################
+```
+
+```Python 
+adv_inputs = Input(shape=(1,)) # Adversary input = Classifier output (one number)
+
+############## Create ADV net #########################
+x = Dense(32, activation='relu')(adv_inputs)
+x = Dense(32, activation='relu')(x)
+x = Dense(32, activation='relu')(x)
+outputs = [Dense(1, activation='sigmoid')(x) for _ in range(n_sensitive)]
+adv_net = Model(inputs=[adv_inputs], outputs=outputs)
+#######################################################
+```
+
+```Python 
+def make_trainable_fn(net): # Produces a function that makes a network trainable or not
+    def make_trainable(flag): # Loop over layers and set their trainability
+        net.trainable = flag
+        for layer in net.layers:
+            layer.trainable = flag
+    return make_trainable
+```
+
+```Python 
+############## Create train switches #################
+trainable_clf_net = make_trainable_fn(clf_net) # Get function to make classifier trainable
+
+trainable_adv_net = make_trainable_fn(adv_net) # Function to make adversary trainable
+
+######################################################
+```
+
+```Python 
+clf = clf_net
+trainable_clf_net(True)
+clf.compile(loss='binary_crossentropy', optimizer='adam')
+
+```
+
+```Python 
+# Creates a classifier adversary super net
+clf_w_adv = Model(inputs=[clf_inputs], 
+                  outputs=[clf_net(clf_inputs)]+adv_net(clf_net(clf_inputs)))
+
+# The adversary is not trainable the classifier is
+trainable_clf_net(True)
+trainable_adv_net(False)
+# Create a weighted loss for all sensitive variables
+loss_weights = [1.]+[-lambda_param for lambda_param in lambdas]
+# Compile super net
+clf_w_adv.compile(loss=['binary_crossentropy']*(len(loss_weights)), 
+                  loss_weights=loss_weights,
+                  optimizer='adam')
+```
+
+```Python 
+# Compile adversary with the classifier as inputs
+adv = Model(inputs=[clf_inputs], outputs=adv_net(clf_net(clf_inputs)))
+# Classifier is not trainable, adversary is
+trainable_clf_net(False)
+trainable_adv_net(True)
+adv.compile(loss=['binary_crossentropy']*n_sensitive, optimizer='adam')
+```
+
+```Python 
+trainable_clf_net(True)
+clf.fit(X_train.values, y_train.values, epochs=10)
+```
+
+```Python 
+trainable_clf_net(False)
+trainable_adv_net(True)
+class_weight_adv = compute_class_weights(A_train)
+adv.fit(X_train.values, 
+        np.hsplit(A_train.values, A_train.shape[1]), 
+        class_weight=class_weight_adv,epochs=10)
+```
+
+```Python 
+y_pred = clf.predict(X_test)
+```
+
+```Python 
+for sens in A_test.columns:
+    pr = p_rule(y_pred,A_test[sens])
+    print('{}: {:.2f}%'.format(sens,pr))
+```
+
+```
+race: 41.71%
+gender: 29.41%
+```
+
+```Python
+def fit(x, y, a, validation_data, n_iter=250, batch_size=128):
+    n_sensitive = a.shape[1]
+    
+    x_val, y_val, a_val = validation_data
+
+    class_weight_adv = compute_class_weights(a)
+    
+    class_weight_clf_w_adv = [{0:1., 1:1.}]+class_weight_adv
+    
+    val_metrics = pd.DataFrame()
+    
+    fairness_metrics = pd.DataFrame()
+    
+    for idx in range(n_iter): # Train for n epochs
+        
+        # train adverserial
+        trainable_clf_net(False)
+        trainable_adv_net(True)
+        adv.fit(x.values, np.hsplit(a.values, a.shape[1]), batch_size=batch_size, 
+                      class_weight=class_weight_adv, epochs=1, verbose=0)
+        
+        
+        # train classifier
+        # Make classifier trainable and adversery untrainable
+        trainable_clf_net(True)
+        trainable_adv_net(False)
+        # Sample batch
+        indices = np.random.permutation(len(x))[:batch_size]
+        # Train on batch
+        clf_w_adv.train_on_batch(x.values[indices], 
+                                [y.values[indices]]+np.hsplit(a.values[indices], n_sensitive),
+                                class_weight=class_weight_clf_w_adv)
+        
+        if validation_data is not None:
+            # Make validation data predictions
+            y_pred = pd.Series(clf.predict(x_val).ravel(), index=y_val.index)
+            
+            roc_auc = roc_auc_score(y_val, y_pred)
+            acc = accuracy_score(y_val, (y_pred>0.5))*100
+            # Calculate ROC and accuracy
+            val_metrics.loc[idx, 'ROC AUC'] = roc_auc
+            val_metrics.loc[idx, 'Accuracy'] = acc
+            
+            # Calculate p rule
+            for sensitive_attr in a_val.columns:
+                fairness_metrics.loc[idx, sensitive_attr] = p_rule(y_pred,a_val[sensitive_attr])
+                
+            print('Epoch: {}, Accuracy: {:.2f}, Race P: {:.2f}, Gender P: {:.2f}'.format(idx,
+                                                                                         acc, 
+                                                                                         fairness_metrics.loc[idx, 'race'],
+                                                                                         fairness_metrics.loc[idx, 'gender']))
+            
+    return val_metrics,fairness_metrics
+```
+
+```Python 
+# adverserial train on train set and validate on test set
+vm, fm = fit(X_train, y_train, A_train,
+             validation_data=(X_test, y_test, A_test),n_iter=165)
+```
+
 # Beyond observational fairness 
 
 - Interpretability
