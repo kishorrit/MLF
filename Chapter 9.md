@@ -167,17 +167,15 @@ def p_rule(y_pred, a_values, threshold=0.5):
 
 \#2 Then we calculate the selection ratio of both demographics. We divide the ratio of the one group by the ratio of the other group. By returning the minimum of either the odds or one divided by the odds, we ensure to returns a value below 1.
 
-
+To make model setup a bit easier, we need to define the number of input features and the number of sensitive features.
 ```Python 
 n_features=X_train.shape[1]
 n_sensitive=A_train.shape[1]
-lambdas=[130., 30.]
 ```
 
+Now we set up our classifier. Note how this classifier is a standard classification neural network. It features 3 hidden layers, some dropout and a final output layer with a sigmoid activation since this is a binary classification task. This classifier is written in the Keras functional API. To make sure you understand how the API works, go through this code example and ensure you understand why the steps are taken.
 ```Python 
-clf_inputs = Input(shape=(n_features,)) # Classifier input = All features
-
-############### Create CLF net ########################
+clf_inputs = Input(shape=(n_features,)) 
 x = Dense(32, activation='relu')(clf_inputs)
 x = Dropout(0.2)(x)
 x = Dense(32, activation='relu')(x)
@@ -186,160 +184,231 @@ x = Dense(32, activation='relu')(x)
 x = Dropout(0.2)(x)
 outputs = Dense(1, activation='sigmoid', name='y')(x)
 clf_net = Model(inputs=[clf_inputs], outputs=[outputs])
-#######################################################
 ```
 
+The adversarial network is a classifier with two heads. One to predict the applicants race of from the model output, one to predict the applicants gender.
 ```Python 
-adv_inputs = Input(shape=(1,)) # Adversary input = Classifier output (one number)
-
-############## Create ADV net #########################
+adv_inputs = Input(shape=(1,)) 
 x = Dense(32, activation='relu')(adv_inputs)
 x = Dense(32, activation='relu')(x)
 x = Dense(32, activation='relu')(x)
-outputs = [Dense(1, activation='sigmoid')(x) for _ in range(n_sensitive)]
-adv_net = Model(inputs=[adv_inputs], outputs=outputs)
-#######################################################
+out_race = Dense(1, activation='sigmoid')(x)
+out_gender = Dense(1, activation='sigmoid')(x)
+adv_net = Model(inputs=[adv_inputs], outputs=[out_race,out_gender])
 ```
 
+As with GANs, we have to make the networks trainable and untrainable multiple times. To make this easier, the following function creates a function that makes a network and all its layers trainable or untrainable.
 ```Python 
-def make_trainable_fn(net): # Produces a function that makes a network trainable or not
-    def make_trainable(flag): # Loop over layers and set their trainability
-        net.trainable = flag
+def make_trainable_fn(net): #1
+    def make_trainable(flag): #2
+        net.trainable = flag #3
         for layer in net.layers:
             layer.trainable = flag
-    return make_trainable
+    return make_trainable #4
 ```
+\#1 The function accepts a Keras neural network, for which the train switch function will be created.
+
+\#2 Inside the function, a second function is created. This second function accepts a boolean flag (True / False).
+
+\#3 When called, the second function sets the networks trainability to the flag. If False is passed, the network is not trainable. Since the layers of the network can also be used in other networks, we ensure that each individual layer is not trainable, too.
+
+\#4 Finally, we return the function.
+
+Using a function to create another function might seem convoluted at first, but it allows us to create 'switches' for the neural network easily. The snippet below shows how to create switch functions for the classifier and adversarial.
 
 ```Python 
-############## Create train switches #################
-trainable_clf_net = make_trainable_fn(clf_net) # Get function to make classifier trainable
+trainable_clf_net = make_trainable_fn(clf_net) 
 
-trainable_adv_net = make_trainable_fn(adv_net) # Function to make adversary trainable
-
-######################################################
+trainable_adv_net = make_trainable_fn(adv_net)
 ```
 
+To make the classifier trainable, we can use the function with the True flag:
+
+```Python 
+trainable_clf_net(True)
+```
+
+Now we compile our classifier. As you will see later, it is useful to keep the classifier network as a separate variable from the compiled classifier with which we make predictions.
 ```Python 
 clf = clf_net
-trainable_clf_net(True)
 clf.compile(loss='binary_crossentropy', optimizer='adam')
+```
+
+Remember that to train our classifier, we need to run its predictions through the adversary as well, obtain the adversary loss, and apply the negative adversary loss to the classifier. This is best done by packing the classifier and adversary into one network.
+
+First, we create a new model that maps from the classifier inputs to the classifier and adversary outputs. We define the adversary output to be a nested function of the adversarial network and the classifier network. This way, the predictions of the classifier get immediately passed on to the adversary.
+```Python 
+adv_out = adv_net(clf_net(clf_inputs))
+```
+
+We define the classifier output to be the output of the classifier network, just as we would for classification.
+```Python 
+clf_out = clf_net(clf_inputs)
+```
+
+We define the combined model to map from the classifier input, speak the data about an adult, to the classifier output and adversary output. 
+```Python 
+clf_w_adv = Model(inputs=[clf_inputs], 
+                  outputs=[clf_out]+adv_out)
+```
+
+When training the combined model, we only want to update the weights of the classifier. We will train the adversary separately. We can use our switch functions to make the classifier network trainable and the adversarial network untrainable.
+```Python
+trainable_clf_net(True)
+trainable_adv_net(False)
 
 ```
 
-```Python 
-# Creates a classifier adversary super net
-clf_w_adv = Model(inputs=[clf_inputs], 
-                  outputs=[clf_net(clf_inputs)]+adv_net(clf_net(clf_inputs)))
+Remember the hyperparameter $\lambda$ from the minimization objective above. We need to set this parameter manually for both sensitive attributes. As it turns out, the networks train best if lambda for race is set much higher than lambda for gender.
 
-# The adversary is not trainable the classifier is
-trainable_clf_net(True)
-trainable_adv_net(False)
-# Create a weighted loss for all sensitive variables
+
+With the lambda values in hand, we can create the weighted loss:
+```Python
 loss_weights = [1.]+[-lambda_param for lambda_param in lambdas]
-# Compile super net
-clf_w_adv.compile(loss=['binary_crossentropy']*(len(loss_weights)), 
+```
+The expression above leads to loss weights of `[1.,-130,-30]`. This means the classification errpr has a weight of 1, the race prediction error of the adversary a weight of -130 and the gender prediction error of the adversary a weight of -30. Since the losses of the adversarial's prediction have negative weights, gradient descent will optimize the parameters of the classifier to _increase_ these losses. 
+
+Finally, we can compile the combined network. 
+``` Python 
+clf_w_adv.compile(loss='binary_crossentropy'), 
                   loss_weights=loss_weights,
                   optimizer='adam')
 ```
 
+With the classifier and combined classifier-adverserial model in place, the only thing missing is a compiled adversarial model. First we define the adversarial model to map from the classifier inputs to the outputs of the nested adversarial-classifier model. 
 ```Python 
-# Compile adversary with the classifier as inputs
 adv = Model(inputs=[clf_inputs], outputs=adv_net(clf_net(clf_inputs)))
-# Classifier is not trainable, adversary is
-trainable_clf_net(False)
-trainable_adv_net(True)
-adv.compile(loss=['binary_crossentropy']*n_sensitive, optimizer='adam')
 ```
+
+When training the adversarial model, we want to optimize the weights of the adversarial network and not of the classifier network, so we use our switch functions to make the adversarial trainable and the classifier not.
+```Python 
+trainable_clf_net(False) 
+trainable_adv_net(True)
+```
+
+Finally, we compile the adversarial model like a regular keras model.
+```Python 
+adv.compile(loss='binary_crossentropy', optimizer='adam')
+```
+
+With all pieces in hand, we can pre-train the classifier. This means we train the classifier without any special fairness considerations. 
 
 ```Python 
 trainable_clf_net(True)
 clf.fit(X_train.values, y_train.values, epochs=10)
 ```
 
-```Python 
-trainable_clf_net(False)
-trainable_adv_net(True)
-class_weight_adv = compute_class_weights(A_train)
-adv.fit(X_train.values, 
-        np.hsplit(A_train.values, A_train.shape[1]), 
-        class_weight=class_weight_adv,epochs=10)
-```
-
+After we have trained the model, we can make predictions on the validaton set to evaluate the models fairness and accuracy.
 ```Python 
 y_pred = clf.predict(X_test)
 ```
 
+Now we first calculate the models accuracy and p rule for both gender and race. In all calculations we use a cutoff point of 0.5.
 ```Python 
+acc = accuracy_score(y_test,(y_pred>0.5))* 100
+print('Clf acc: {:.2f}'.format(acc))
+
 for sens in A_test.columns:
     pr = p_rule(y_pred,A_test[sens])
     print('{}: {:.2f}%'.format(sens,pr))
 ```
 
 ```
+out: 
+Clf acc: 85.44
 race: 41.71%
 gender: 29.41%
 ```
 
-```Python
-def fit(x, y, a, validation_data, n_iter=250, batch_size=128):
-    n_sensitive = a.shape[1]
-    
-    x_val, y_val, a_val = validation_data
+As you can see, the classifier achieves a respectable accuracy in predicting incomes. However, it is deeply unfair. It gives women only 29.4% of the chance to make over \$50K than it does men. It equally discriminates strongly on race. If we used this classifier to judge loan applications for instance, we would be vulnerable to discrimination lawsuits.
 
-    class_weight_adv = compute_class_weights(a)
-    
-    class_weight_clf_w_adv = [{0:1., 1:1.}]+class_weight_adv
-    
-    val_metrics = pd.DataFrame()
-    
-    fairness_metrics = pd.DataFrame()
-    
-    for idx in range(n_iter): # Train for n epochs
-        
-        # train adverserial
-        trainable_clf_net(False)
-        trainable_adv_net(True)
-        adv.fit(x.values, np.hsplit(a.values, a.shape[1]), batch_size=batch_size, 
-                      class_weight=class_weight_adv, epochs=1, verbose=0)
-        
-        
-        # train classifier
-        # Make classifier trainable and adversery untrainable
-        trainable_clf_net(True)
-        trainable_adv_net(False)
-        # Sample batch
-        indices = np.random.permutation(len(x))[:batch_size]
-        # Train on batch
-        clf_w_adv.train_on_batch(x.values[indices], 
-                                [y.values[indices]]+np.hsplit(a.values[indices], n_sensitive),
-                                class_weight=class_weight_clf_w_adv)
-        
-        if validation_data is not None:
-            # Make validation data predictions
-            y_pred = pd.Series(clf.predict(x_val).ravel(), index=y_val.index)
-            
-            roc_auc = roc_auc_score(y_val, y_pred)
-            acc = accuracy_score(y_val, (y_pred>0.5))*100
-            # Calculate ROC and accuracy
-            val_metrics.loc[idx, 'ROC AUC'] = roc_auc
-            val_metrics.loc[idx, 'Accuracy'] = acc
-            
-            # Calculate p rule
-            for sensitive_attr in a_val.columns:
-                fairness_metrics.loc[idx, sensitive_attr] = p_rule(y_pred,a_val[sensitive_attr])
-                
-            print('Epoch: {}, Accuracy: {:.2f}, Race P: {:.2f}, Gender P: {:.2f}'.format(idx,
-                                                                                         acc, 
-                                                                                         fairness_metrics.loc[idx, 'race'],
-                                                                                         fairness_metrics.loc[idx, 'gender']))
-            
-    return val_metrics,fairness_metrics
+Note: Neither gender or race were included in the features of the classifier. Yet, the classifier discriminates strongly on them. If the features can be inferred, dropping sensitive columns is not enough.
+
+
+To get out of this mess, we will pre train the adversarial network before then training both networks to make fair predictions. Once again, we use our switch functions to make the classifier untrainable and the adversarial trainable.
+```Python 
+trainable_clf_net(False)
+trainable_adv_net(True)
+```
+As the distributions for race and gender in the data might be skewed, we use weighted classes to adjust for this.
+```Python
+class_weight_adv = compute_class_weights(A_train)
+```
+
+We then train the adversary to predict race and gender from the training data through the predictions of the classifier. 
+```Python 
+adv.fit(X_train.values, 
+        np.hsplit(A_train.values, A_train.shape[1]), 
+        class_weight=class_weight_adv, epochs=10)
+```
+Numpy's `hsplit` function splits the 2D matrix A_train into two vectors that are then used to train the two model heads.
+
+With classifier and adversarial pre trained, we will now train the classifier to fool the adversarial and the adversarial to get better at spotting the classifiers discrimination. Before we start, we need to do some setup.
+
+We want to train for 250 epochs, with a batch size of 128. There are two sensitive attributes.
+```Python 
+n_iter=250
+batch_size=128
+n_sensitive = A_train.shape[1]
+```
+
+The combined network of classifier and adversarial also needs some class weights. The weights for the income predictions (less / more than \$50K) are both 1. For the adverserial heads of the combined model we use the adversrial's class weights computed above.
+```Python 
+class_weight_clf_w_adv = [{0:1., 1:1.}]+class_weight_adv
+```
+
+To keep track of metrics, we set up one dataframe for validation metrics (accuracy and area under curve), as well as for fairness metrics. The fairness metrics are the p rule values for race and gender.
+```Python 
+val_metrics = pd.DataFrame()
+fairness_metrics = pd.DataFrame()
+```
+
+Inside the main training loop, three steps are performed. Training the adverserial, training the classifier to be fair and printing out validation metrics. For better explanations, all three are printed separately here. In the code you will find them in the same loop
+```Python 
+for idx in range(n_iter):
+
+    # train adverserial
+    trainable_clf_net(False)
+    trainable_adv_net(True)
+    adv.fit(X_train.values, 
+            np.hsplit(A_train.values, A_train.shape[1]), 
+            batch_size=batch_size, 
+            class_weight=class_weight_adv, 
+            epochs=1, verbose=0)
 ```
 
 ```Python 
-# adverserial train on train set and validate on test set
-vm, fm = fit(X_train, y_train, A_train,
-             validation_data=(X_test, y_test, A_test),n_iter=165)
+    # train classifier
+    # Make classifier trainable and adversery untrainable
+    trainable_clf_net(True)
+    trainable_adv_net(False)
+    # Sample batch
+    indices = np.random.permutation(len(X_train))[:batch_size]
+    # Train on batch
+    clf_w_adv.train_on_batch(X_train.values[indices], 
+                            [y_train.values[indices]]+\
+                            np.hsplit(A_train.values[indices], n_sensitive),
+                            class_weight=class_weight_clf_w_adv)
+
+    
+    # Make validation data predictions
+    y_pred = pd.Series(clf.predict(X_test).ravel(), index=y_test.index)
+
+    roc_auc = roc_auc_score(y_test, y_pred)
+    acc = accuracy_score(y_test, (y_pred>0.5))*100
+    # Calculate ROC and accuracy
+    val_metrics.loc[idx, 'ROC AUC'] = roc_auc
+    val_metrics.loc[idx, 'Accuracy'] = acc
+
+    # Calculate p rule
+    for sensitive_attr in A_test.columns:
+        fairness_metrics.loc[idx, sensitive_attr] =\
+        p_rule(y_pred,A_test[sensitive_attr])
+
+    print('Epoch: {}, Accuracy: {:.2f}, Race P: {:.2f}, \
+    Gender P: {:.2f}'.format(idx,acc,
+    fairness_metrics.loc[idx, 'race'],
+    fairness_metrics.loc[idx, 'gender']))
 ```
 
 # Beyond observational fairness 
