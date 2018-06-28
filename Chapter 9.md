@@ -363,56 +363,141 @@ val_metrics = pd.DataFrame()
 fairness_metrics = pd.DataFrame()
 ```
 
-Inside the main training loop, three steps are performed. Training the adverserial, training the classifier to be fair and printing out validation metrics. For better explanations, all three are printed separately here. In the code you will find them in the same loop
+Inside the main training loop, three steps are performed. Training the adverserial, training the classifier to be fair and printing out validation metrics. For better explanations, all three are printed separately here. In the code you will find them in the same loop, where `idx` is the current iteration:
 ```Python 
 for idx in range(n_iter):
-
-    # train adverserial
-    trainable_clf_net(False)
-    trainable_adv_net(True)
-    adv.fit(X_train.values, 
-            np.hsplit(A_train.values, A_train.shape[1]), 
-            batch_size=batch_size, 
-            class_weight=class_weight_adv, 
-            epochs=1, verbose=0)
 ```
+
+The first step is to train the adversarial. To this end, we make the classifier untrainable, the adversarial trainable and then train the adversarial just as we did before.
+```Python 
+trainable_clf_net(False)
+trainable_adv_net(True)
+adv.fit(X_train.values, 
+        np.hsplit(A_train.values, A_train.shape[1]), 
+        batch_size=batch_size, 
+        class_weight=class_weight_adv, 
+        epochs=1, verbose=0)
+```
+
+Training the classifier to be a good classifier but also to fool the adversarial and be fair involves three steps. First, we make the adverserial untrainable and the classifier trainable.
+```Python 
+trainable_clf_net(True)
+trainable_adv_net(False)
+```
+
+We then sample a batch from X, y and A.
+```Python 
+indices = np.random.permutation(len(X_train))[:batch_size]
+X_batch = X_train.values[indices]
+y_batch = y_train.values[indices]
+A_batch = A_train.values[indices]
+```
+
+Finally, we train the combined adversarial and classifier. Since the adversarial network is set to not trainable, only the classifier network will be trained. However, the loss from the adversarial predictions of race and gender get back-propagated through the entire network, so that the classifier learns to fool the adversarial.
+```Python 
+clf_w_adv.train_on_batch(X_batch, 
+                        [y_batch]+\
+                        np.hsplit(A_batch, n_sensitive),
+                        class_weight=class_weight_clf_w_adv)
+```
+
+Finally, we keep track of progress by first making predictions on the test set.
+```Python   
+y_pred = pd.Series(clf.predict(X_test).ravel(), index=y_test.index)
+```
+
+We then calculate area under cure (ROC AUC) and accuracy of the predictions and save them in the `val_metrics` dataframe.
+```Python 
+roc_auc = roc_auc_score(y_test, y_pred)
+acc = accuracy_score(y_test, (y_pred>0.5))*100
+
+val_metrics.loc[idx, 'ROC AUC'] = roc_auc
+val_metrics.loc[idx, 'Accuracy'] = acc
+```
+
+Next up, we calculate the p rule for both race and gender, and save those values in the fairness metrics.
+```Python 
+for sensitive_attr in A_test.columns:
+    fairness_metrics.loc[idx, sensitive_attr] =\
+    p_rule(y_pred,A_test[sensitive_attr])
+```
+
+If we plot fairness and validation metrics, we arrive at the following plot:
+![Pivot train progress](./assets/pivot_train_progress.png)
+
+As you can see, the fairness scores of the classifier steadily increase with training. After about 150 epochs, the classifier satisfies the four fifths rule. After about 150 epochs, p values are well over 90%. This increase in fairness comes at only a small decrease in accuracy and area under curve. The classifier trained in this manner is clearly a more fair classifier with similar performance, and thus preferred a classifier trained without fairness criteria.
+
+The pivot approach to fair ML has many advantages. Yet, it can not rule out unfairness entirely. What, for example if there was a group the classifier discriminates against that we did not think of yet. What, if it discriminates on treatment, instead of impact. To make sure our models are not biased, we need more technical and social tools, namely interpretability, causality and diverse development teams. The next section discusses how to train machine learning models which learn causal relationships, instead of just statistical associations.
+
+# Causal learning 
+This book is by and large a book about statistical learning. Given data $X$ and targets $Y$, we aim to estimate $p(y|x)$, the distribution of target values given certain data points. Statistical learning allows is to create great models with useful applications, but it does not allow us to claim that $X$ being $x$ _caused_ $Y$ to be $y$. 
+
+This is critical if we intent to manipulate $X$. For instance, if we want to know if giving an insurance to someone leads to them behaving recklessly, we are not satisfied with the statistical relationship that people with an insurance behave more reckless than those without. There could be a self selection bias of the reckless people getting insurance while the others do not. 
+
+Following Judea Perl, a famous computer scientist who invented notation for causal models called do calculus, we are interested in $p(y|do(p))$. The probability of someone behaving reckless after we manipulated $P$ to be $p$. In a causal notation, $X$ usually stands for observed features and $P$ stands for policy features we can manipulate.
+
+$p(y|x)$ expresses the statistical relationship that insurance holders are more reckless on average. This is what supervised models learn.
+
+$p(y|do(p))$ expresses the causal relationship that people who get an insurance become more reckless because they are insured. This is what this section is about.
+
+Causal models are a great tool for fair learning. If we only build our models in a causal way, we avoid most statistical discrimination of statistical models. Do females statistically earn less than males? Yes. Do females earn less _because_ they are females and females are somehow deterring high salaries? No. Instead, the earnings difference is caused by other factors, such as different jobs being offered to males and females, discrimination in the work place, cultural stereotypes and so on. 
+
+That does not mean we have to throw statistical models out of the window. They are great for the many cases where causality is not as important and where we do not intent to set the values of $X$. If we are creating a natural language model for instance, we are not interested in if the occurrence of a word caused the sentence to be about a certain topic. Knowing that the topic and the word are related is enough to make predictions about the text content.
+
+The golden route to obtain information about $do(p)$ is to actually go and manipulate the policy $P$ in a randomized control trial. Many websites for instance measure the impact of different ads by showing different ads to different customers, a process called A/B testing. Equally, a trader might choose different routes to market to figure out which one is the best. But it is not always possible or ethical to do an A/B test. A bank for example can not deny a loan with the explanation 'sorry, but you are the control group'.
+
+Yet, often causal inference can be made without the need for an A/B test. Using do calculus, we can infer the effect of our policy on our outcome. 
+
+Take the insurance wondering if giving people insurance makes them reckless, the applicants moral hazard, for example. Given features $X$ and a policy $P$, we want to predict the outcome distribution $p(y|do(p),x)$. That is, given observed information about the applicant, e.g. age or history of risky behavior, we want to predict if the probability of the applicant behaving reckless $p(y)$ given that we manipulate the policy $P$ of granting insurance. The observed features often end up influencing both policy and response. An applicant with a high risk appetite might for example not be given insurance, but might also be more likely to behave reckless.
+
+Additionally, we have to deal with unobserved, confounding variables $e$ which often influence both policy and response. A prominent media article titled 'Free-style skiing is safe and you should not get insurance' for example would reduce the number of people taking insurance as well as the number of reckless skiers. 
+
+To distinguish the influence on policy and response, we need access to an instrument $Z$. An instrument is a variable that influences the policy, but nothing else. The re-insurance cost for example could prompt the insurance company to give out fewer insurances, while it will not influence how people behave otherwise. 
+
+![Causal Flowchart](./assets/causal_flowchart.png)
+
+The field of econometrics has already built a method to work with these kinds of situations called two stage least squares (2SLS). In a nutshell, 2SLS first fits a linear regression model between the instrument $z$ and the policy $p$, in econometrics called the endogenous or treatment variable. From this liner regression it then estimates an 'adjusted treatment variable' $\hat p$, which is the treatment variable as it can be explained by the instrument. The idea is that this adjustment removes the influence of all other factors on the treatment. A second linear regression then creates a linear model mapping from the features $x$ and the adjusted treatment variable $\hat p$ to the outcome, $y$.
+
+2SLS is probably what the insurance company in our case would use, since it is an established method We won't go into details here, but just give a brief overview of how to use 2SLS in Python. The `linearmodels` package in Python features an easy way to run 2SLS. You can find the package on GitHub: https://github.com/bashtage/linearmodels
+
+Install the package with `pip install linearmodels`. If you have data `X`,`y`,`P`,`Z`, you can run a 2SLS regression as follows:
 
 ```Python 
-    # train classifier
-    # Make classifier trainable and adversery untrainable
-    trainable_clf_net(True)
-    trainable_adv_net(False)
-    # Sample batch
-    indices = np.random.permutation(len(X_train))[:batch_size]
-    # Train on batch
-    clf_w_adv.train_on_batch(X_train.values[indices], 
-                            [y_train.values[indices]]+\
-                            np.hsplit(A_train.values[indices], n_sensitive),
-                            class_weight=class_weight_clf_w_adv)
-
-    
-    # Make validation data predictions
-    y_pred = pd.Series(clf.predict(X_test).ravel(), index=y_test.index)
-
-    roc_auc = roc_auc_score(y_test, y_pred)
-    acc = accuracy_score(y_test, (y_pred>0.5))*100
-    # Calculate ROC and accuracy
-    val_metrics.loc[idx, 'ROC AUC'] = roc_auc
-    val_metrics.loc[idx, 'Accuracy'] = acc
-
-    # Calculate p rule
-    for sensitive_attr in A_test.columns:
-        fairness_metrics.loc[idx, sensitive_attr] =\
-        p_rule(y_pred,A_test[sensitive_attr])
-
-    print('Epoch: {}, Accuracy: {:.2f}, Race P: {:.2f}, \
-    Gender P: {:.2f}'.format(idx,acc,
-    fairness_metrics.loc[idx, 'race'],
-    fairness_metrics.loc[idx, 'gender']))
+from linearmodels.iv import IV2SLS
+iv = IV2SLS(dependent=y,
+            exog=X,
+            endog=P],
+            instruments=Z).fit(cov_type='unadjusted')
 ```
 
-# Beyond observational fairness 
+But what if the relationships between features, treatment and outcome are complex and non-linear? We would have perform a process similar to 2SLS, but with a non-linear model such as a neural network instead of linear regression.
 
+Ignoring the confounding variables for a minute, The function $g$ determines the recklessness of behavior $y$ given an insurance policy $p$ and a set of applicants features $x$.
+$$y = g(p,x)$$ 
+
+The function $f$ determines the policy $p$ given the applicants features $x$ as well as the instrument $z$.
+
+$$p = f(x,z)$$
+
+Given these two functions, the following identity holds,if the confounding variable has a mean of zero over all features $x$:
+
+$$
+\mathbb{E}[y|x,z] = \mathbb{E}[g(p,x)|x,z] = 
+\int{g(p,x)}dF(p|x,z)
+$$
+
+This means that if we can reliably estimate the function $g$ and distribution $F$, we can make causal statements about the effects of policy $p$. If we have data about the actual outcome $y$, features $x$, policy $p$ and instrument $z$, we can optimize the following:
+
+$$
+\min_{g \in G} \sum_{t=1}^n 
+\Big{(}y_t - \int g(p,x_t)dF(p|x,z)\Big{)}^2
+$$
+
+The function above is the squared error between the predicted outcome using the prediction function $g$ and the actual outcome $y$.
+
+
+
+# Interpreting models to ensure fairness
 - Interpretability
 https://geomblog.github.io/fairness/
 - Causal ML
