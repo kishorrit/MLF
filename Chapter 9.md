@@ -456,7 +456,9 @@ To distinguish the influence on policy and response, we need access to an instru
 
 ![Causal Flowchart](./assets/causal_flowchart.png)
 
-The field of econometrics has already built a method to work with these kinds of situations called two stage least squares (2SLS). In a nutshell, 2SLS first fits a linear regression model between the instrument $z$ and the policy $p$, in econometrics called the endogenous or treatment variable. From this liner regression it then estimates an 'adjusted treatment variable' $\hat p$, which is the treatment variable as it can be explained by the instrument. The idea is that this adjustment removes the influence of all other factors on the treatment. A second linear regression then creates a linear model mapping from the features $x$ and the adjusted treatment variable $\hat p$ to the outcome, $y$.
+The field of econometrics has already built a method to work with these kinds of situations called instrumental variables two stage least squares (IV2SLS or just 2SLS). In a nutshell, 2SLS first fits a linear regression model between the instrument $z$ and the policy $p$, in econometrics called the endogenous or treatment variable. From this liner regression it then estimates an 'adjusted treatment variable' $\hat p$, which is the treatment variable as it can be explained by the instrument. The idea is that this adjustment removes the influence of all other factors on the treatment. A second linear regression then creates a linear model mapping from the features $x$ and the adjusted treatment variable $\hat p$ to the outcome, $y$. In the image below you can see an overview of how 2SLS works.
+
+![IV2SLS](./assets/IV2SLS.png)
 
 2SLS is probably what the insurance company in our case would use, since it is an established method We won't go into details here, but just give a brief overview of how to use 2SLS in Python. The `linearmodels` package in Python features an easy way to run 2SLS. You can find the package on GitHub: https://github.com/bashtage/linearmodels
 
@@ -479,7 +481,7 @@ The function $f$ determines the policy $p$ given the applicants features $x$ as 
 
 $$p = f(x,z)$$
 
-Given these two functions, the following identity holds,if the confounding variable has a mean of zero over all features $x$:
+Given these two functions, the following identity holds, if the confounding variable has a mean of zero over all features:
 
 $$
 \mathbb{E}[y|x,z] = \mathbb{E}[g(p,x)|x,z] = 
@@ -495,7 +497,21 @@ $$
 
 The function above is the squared error between the predicted outcome using the prediction function $g$ and the actual outcome $y$.
 
+Notice the similarity to 2SLS. In 2SLS, we estimated $F$ and $g$ with two separate linear regressions. For more complex functions we can also estimate them with two separate neural networks. Hartfort et al. (2017) present just such an approach with 'Deep IV: A Flexible Approach for Counterfactual Prediction', the overview of which you can see below.
 
+![DeepIV](./assets/DeepIV.png)
+
+The idea of DeepIV is to first train a neural network to express a distribution $F(z,x)$ which describes the distribution of policies given certain features $x$ and instrument values $z$. A second neural network predicting the response $y$ from the estimated policy distribution and features. DeepIV's advantage is that it can learn complex, non linear relationships from complex data, such as text.
+
+The authors published a custom Keras model to handle the sampling and learning from a distribution part, which you can find on GitHub: https://github.com/jhartford/DeepIV
+
+While their code is too long to be discussed in depth here, it is interesting to think about what the source of our causal claim is, both in DeepIV and IV2SLS. In our insurance case, we assumed that having or not having an insurance would influence behavior, not the other way around. We never showed or tested the truth behind this direction of causality. In our case, assuming that insurance influences behavior is justified, since the insurance contract is signed before the behavior is observed. But the direction of causality is not always as straightforward. There is no way to establish the direction of causality other than logical reasoning or experiments. In absence of experiments, we have to assume and logically reason, for example through the sequentiality of events. 
+
+Another important assumption we make is that the instrument is actually an independent instrument. If it is not independent, our estimation of the policy breaks down.
+
+With these two limitations in mind, causal inference is a great tool and an active area of research from which we can hope to see great results in the future. In the best case, your discrimination sensitive models would only contain causal variables. In practice this is usually not possible. But keeping the difference between statistical correlation, as expressed by standard statistical models and causation in mind can help you avoid statistical biases and wrong associations. 
+
+A final, technical, method to reduce unfairness is to peek inside the model to ensure it is fair. We already looked at interpretability in the last chapter, mostly to debug data and spot overfitting. Now, we will give it another look, this time to justify the models predictions.
 
 # Interpreting models to ensure fairness
 - Interpretability
