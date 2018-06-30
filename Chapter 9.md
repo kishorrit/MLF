@@ -434,7 +434,7 @@ This book is by and large a book about statistical learning. Given data $X$ and 
 
 This is critical if we intent to manipulate $X$. For instance, if we want to know if giving an insurance to someone leads to them behaving recklessly, we are not satisfied with the statistical relationship that people with an insurance behave more reckless than those without. There could be a self selection bias of the reckless people getting insurance while the others do not. 
 
-Following Judea Perl, a famous computer scientist who invented notation for causal models called do calculus, we are interested in $p(y|do(p))$. The probability of someone behaving reckless after we manipulated $P$ to be $p$. In a causal notation, $X$ usually stands for observed features and $P$ stands for policy features we can manipulate.
+Following Judea Perl, a famous computer scientist who invented notation for causal models called do calculus, we are interested in $p(y|do(p))$. The probability of someone behaving reckless after we manipulated $P$ to be $p$. In a causal notation, $X$ usually stands for observed features and $P$ stands for policy features we can manipulate. The notation can be a bit confusing as small $p$ now both expresses a probability and a policy. Yet, it is important to distinguish between observed and influenced features. So, if you see $do(p)$, $p$ is a feature which is influenced, and if you see $p(..)$, $p$ is a probability function.
 
 $p(y|x)$ expresses the statistical relationship that insurance holders are more reckless on average. This is what supervised models learn.
 
@@ -514,6 +514,161 @@ With these two limitations in mind, causal inference is a great tool and an acti
 A final, technical, method to reduce unfairness is to peek inside the model to ensure it is fair. We already looked at interpretability in the last chapter, mostly to debug data and spot overfitting. Now, we will give it another look, this time to justify the models predictions.
 
 # Interpreting models to ensure fairness
-- Interpretability
-https://geomblog.github.io/fairness/
-- Causal ML
+In chapter 8 we already discussed model interpretability as a debugging method. We used LIME to spot features the model is overfitting to. In this section, we will use a slightly more sophisticated method called SHAP (SHapley Additive exPlanation). SHAP combines several different explanation approaches into one neat method. This method lets us generate explanations for individual predictions as well as for entire datasets to understand the model better.
+
+You can find SHAP on GitHub: https://github.com/slundberg/shap and install it locally with `pip install shap`. Kaggle Kernels have SHAP pre-installed. The example code given here is from the SHAP example notbooks, you can find a slightly extended version of the notebook on Kaggle: 
+https://www.kaggle.com/jannesklaas/explaining-income-classification-with-keras 
+
+SHAP combines seven model interpretation methods (LIME, Shapley sampling values, DeepLift, Quantitative Input Influence, Layer-wise relevance propagation, Shapley regression values and a tree interpreter) into two modules: A model agnostic `KernelExplainer` and a `TreeExplainer` specifically for tree based methods such as `XGBoost`.
+
+The mathematics of how and when the interpreters are used are not terribly relevant for using SHAP. In a nutshell, given a function $f$, expressed through a neural network for instance, and a datapoint $x$, SHAP compares $f(x)$ to $f(z)$ where $E[f(z)]$ is the 'expected normal output' generated for a larger sample. SHAP then creates smaller models, similar to LIME, to see which features explain the difference between $f(x)$ and $E[f(z)]$.
+
+In our loan example this corresponds to having an applicant $x$ and a distribution of many applicants $z$ and trying to explain why the chance of getting a loan for applicant $x$ is different than the expected chance chance for the other applicants $z$.
+
+SHAP does not only compare $f(x)$ and $f(z)$, but also compares $f(x)$ to $E[f(z)|z_{1,2,...} = x_{1,2,...}]$, meaning it compares the importance of other features of certain features are held constant. This allows it to better estimate the interactions between features. 
+
+Explaining a single prediction can be important. Your customers might ask you, why you denied them a loan, and if you have no good explanation, you might find yourself in a tough situation. In this example, we are once again working with the income prediction dataset. Explaining why our model made a single decision works in three steps.
+
+First, we need to define the explainer, provide it with a prediction method and values $z$ to estimate a 'normal outcome'. Here we are using a wrapper `f` for keras prediction function which makes working with SHAP easier. We provide 100 rows of the dataset as values for $z$.
+```Python 
+explainer = shap.KernelExplainer(f, X.iloc[:100,:])
+```
+Next, we need to calculate the SHAP values indicating the importance of different features for a single example. We let SHAP create 500 pertubations of each sample from $z$, so that SHAP has a total of 50,000 examples to compare the one example to.
+```Python 
+shap_values = explainer.shap_values(X.iloc[350,:], nsamples=500)
+```
+Finally, we can plot the influence of the features with SHAP's own plotting tool. This time we provide a row from `X_display`, not `X`. `X_display` contains the unscaled values and is only used for annonation of the plot to make it easier to read.
+```Python 
+shap.force_plot(shap_values, X_display.iloc[350,:])
+```
+
+![Shap good](./assets/shap_good.png)
+
+If you look at the plot above, the predictions of the model seem by and large reasonable. The model gives the applicant a high chance on a high income because he has a masters degree, is an executive manager with a high level of education who works 65 hours a week. The applicant could have an even higher expected income score was it not for a capital loss. Widely, the model seems to see the fact that the applicant is married as a big factor of a high income. The model sees the marriage as more important than the long hours or job title.
+
+That our model has some problems becomes clear once we calculate and plot the SHAP values of another applicant:
+```Python 
+shap_values = explainer.shap_values(X.iloc[167,:], nsamples=500)
+shap.force_plot(shap_values, X_display.iloc[167,:])
+```
+
+![SHAP bad](./assets/shap_bad.png)
+The applicant also has a good education, works 48 hours a week in technology, but the model gives her a much lower chance of having a high income because she is a female, asian-pacific islander who is especially never married and in no other family relationship. A loan rejection on these grounds is a lawsuit waiting to happen.
+
+Our two individual cases might have been unfortunate glitches by the model. It might have overfit to some strange combination which gives undue importance to marriage. To investigate if our model is biased, we should investiage many more predictions. Fortunately, the SHAP library has a number of tools to do so.
+
+We can use the SHAP value calculations for multiple rows:
+```Python 
+shap_values = explainer.shap_values(X.iloc[100:330,:], nsamples=500)
+```
+
+And plot a force plot for all of these values as well:
+```Python 
+shap.force_plot(shap_values, X_display.iloc[100:330,:])
+```
+
+![Shap Dataset](./assets/shap_dataset.png)
+
+The plot above shows 230 rows of the dataset, grouped by similarity with the forces of each feature that matter to them. If you move the mouse of the graph, you can read the features and their values. By exploring this graph, you can get an idea for what kind of people the model classifies as high or low earners. On the very left for example you see mostly people with low education who work as cleaners. The big red block between 40 and 60 are mostly highly educated people who work a lot. To further examine the impact of marriage status you can change what SHAP displays on the Y axis.
+
+![SHAP marriage outcome](./assets/shap_marriage_outcome.png)
+As you can see in this chart, marriage status either strongly positively or negatively impacts people from different groups. If you move your mouse over the chart, you can see that the positive influences all stem from civic marriages.
+
+Using a summary plot, we can see which features matter the most to our model:
+```Python 
+shap.summary_plot(shap_values, X.iloc[100:330,:])
+```
+![SHAP summary plot](./assets/shap_importance.png)
+
+As you can see, education is the most important influence in our model. It also has the widest spread of influence. A low education is really dragging predictions down while a strong education is really moving predictions up.
+
+Marital status is the second most important predictor. Interestingly, capital losses are important to the model but capital gains are not.
+
+To dig deeper into the effects of marriage, we have one more tool at our disposal: A dependence plot can show the SHAP values of an individual feature together with a feature for which SHAP suspects high interaction. With the snippet below we can inspect the effect of marriage on our models predictions.
+
+```Python 
+shap.dependence_plot("marital.status", 
+                     shap_values, 
+                     X.iloc[100:330,:], 
+                     display_features=X_display.iloc[100:330,:])
+```
+![SHAP Marriage dependence](./assets/shap_marriage_scatter.png)
+
+As you can see, 'Married-civ-spouse' the census code for a civilian marriage with no partner in the armed forces stands out with a positive influence on model outcomes while every other type of arrangement has slightly negative scores, especially never married. 
+
+Statistically, rich people tend to stay married for longer. Younger people are more likely to have never married. Our model correctly correlated that marriage goes hand in hand with high income, but not because marriage _causes_ high income. The model is correct in making the correlation, but it would be false to make decisions based on the model. By selecting, we effectively manipulate the features on which we select. We are no longer in interested in just $p(y|x)$ but in $p(y|do(p))$
+
+# Unfairness as complex system failure
+In this chapter you have been equipped with an arsenal of technical tools to make machine learning models more fair. But a model is not operating alone in vacuum. Models are embedded in complex socio-technical systems. There are humans developing and monitoring the model, sourcing the data and creating the rules for what to do with the model output. There are other machines in place, producing data, or using outputs from the model. Different players might try to game the system. 
+
+Unfairness is equally complex. We already discussed the two general definitions of unfairness, disparate impact and disparate treatment. Disparate treatment can occur against any combination of features (age, gender, race, nationality, income, etc.), often in complex and non-linear ways. This section examines Cook's 1998 'How complex systems fail' under the lense how complex machine learning driven systems fail to be fair. Cook lists 18 points, some all of which are discussed here:
+
+### Complex systems are intrinsically hazardous systems
+Systems are usually complex because they are hazardous and many safeguards have been created. The financial system is a hazardous system, if it goes off the rails it can break the economy or ruin peoples lives. Thus, many regulations have been created and many players in the market work to make the system safer. Since the financial system is so hazardous, it is important to make sure it is safe against unfairness, too. Luckily, there are heavy guards in place to keep the system fair. Naturally, these guards can break and they do so constantly in many small ways.
+
+### Catastrophes requires multiple failures
+In a complex system, no single point of failure can cause catastrophes since there are many guards in place. Failure usually results in multiple points of failure. In the financial crises, banks created risky products but regulators also let them. For widespread discrimination to happen, not only the model makes unfair predictions, but employees must blindly follow the model and criticism must be suppressed.  On the flip side, just fixing your model will not magically keep all unfairness away. The procedures and culture inside and outside the firm can also cause discrimination, even with a fair model.
+
+### Complex systems run in degraded mode 
+In most accident reports, there is a section in which a prior 'proto-accidents' where the same accident nearly happened but did not. The model might have made erratic predictions before, but a human operator stepped in for example. It is important to know, that in a complex system, failures that nearly lead to catastrophe always occur. The complexity of the system makes it prone to error but the heavy guards against catastrophe keep catastrophe from happening. Once these guards fail, catastrophe is right around the corner. Even if your system seems to run smoothly, check for proto-accidents and strange behavior before it is too late. 
+
+### Human operators both cause and prevent accidents 
+Once things have gone wrong, blame is often put at the human operators who 'must have known' that their behavior would 'inevitably' lead to accident. On the other hand, it is usually humans who step in last minute to prevent accidents from happening. Counterintuitively, it is rarely one human and one action that causes the accident, but the behavior of many humans over many actions. For models to be fair, the entire team has to work to keep it fair.
+
+### Accident free operation requires experience with failure 
+In fairness, the single biggest problem is often that the designers of a system do not experience if the system discriminates agains them. It is thus important to get the insights of a diverse group of people into the development process. Since your system constantly fails, you should capture the experiences of these small failures before bigger accidents happen.
+
+# A checklist for developing fair models 
+With the information above, we can create a short checklist of creating fair models. Each issue comes with several sub-issues.
+
+### What is the goal of the model developers?
+- Is fairness an explicit goal?
+- Is the model evaluation metric chosen to reflect fairness of the model?
+- How do model developers get promoted and rewarded?
+- How does model influence business results?
+- Would the model discriminate against the developer's demographic?
+- How diverse is the development team?
+- Who is responsible if things go wrong?
+
+### Is the data biased?
+- How was the data collected?
+- Are there statistical misrepresentations in the sample?
+- Are sample sizes for minorities adequate?
+- Are sensitive variables included?
+- Can sensitive variables be inferred from the data?
+- Are there interactions between features, which might only affect subgroups?
+
+### Are errors biased?
+- What are error rates for different sub groups?
+- What is the error rate of a simple, rule based alternative?
+- How do errors of the model lead to different outcomes?
+
+### How is feedback incorporated?
+- Is there an appeals / reporting process?
+- Can mistakes be attributed back to a model?
+- Do model developers get insight into what happens with their model's predictions?
+- Can the model be audited?
+- Is the model open source?
+- Do people know which features are used to make predictions about them?
+
+### Can the model be interpreted?
+- Is a model interpretation for e.g. individual results, in place?
+- Can the interpretation be understood by those it matters to?
+- Can findings from the interpretation lead to changes in the model?
+
+### What happens to models after deployment?
+- Is there a central repository to keep track of all models deployed?
+- Are input assumptions checked continuously? 
+- Are accuracy and fairness metrics monitored continuously? 
+
+# Exercises
+- Think about the organization you work for. How is fairness incorporated in your organization? What works well and what could be improved?
+- Revisit any of the models developed before in this book. Are they fair? How would you test it?
+- Fairness is only one of the many complex issues large models can have. Can you think of an issue in your area of work that could be tackled with the tools discussed in this chapter?
+
+# Summary 
+In this chapter, you have learned about fairness in machine learning under different aspects. First, we discussed legal definitions of fairness, and quantitative ways to measure these definitions. We then discussed technical methods to train models to meet fairness criteria. We also discussed causal models. We learned about SHAP as a powerful tool to interpret models and find unfairness in the model. Finally, we learned how fairness is a complex systems issue and how lessons from complex systems management can be applied to make models fair.
+
+There is no guarantee that following all steps outlines here makes your model fair. But these tools vastly increase your chances of creating a fair model. Remember that models in finance operate in high stakes environments, and need to meed many regulatory demands. If you fail to do so, damage could be severe.
+
+This chapter marks the end of this guide to machine learning in finance. Thank you for reading all the way through. Machine learning is a fast moving field with many exciting developments still to come. This guide hopes to give you an up to date, practical view on the matter, and to equip you with the tools you need in practice. Hopefully, you enjoyed this book and learned something new. If you did, please leave a good review on the platform of your choice or even your own blog.
