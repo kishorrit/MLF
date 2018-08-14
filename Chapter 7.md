@@ -1,1158 +1,1211 @@
-# Chapter 7
+# Chapter 6 Generative models
 
-Humans do not learn with million of labeled examples. Instead, we often learn from positive or negative experiences that we associate with our actions. Children that touch the hot stove once never touch it again. Learning from experiences and associated rewards or punishments is the core idea behind reinforcement learning (RL). RL allows us to learn sophisticated decision making rules with no data at all. This approach powered several high profile breakthroughs in AI, such as AlphaGo, which beat the world Go champion in 2016.
+Generative models generate new data. In a way, they are the exact opposite of the models we dealt with before. While an image classifier takes in a high dimensional input, the image, and outputs a low dimensional output such as the content of the image, a generative model goes exactly the other way around. It might for example draw images from the description of what is in them. So far, generative models are mostly used in image applications and they are still very experimental. Yet, there already have been several applications which caused uproar. In 2017, so called "DeepFakes" appeared on the internet. So called Generative Adversarial Models (GANs) which we will cover later in this chapter were used to generate pornographic videos featuring famous celebrities. The year before, researchers demoed a system in which they could generate videos of politicians saying anything the researcher wanted them to say, complete with realistic mouth movements and facial expressions. But there are positive applications as well. Generative models are especially useful if data is sparse. They can generate realistic data other models can train on. They can "translate" images, for example from satellite images to street maps. They can generate code from website screenshots. They can even be used to combat unfairness and discrimination in machine learning models. 
 
-In finance, reinforcement learning is making inroads as well. In its 2017 report "Machine learning in investment management", MAN AHL outlined a reinforcement system for order routing in the FX and futures market. Order routing is a classic problem in quantitative finance. When placing an order, funds can usually choose from different brokers and place their orders at different times. The goal is to fill the order as cheaply as possible. This also means minimizing the market impact, as large orders can lift prices of stocks. Traditional algorithms with colorful names as 'Sniper or 'Guerilla' rely on statistics from historical data and clever engineering. The RL based routing system learned an optimal routing policy by itself. The advantage is that this system can adapt to changing markets and outperforms traditional methods in data rich markets as the FX market. 
+In the field of finance, data is frequently sparse. Think about the fraud case from chapter 2. There were not that many frauds in the dataset, so the model had a hard time detecting frauds. Usually, engineers would create synthetic data, by thinking about how fraud could be done. Machine learning models can do this themselves however. And in the process, they might even discover some useful features for fraud detection.
 
-But RL can do more. Researchers at OpenAI have used RL to predict when agents will collaborate or fight. Researchers at Deepmind have used RL to yield new insights into the workings of the frontal cortex in the brain and the role of the dopamine hormone.
+In algorithmic trading, data is frequently generated in simulators. Want to know how your algorithm would do in a global selloff? There are not that many global selloffs thankfully, so engineers at quant firms spend a lot of time creating simulations of selloffs. These simulators are often biased by the engineers experience and their feelings about what a selloff should look like. But what if models could learn what a selloff fundamentally looks like, and then create data describing an infinite amount of selloffs?
 
-This chapter will start with an intuitive introduction to RL using a simple 'catch the fruit game'. We will then dive into the underlying theory and more advanced RL applications.
+# Understanding autoencoders
+Technically, autoencoders are not generative models since they can not create completely new kinds of data. Yet, variational autoencoders, a minor tweak to vanilla autonecoders, can. So it makes sense to first understand autoencoders by themselves, before adding the generative element. Autoencoders by themselves also have some interesting properties which can be exploited for applications like detecting credit card fraud. 
 
-The examples in this chapter rely on visualizations that are not easily rendered in Kaggle Kernels. The example algorithms are also not optimized for GPU usage to simplify them. It is therefore best to run these examples on your local machine. The algorithms run relatively fast so you won't have to wait too long for them to run.
+Given an input $x$, an autoencoder learns how to output $x$. It aims to find a function $f$ so that:
 
-# Catch! - A quick guide to reinforcement learning 
+$$x = f(x)$$
 
-Catch is a very simple arcade game, which you might have played as a child. Fruits fall from the top of the screen, and the player has to catch them with a basket. For every fruit caught, the player scores a point. For every fruit lost, the player loses a point.
+This might sound trivial at first, but the trick is that autoencoders have a bottleneck. The middle hidden layer size is smaller than the size of the input $x$. Therefore, the model has to learn a compressed representation that captures all important elements of $x$ in a smaller vector. 
 
-The goal here is to let the computer play Catch by itself. We will use a simplified version to make the task easier:
+![Autoncoder Scheme](./assets/autoencoder_scheme.png)
+Caption: Autoencoder Scheme
 
-![Catch Screenshot](./assets/catch_screenshot.png)
+This compressed representation aims to capture the 'essence' of the input. And that turns out to be useful. We might for example want to capture, what essentially distinguishes a fraudulent from a genuine transaction. Vanilla autoencoders accomplish something to standard principal component analysis (PCA): They allow us to reduce the dimensionality of our data and focus on what matters. But in contrast to PCA, autoencoders can be extended to generate more data of a certain type. They can better deal with image or video data since they can make use of the spatiality of data using convolutional layers. In this section, we will build two autoencoders. The first for hand written digits from the MNIST dataset. Generative models are easier to debug and understand for visual data because humans are intuitively good ad judging if two pictures show something similar, but less good at judging abstract data. We will then use the same autoencoder for a fraud detection task.
 
-While playing Catch, the player decides between three possible actions. They can move the basket to the left, to the right, or stay put.
+## Autoencoder for MNIST 
+Lets start with a simple autoencoder for the MNIST dataset of hand drawn digits. An MNIST image is 28 by 28 pixels and can be flattened into a vector of 784 (equals 28 * 28) elements. We will compress this into a vector with only 32 elements by using an autoencoder.
 
-The basis for this decision is the current state of the game. In other words: the positions of the falling fruit and of the basket.
+You can find the code for the MNIST autoencoder and variational autoencoder under the following URL:
+https://www.kaggle.com/jannesklaas/mnist-autoencoder-vae
 
-Our goal is to create a model, which, given the content of the game screen, chooses the action which leads to the highest score possible.
-
-This task can be seen as a simple classification problem. We could ask expert human players to play the game many times and record their actions. Then, we could train a model to choose the ‘correct’ action that mirrors the expert players.
-
-But this is not how humans learn. Humans can learn a game like Catch by themselves, without guidance. This is very useful. Imagine if you had to hire a bunch of experts to perform a task thousands of times every time you wanted to learn something as simple as Catch It would be expensive and slow.
-
-In reinforcement learning, the model trains from experience, rather than labeled data.
-
-Instead of providing the model with ‘correct’ actions, we provide it with rewards and punishments. The model receives information about the current state of the environment (e.g. the computer game screen). It then outputs an action, like a joystick movement. The environment reacts to this action and provides the next state, alongside with any rewards.
-
-RL SCHEME IMAGE
-
-The model then learns to find actions that lead to maximum rewards.
-
-There are many ways this can work in practice. Here, we are going to look at Q-Learning. Q-Learning made a splash when it was used to train a computer to play Atari games. Today, it is still a relevant concept. Most modern RL algorithms are some adaptation of Q-Learning.
-
-A good way to understand Q-learning is to compare playing Catch with playing chess.
-
-In both games you are given a state, $s$. With chess, this is the positions of the figures on the board. In Catch, this is the location of the fruit and the basket.
-
-The player then has to take an action, $a$. In chess, this is moving a figure. In Catch, this is to move the basket left or right, or remain in the current position.
-
-As a result, there will be some reward $r$, and a new state $s'$.
-
-The problem with both Catch and chess is that the rewards do not appear immediately after the action.
-
-In Catch, you only earn rewards when the fruits hit the basket or fall on the floor, and in chess you only earn a reward when you win or lose the game. This means that rewards are sparsely distributed. Most of the time, $r$ will be zero.
-
-When there is a reward, it is not always a result of the action taken immediately before. Some action taken long before might have caused the victory. Figuring out which action is responsible for the reward is often referred to as the credit assignment problem.
-
-Because rewards are delayed, good chess players do not choose their plays only by the immediate reward. Instead, they choose by the expected future reward.
-
-For example, they do not only think about whether they can eliminate an opponent’s figure in the next move. They also consider how taking a certain action now will help them in the long run.
-
-In Q-learning, we choose our action based on the highest expected future reward. We use a “Q-function” to calculate this. This is a math function that takes two arguments: the current state of the game, and a given action.
-
-We can write this as: $Q(state, action)$
-
-While in state $s$, we estimate the future reward for each possible action $a$. We assume that after we have taken action $a$ and moved to the next state $s'$, everything works out perfectly.
-
-The expected future reward $Q(s,a)$ for a given a state $s$ and action $a$ is calculated as the immediate reward $r$, plus the expected future reward thereafter $Q(s',a')$. We assume the next action $a'$ is optimal.
-
-Because there is uncertainty about the future, we discount $Q(s’,a’)$ by the factor gamma $\gamma$. We therefore arrive at an expected reward of:
-
-$$Q(s,a) = r + \gamma * \max Q(s’,a’)$$
-
-Note: We discount future rewards in RL for the same reason we discount future returns in finance. They are uncertain. Our choice of $\gamma$ reflects how much we value future returns.
-
-Good chess players are very good at estimating future rewards in their head. In other words, their Q-function $Q(s,a)$ is very precise.
-
-Most chess practice revolves around developing a better Q-function. Players peruse many old games to learn how specific moves played out in the past, and how likely a given action is to lead to victory.
-
-But how can a machine estimate a good Q-function? This is where neural networks come into play.
-
-## Q-Learning turns RL into supervised learning
-When playing a game, we generate lots of “experiences”. These experiences consist of:
-- The initial state, $s$
-- The action taken, $a$
-- The reward earned, $r$
-- And the state that followed, $s’$
-
-These experiences are our training data. We can frame the problem of estimating $Q(s,a)$ as a regression problem. To solve this, we can use a neural network.
-
-Given an input vector consisting of $s$ and $a$, the neural net is supposed to predict the value of $Q(s,a)$ equal to the target: $r + γ * max Q(s’,a’)$. If we are good at predicting $Q(s,a)$ for different states $s$ and actions $a$, we have a good approximation of the Q-function. 
-
-Note: We estimate $Q(s’,a’)$ through the same neural net as $Q(s,a)$. This leads to some instability as our targets now change as the networks learn. Just as with GANs.
-
-Given a batch of experiences $<s, a, r, s’>$, the training process then looks as follows:
-
-1. For each possible action $a’$ (left, right, stay), predict the expected future reward $Q(s’,a’)$ using the neural net.
-
-2. Choose the highest value of the three predictions as max $Q(s’,a’)$.
-
-3. Calculate $r + γ * max Q(s’,a’)$. This is the target value for the neural net.
-
-4. Train the neural net using a loss function. This is a function that calculates how near or far the predicted value is from the target value. Here, we will use $0.5 * (predicted_Q(s,a) — target)^2$ as the loss function.
-
-During gameplay, all the experiences are stored in a replay memory. This acts like a simple buffer in which we store $< s, a, r, s’ >$ pairs. The experience replay class also handles preparing the data for training. Check out the code below:
+We set the encoding dimensionality hyperparameter now so we can use it later:
 
 ```Python 
-class ExperienceReplay(object): #1
-    def __init__(self, max_memory=100, discount=.9):
-        #2
-        self.max_memory = max_memory
-        self.memory = []
-        self.discount = discount
+encoding_dim = 32 
+```
 
-    def remember(self, states, game_over): #3
-        self.memory.append([states, game_over])
-        if len(self.memory) > self.max_memory:
-            del self.memory[0]
+We construct the autoecoder using Keras functional API. While a simple autencoder could be constructed using the sequential API, it is a good refresher on how the functional API works.
 
-    def get_batch(self, model, batch_size=10): #4
-        #5
-        len_memory = len(self.memory)
-        num_actions = model.output_shape[-1]
-        env_dim = self.memory[0][0][0].shape[1]
+First, we import the `Model` class that allows us to create functional API models. We also need to import `Input` and `Dense` layers. Remember that the functional API needs a separate input layer while the sequential API does not need one.
+```Python 
+from keras.models import Model
+from keras.layers import Input, Dense
+```
+
+Now we are chaining up the autoencoder's layers: An `Input` layer, followed by a `Dense` layer which encodes the image to a smaller representation. This is followed by a decoding `Dense` layer which aims to reconstruct the original image.
+```Python 
+input_img = Input(shape=(784,))
+
+encoded = Dense(encoding_dim, activation='relu')(input_img)
+
+decoded = Dense(784, activation='sigmoid')(encoded)
+``` 
+
+After we have created and chained up the layers, we create a model which maps from the input to the decoded image.
+
+```Python 
+autoencoder = Model(input_img, decoded)
+``` 
+
+To get a better idea of what is going on, we can plot a visualization of the resulting autoencoder model. As of writing this code snippet will not work in Kaggle, but future versions of the Kaggle Kernels editor might change this
+
+```Python 
+from keras.utils import plot_model
+plot_model(autoencoder, to_file='model.png', show_shapes=True)
+```
+
+This is our autencoder:
+
+![Autoencoder Model](./assets/autoencoder_model.png)
+
+```Python 
+autoencoder.compile(optimizer='adadelta', loss='binary_crossentropy')
+```
+Caption: A simple autoencoder for MNIST
+
+To train this autoencoder, we use the X values as input and output:
+```Python 
+autoencoder.fit(X_train_flat, X_train_flat,
+                epochs=50,
+                batch_size=256,
+                shuffle=True,
+                validation_data=(X_test_flat, X_test_flat))
+```
+After we train this autoencoder, we can visually inspect how well it is doing. We first extract a single image from the test set. We need to add a batch dimension to this image to run it through the model, which is what we use `np.expand_dims` for. 
+
+```Python 
+original = np.expand_dims(X_test_flat[0],0)
+```
+Now, we run the original image through the autoencoder. The original image shows a seven, so we should hope that the output of our autoencoder shows a seven as well:
+```Python 
+seven = autoencoder.predict(original)
+```
+
+We now reshape both the autoencoder output as well as the original image back into 28 by 28 pixel images.
+```Python 
+seven = seven.reshape(1,28,28)
+original = original.reshape(1,28,28)
+```
+
+We plot the original and reconstructed image next to each other. `matplotlib` does not allow the image to have a batch dimension, so we need to pass an array without it. By indexing the images with `[0,:,:]` we pass only the first item in the batch with all pixels. This first item has no batch dimension anymore.
+```Python 
+fig = plt.figure(figsize=(7, 10))
+a=fig.add_subplot(1,2,1)
+a.set_title('Original')
+imgplot = plt.imshow(original[0,:,:])
+
+b=fig.add_subplot(1,2,2)
+b.set_title('Autoencoder')
+imgplot = plt.imshow(seven[0,:,:])
+```
+
+![Autoencoder result](./assets/seven_autoencoded.png)
+
+As you can see, the reconstructed seven is still a seven, so the autoencoder did manage to capture the general idea of what a seven is. It is a bit blurry around the edges, especially in the top left. It seems as the autoencoder is unsure about the length of the dashes, but it has a strongly encoded representation that there are two dashes for a seven and the general direction they follow. 
+
+An autoencoder like this basically performs principal component analysis (PCA). It learns which components matter most for a seven to be a seven. Being able to learn this representation is useful not only for images. In credit card fraud detection for example, such principal components make for good features another classifier can work with. In the next section we will apply an autoencoder to the credit card fraud problem.
+
+## Auto encoder for credit cards
+
+In this section, we will once again deal with the problem of credit card fraud. This time, we will use a slightly different dataset from that in chapter 1. The new dataset contains records of actual credit card transactions with anonymized features. The dataset does not lend itself to much feature engineering. We will have to rely on end to end learning methods to build a good fraud detector. 
+
+You can find the dataset under the following URL:
+https://www.kaggle.com/mlg-ulb/creditcardfraud
+
+And the notebook with an implementation of an autoencoder and variational autoencoder under this URL:
+https://www.kaggle.com/jannesklaas/credit-vae
+
+As usual, we first load the data. The time feature shows the absolute time of the transaction which makes it a bit hard to deal with here. So we will just drop it.
+```Python 
+df = pd.read_csv('../input/creditcard.csv')
+df = df.drop('Time',axis=1)
+``` 
+
+We separate the X data on the tansaction from the classification of the transaction and extract the numpy array that underlies the pandas dataframe.
+
+```Python
+X = df.drop('Class',axis=1).values 
+y = df['Class'].values
+```
+
+Now we need to scale the features. Feature scaling makes it easier for our model to learn a good representation of the data. This time around, we employ a slightly different method of feature scaling than before: We scale all features to be in between zero and one, as opposed to having mean zero and a standard deviation of one. This ensures that there are no very high or very low values in the dataset. But beware, that this method is susceptible to outliers influencing the result. For each column, we first subtract the minimum value, so that the new minimum value becomes zero. We then divide by the maximum value so that the new maximum value becomes one. By specifying `axis=0` we perform the scaling column wise.
+
+```Python 
+X -= X.min(axis=0)
+X /= X.max(axis=0)
+```
+
+Finally, we split our data:
+```Python
+from sklearn.model_selection import train_test_split
+X_train, X_test, y_train,y_test = train_test_split(X,y,test_size=0.1)
+```
+
+We we create the exact same autoencoder as we did before, just with different dimensions. Our input now has 29 dimensions, which we compress down to 12 dimensions before aiming to restore the original 29 dimensional output.
+```Python 
+from keras.models import Model
+from keras.layers import Input, Dense
+```
+
+You will notice that we are using the sigmoid activation function in the end. This is only possible because we scaled the data to have values between zero and one. We are also using a tanh activation of the encoded layer. This is just a style choice that worked well in experiements and ensures that encoded values are all between minus one and one. You might use different activations functions depending on your need. If you are working with images or deeper networks, a relu activation is usually a good choice. If you are working with a more shallow network as we are doing here, a tanh activation often works well.
+```Python 
+data_in = Input(shape=(29,))
+encoded = Dense(12,activation='tanh')(data_in)
+decoded = Dense(29,activation='sigmoid')(encoded)
+autoencoder = Model(data_in,decoded)
+```
+
+We use a mean squared error loss. This is a bit of an unusual choice at first, using a sigmoid activation with a mean squared error loss, yet it makes sense. Most people think that sigmoid activations have to be used with a crossentropy loss. But crossentropy loss encourages values to be either zero or one and works well for classification tasks where this is the case. But in our credit card example, most values will be around 0.5. Mean squared error is better at dealing with values where the target is not binary, but on a spectrum.
+```Python
+autoencoder.compile(optimizer='adam',loss='mean_squared_error')
+```
+
+After training, the autoencoder converges to a low loss. 
+```Python
+autoencoder.fit(X_train,
+                X_train,
+                epochs = 20, 
+                batch_size=128, 
+                validation_data=(X_test,X_test))
+```
+
+The reconstruction loss is low, but how do we know if our autoecoder is doing good? Once again, visual inspection to the rescue. Humans are very good at judging things visually, but not very good at judging abstract numbers. 
+
+We will first make some predictions, in which we run a subset of our test set through the autoencoder. 
+```Python 
+pred = autoencoder.predict(X_test[0:10])
+```
+
+We can then plot indivdual samples. The code below produces an overlaid barchart comparing the original transaction data with the reconstructed transaction data.
+```Python 
+import matplotlib.pyplot as plt
+import numpy as np
+
+width = 0.8
+
+prediction   = pred[9]
+true_value    = X_test[9]
+
+indices = np.arange(len(prediction))
+
+fig = plt.figure(figsize=(10,7))
+
+plt.bar(indices, prediction, width=width, 
+        color='b', label='Predicted Value')
+
+plt.bar([i+0.25*width for i in indices], true_value, 
+        width=0.5*width, color='r', alpha=0.5, label='True Value')
+
+plt.xticks(indices+width/2., 
+           ['V{}'.format(i) for i in range(len(prediction))] )
+
+plt.legend()
+
+plt.show()
+```
+
+![Autoencoder results](./assets/autoencoder_results.png)
+
+Caption: Autoncoder reconstruction vs original data.
+
+As you can see, our model does a fine job at reconstructing the original values. The visual inspection gives more insight than the abstract number.
+
+# Visualizing latent spaces with t-SNE 
+We now have a neural network that takes in a credit card transaction, and outputs a credit card transaction that looks more or less the same. But that is of course not why we built the autoecoder. The main advantage of an autoencoder is that we can now encode the transaction into a lower dimensional representation which captures the main elements of the transaction. To create the encoder model, all we have to do is to define a new Keras model, that maps from the input to the encoded state: 
+
+```Python 
+encoder = Model(data_in,encoded)
+```
+
+Note that you don't need to train this model again. The layers keep the weights from the autoencoder which we have trained before. 
+
+To encode our data, we now use the encoder model:
+
+```Python 
+enc = encoder.predict(X_test)
+```
+
+But how would we know if these encodings contain any meaningful information about fraud? Once again, visual representation is key. While our encodings are lower dimensional than the input data, they still have twelve dimensions. It is impossible for humans to think about twelve dimensional space, so we need to draw our encodings in a lower dimensional space while still preserving the characteristics we care about. 
+
+In our case, the characteristic we care about is _proximity_. We want points that are close to each other in the twelve dimensional space to be close to each other in the two dimensional plot. More precisely, we care about neighborhood, we want that the points that are closest to each other in the high dimensional space are also closest to each other in the low dimensional space. 
+
+Preserving neighborhood is relevant because we want to find clusters of fraud. If we find that fraudulent transactions form a cluster in our high dimensional encodings, we can use a simple check for if a new transaction falls into the fraud cluster to flag a transaction as fraudulent. 
+
+A popular method to project high dimensional data into low dimensional plots while preserving neighborhoods is called t-distributed stochastic neighbor embedding, or t-SNE. 
+
+In a nutshell, t-SNE aims to faithfully represent the probability that two points are neighbors in a random sample of all points. That is, it tries to find a low dimensional representation of the data in which points in a random sample have the same probability of being closest neighbors than in the high dimensional data. 
+
+
+
+![TSNE Info](./assets/tsne_info_one.png)
+Caption: How t-SNE measures similarity
+
+The t-SNE algorithm follows these steps:
+1. Calculate the _gaussian similarity_ between all points. This is done by calculating the euclidean (spatial) distance between points and the calculate the value of a gaussian curve at that distance, see graphic. The gaussian similarity for all points $j$ from point $i$ can be calculated as:
+
+$$p_{i|j} = \frac{exp(-||x_i-x_j||^2/2\sigma^2_i)}
+{\sum_{k \neq i} exp(-||x_i-x_k||^2/2\sigma^2_i)}$$
+
+Where $\sigma_i$ is the variance of the gaussian distribution. We will look at how to determine this variance later. Note that since the similarity between points $i$ and $j$ is scaled by the sum of distances between $i$ and all other points (expressed as $k$), the similarity between $i$ and $j$ ,$p_{i|j}$, can be different than the similarity between $j$ and $i$, $p_{j|i}$. Therefore, we average the two similarities to gain the final similarity which we work with going forward:
+
+$$p_{ij} = \frac{p_{i|j} + p_{j,i}}{2n}$$
+
+Where n is the number of datapoints.
+
+2. Randomly position the data points in the lower dimensional space.
+
+3. Calculate the _t-similarity_ between all points in the lower dimensional space. 
+
+$$q_{ij} = \frac{(1+||y_i - y_j||^2)^{-1}}
+{\sum_{k \neq l}(1+||y_k - y_l||^2)^{-1}}$$
+
+4. Just like in training neural networks, we will optimize the positions of the data points in the lower dimensional space by following the gradient of a loss function. The loss function in this case is the Kullback–Leibler (KL) divergence between the similarities in the higher and lower dimensional space. We will give the KL divergence a closer look in the section on variational autoencoders. For now, just think of it as a way to measure the difference between two distributions. The derivative of the loss function with respect to the position $y_i$ of a datapoint $i$ in the lower dimensional space is:
+
+$$\frac{d L}{dy_i} = 4 \sum{(p_{ij} − q_{ij})(y_i − y_j)}
+(1 + ||y_i − y_j||^2)^{-1}$$
+
+
+5. Adjust the data points in the lower dimensional space by using gradient descent. Moving points that were close in the high dimensional data closer together and moving points that were further away further from each other.
+
+$$y^{(t)} = y^{(t-1)} + \frac{d L}{dy} + \alpha(t) (y^{(t-1)} - y^{(t-2)})$$
+
+You will recognize this as a form of gradient descent with momentum, as the previous gradient is incorporated into the position update.
+
+The t-distribution used always has one degree of freedom. The choice of one degree of freedom leads to a simpler formula as well as some nice numerical properties that lead to faster computation and more useful charts.
+
+ The standard deviation of the gaussian distribution can be influenced by the user with a _perplexity_ hyperparameter. Perplexity can be interpreted as the number of neighbors we expect a point to have. A low perplexity value emphasizes local proximities while a large perplexity value emphasizes global perplexity values. Mathematically, perplexity can be calculated as 
+ 
+ $$Perp(P_i) = 2^{H(P_i)}$$
+
+Where $P_i$ is a probability distribution over the position of all data points in the dataset and $H(P_i)$ is the Shanon entropy of this distribution calculated as: 
+$$H(P_i) = - \sum{p_{j|i} log_2 p_{j|i}}$$
+
+While the details of this formula are not very relevant to using t-SNE, it is important to know that t-SNE performs a search over values of the standard deviation $\sigma$ so that it finds a global distribution $P_i$ for which the entropy over our data is our desired perplexity. In other words, you need to specify the perplexity by hand, but what that perplexity means for your dataset also depends on the dataset. 
+
+Van Maarten and Hinton, the inventors of t-SNE, report that the algorithm is relatively robust to choices of perplexity between five and 50. The default value in most libraries is 30, which is a fine value for most datasets. If you find that your visualizations are not satisfactory, tuning the perplexity value is probably the first thing you want to do.
+
+For all the math involved, using t-SNE is suprisingly simple. Scikit Learn has a handy t-SNE implementation which we can use just like any algorithm in scikit. We first import the `TSNE` class. Then we create a new `TSNE` instance. We define that we want to train for 5000 epochs, use the default perplexity of 30 and the default learning rate of 200. We also specify that we would like output during the training process. We then just call `fit_transform` which transforms our twelve dimensional encodings into two dimensional projections.
+
+```Python 
+from sklearn.manifold import TSNE
+tsne = TSNE(verbose=1,n_iter=5000)
+res = tsne.fit_transform(enc)
+```
+
+As a word of warning, t-SNE is quite slow as it needs to compute the distances between all the points. By default, sklearn uses a faster version of t-SNE called Barnes Hut approximation, which is not as precise but significantly faster already. 
+
+There is a faster python implementation of t-SNE which can be used as a drop in replacement of sklearn's implementation. It is not as well documented however and has fewer features. You can find the faster implementation with installation instructions under the following URL:
+https://github.com/DmitryUlyanov/Multicore-TSNE 
+
+We can plot our t-SNE results as a scatter plot. For illustration, we will distinguish frauds from non frauds by color, with frauds being plotted in red and non frauds being plotted in blue. Since the actual values of t-SNE do not matter as much we will hide the axis.
+```Python 
+fig = plt.figure(figsize=(10,7))
+scatter =plt.scatter(res[:,0],res[:,1],c=y_test, cmap='coolwarm', s=0.6)
+scatter.axes.get_xaxis().set_visible(False)
+scatter.axes.get_yaxis().set_visible(False)
+```
+
+![Credit Auto TSNE](./assets/credit_auto_tsne.png)
+
+For easier spotting the cluster containing most frauds is marked with a circle. You can see that the frauds nicely separate from the rest of the transactions. Clearly, our autoencoder has found a way to distinguish frauds from genuine transaction without being given labels. This is a form of unsupervised learning. In fact, plain autoencoders perform an approximation of PCA, which is useful for unsupervised learning. In the chart you can see a few more clusters which are clearly separate from the other transactions but which are not frauds. Using autoencoders and unsupervised learning it is possible to separate and group our data in ways we did not even think about as much before. For example we might be able to cluster transactions by purchase type.
+
+Using our autoencoder, we could now use the encoded information as features for a classifier. But even better, with only a slight modification of the autoencoder, we can generate more data that has the underlying properties of a fraud case while having different features. This is done with a variational autoencoder which we will look at in the next section.
+
+# Variational Autoencoders
+Autoencoders are basically an approximation for PCA. However, they can be extended to become generative models. Given an input, variational autoencoders (VAEs) can create encoding _distributions_. This means, that for a fraud case, the encoder would produce a distribution of possible encodings which all represent the most important characteristics of the transaction so that the decoder could turn all encodings back into the original transaction. This is useful, since it allows us to generate data about transactions. One 'problem' of fraud detection is that there are not all that many fraudulent transactions. Using a variational autoencoder, we can sample any amount of transaction encodings and train our classifier with more fraud transaction data.
+
+How do VAEs do it? Instead of having just one compressed representation vector, a VAE has two: One for the mean encoding $\mu$ and one for the standard deviation of this encoding $\sigma$.
+
+![VAE Scheme](./assets/vae_scheme.png)
+
+Both mean and standard deviation are vectors just like the encoding vector we used for the vanilla autoencoder. However, to create the actual encoding we then sample by adding random noise with the standard deviation $\sigma$ to our encoding vector. 
+
+To achieve a broad distribution of values, our network trains with a combination of two losses: The reconstruction loss you know from the vanilla autoencoder as well as a KL divergence loss between the encoding distribution and a standard gaussian distribution with a standard deviation of one.
+
+## KL Divergence 
+Kullback–Leibler divergence, or KL divergence for short, is one of the metrics machine learning inherited from information theory, just like crossentropy. It is used frequently but many struggle understanding it. 
+
+KL divergence measures how much information is lost when a distribution $p$ is approximated with a distribution $q$.
+
+Imagine you were working on some financial model and have collected data on returns of a security. Your financial modeling tools all assume a normal distribution of returns. The chart below shows the actual distribution of returns versus an approximation using a normal distribution. For the sake of this example, lets assume there are only discrete returns. We will cover continuous distributions later.
+
+![Approximation vs actual](./assets/kl_divergence_dist.png)
+
+Of course the returns in your data are not exactly normally distributed. But just how much information about returns would you loose if you did loose the approximation?
+
+This is exactly what KL divergence is measuring. 
+
+$$D_{KL}(p||q) = \sum_{i=1}^Np(x_i) \cdot (log\ p(x_i) - log\ q(x_i))$$
+
+Where $p(x_i)$ and $q(x_i)$ are the probabilities that $x$, in this case the return, has some value $i$, say 5%. The formula above effectively expresses the expected difference in the logarithm of probabilities of the distribution $p$ and $q$.
+
+$$D_{KL} = E[log\ p(x) - log\ q(x)]$$
+
+This expected difference of log probabilities is the same as the average information lost if you approximate distribution $p$ with distribution $q$.
+
+Since 
+$$log\ a - log\ b = log\frac{a}{b}$$
+
+KL divergence is usually written out as 
+
+$$D_{KL}(p||q) = \sum_{i=1}^N p(x_i) \cdot log\ \frac{ p(x_i)}{q(x_i)}$$
+
+Or in its continuous form as
+
+$$D_{KL}(p||q) = 
+\int_{-\infty}^{\infty} p(x_i) \cdot log\ \frac{ p(x_i)}{q(x_i)}$$
+
+For variational autoencoders, we want the distribution of encodings to be a normal gaussian distribution with mean zero and a standard deviation of one.
+
+When $p$ is substituted with the normal gaussian distribution $\mathcal{N}(0,1)$, and the approximation $q$ is a normal distribution with mean $\mu$ and standard deviation $\sigma$, $\mathcal{N}(\mu,\sigma)$, the KL divergence simplifies to
+
+$$D_{KL} = -0.5 * (1+ log(\sigma) - \mu^2 - \sigma)$$
+
+The partial derivatives to our mean and standard deviation vectors are therefore:
+
+$$\frac{dD_{KL}}{d\mu} = \mu$$
+
+and
+
+$$\frac{dD_{KL}}{d\sigma} = -0.5 * \frac{(\sigma - 1)}{\sigma}$$
+
+
+You can see that the derivative with respect to $\mu$ is zero if $\mu$ is zero and the derivative with respect to $\sigma$ is zero if $\sigma$ is one. This loss term is added to the reconstruction loss.
+
+## MNIST Example 
+Now on to our first VAE. This VAE will work with the MNIST dataset, which makes it easier to form an intuition about how VAEs work. In the next section we will build the same VAE for credit card fraud detection.
+
+First we need to do some imports:
+```Python
+from keras.models import Model
+
+from keras.layers import Input, Dense, Lambda
+from keras import backend as K
+from keras import metrics
+```
+
+Notice two new imports: The `Lamba` layer and the `metrics` module. The `metrics` module provides metrics, like the crossentropy loss which we will use to build our custom loss function. The `Lambda` layer allows us to use Python functions as layers, which we will use to sample from the encoding distribution. We will see just how the `Lambda` layer works in a bit, but first we need to set up the rest of the neural network.
+
+
+First we define a few hyperparameters. Our data has an original dimensionality of 784, which we compress into a latent vector with 32 dimensions. Our network has an intermediate layer between the input and latent vector which has 256 dimensions. We will train for 50 epochs with a batch size of 100. 
+```Python 
+batch_size = 100
+original_dim = 784
+latent_dim = 32
+intermediate_dim = 256
+epochs = 50
+``` 
+
+For computational reasons, it is easier to learn the log of the standard deviation rather than the standard deviation itself. We create the first half of our network in which the input `x` maps to the intermediate layer `h`. From this layer our network splits into `z_mean` which expresses $\mu$ and `z_log_var` which expresses $log\ \sigma$.
+
+```Python 
+x = Input(shape=(original_dim,))
+h = Dense(intermediate_dim, activation='relu')(x)
+z_mean = Dense(latent_dim)(h)
+z_log_var = Dense(latent_dim)(h)
+```
+
+## Using the Lambda layer 
+The `Lambda` layer wraps an arbitrary expression, speak python function, as a Keras layer. Yet there are a few requirements. For backpropagation to work, the function needs to be differentiable. After all, we want to update the network weights by the gradient of the loss. Luckily, Keras comes with a number of functions in its `backend` module which are all differentiable. Simple python math, such as `y = x + 4` is fine as well. 
+
+Additionally, a `Lambda` function can take only one input argument. If the layer we want to create, the input is just the previous layer's output tensor. In this case, we want to create a layer with two inputs, $\mu$ and $\sigma$. So we will wrap both into a tuple which we can then take apart. Below you can see the function for sampling.
+
+```Python 
+def sampling(args):
+    z_mean, z_log_var = args #1
+    epsilon = K.random_normal(shape=(K.shape(z_mean)[0], latent_dim), 
+                              mean=0.,
+                              stddev=1.0) #2
+    return z_mean + K.exp(z_log_var / 2) * epsilon #3
+```
+
+\#1 We take apart the input tuple and have our two input tensors.
+\#2 We create a tensor containing random, normally distributed noise with a mean of zero and a standard deviation of one. The tensor has the shape as our input tensors (batch_size, latent_dim).
+\#4 Finally, we multiply the random noise with our standard deviation to give it the learned standard deviation and add the learned mean. Since we are learning the log standard deviation, we have to apply the exponent function to our learned tensor. 
+
+All these operations are differentiable since we are using Keras backend functions. Now we can turn this function into a layer and connect it to the previous two layers with one line:
+
+```Python 
+z = Lambda(sampling)([z_mean, z_log_var])
+```
+
+And voila, we got a custom layer which samples from a normal distribution described by two tensors. Keras can automatically backpropagate through this layer and train the weights of the layers before it.
+
+Now that we have encoded our data, we need to decode it as well. We do this with two `Dense` layers.
+```Python 
+decoder_h = Dense(intermediate_dim, activation='relu')(z)
+
+x_decoded = Dense(original_dim, activation='sigmoid')decoder_mean(h_decoded)
+```
+Our network is now complete. It encodes any MNIST image into a mean and a standard deviation tensor from which the decoding part then reconstructs the image. The only thing missing is the custom loss incentivising the network to both reconstruct images and produce a normal gaussian distribution in its encodings.
+
+## Creating a custom loss 
+The VAE loss is a combination of two losses: A reconstruction loss incentivizing the model to reconstruct its input well, and a KL divergence loss, incentivizing the model to approximate a normal gaussian distribution with its encodings. To create this combined loss, we have to calculate the two loss components separately first before combining them.
+
+The reconstruction loss is the same loss that we applied for the vanilla autoencoder. Binary crossentropy is an appropriate loss for MNIST reconstruction. Since Keras implementation of a binary crossentropy loss already takes the mean across the batch, an operation we only want to do later, we have to scale the loss back up, so we devide it by the output dimensionality.
+```Python 
+reconstruction_loss = original_dim * metrics.binary_crossentropy(x, x_decoded)
+```
+
+The KL divergence loss is the simplified versions od KL divergence discussed in the section on KL divergence:
+$$D_{KL} = -0.5 * (1+ log(\sigma) - \mu^2 - \sigma)$$
+
+Expressed in Python:
+```Python 
+kl_loss = - 0.5 * K.sum(1 + z_log_var - K.square(z_mean) 
+                                      - K.exp(z_log_var), axis=-1)     
+```
+
+Our final loss is then the mean of the sum of the reconstruction loss and KL divergence loss. 
+```Python 
+vae_loss = K.mean(reconstruction_loss + kl_loss)
+```
+
+Since we have used Keras backend for all calculations, the resulting loss is a tensor which can be automatically differentiated. 
+
+Now we create our model like usual:
+
+```Python 
+vae = Model(x, x_decoded)
+```
+
+Since we use a custom loss, we have the loss separately, and can't just add it in the compile statement:
+```Python 
+vae.add_loss(vae_loss)
+```
+Now we compile the model. Since our model already has a loss, we only have to specify the optimizer. 
+```Python 
+vae.compile(optimizer='rmsprop')
+```
+
+Another side effect of the custom loss is that it compares the output of the VAE with the _input_ of the VAE, which makes sense as we want to reconstruct the input. Therefore we do not have to specify y values, only specifying an input is enough.
+```Python 
+vae.fit(X_train_flat,
+        shuffle=True,
+        epochs=epochs,
+        batch_size=batch_size,
+        validation_data=(X_test_flat, None))
+```
+
+## Using a VAE to generate data 
+So we got our autoencoder, how do we generate more data? We take an input, say a picture of a seven, and run it through the autoencoder multiple times. Since the autoencoder is randomly sampling from a distribution, the output will be slightly different at each run.
+
+From our test data, we take a seven.
+```Python 
+one_seven = X_test_flat[0]
+```
+
+We add a batch dimension and repeat the seven across the batch four times. Now we have a batch of four, identical sevens.
+```Python 
+one_seven = np.expand_dims(one_seven,0)
+one_seven = one_seven.repeat(4,axis=0)
+```
+
+We make a prediction on that batch. We get back the reconstructed sevens.
+```Python 
+s = vae.predict(one_seven)
+```
+
+We now reshape all the sevens back into image form.
+```Python 
+s= s.reshape(4,28,28)
+```
+
+And now we plot them:
+```Python 
+fig=plt.figure(figsize=(8, 8))
+columns = 2
+rows = 2
+for i in range(1, columns*rows +1):
+    img = s[i-1]
+    fig.add_subplot(rows, columns, i)
+    plt.imshow(img)
+plt.show()
+```
+
+![Many sevens](./assets/vae_mult_sevens.png)
+
+As you can see, all images show a seven. They look quite similar, but if you look closely you see there are distinct differences. The seven on the top left has a less pronounced stroke than the seven on the bottom left. The seven on the bottom right has a sight bow at the end. 
+
+The VAE has created new data. Using this data for more training is not as good as using completely new real world data, but it is still very useful. While generative models like this one are nice for eye candy, we will now discuss how this technique can be used for credit card fraud detection.
+
+## VAEs for end to end fraud detection
+To transfer the VAE from an MNIST example to a real fraud detection problem, all we have to do is change a three hyperparameters: Input, intermediate and latent dimensionality of the credit card VAE are smaller than for the MNIST VAE. The rest stays the same.
+
+```Python 
+original_dim = 29
+latent_dim = 6
+intermediate_dim = 16
+```
+The visualization below shows the resulting VAE including input and output shapes:
+![Credit VAE](./assets/credit_vae.png)
+Caption: Overview of the credit VAE 
+
+Armed with a VAE that can encode and generate credit card data, we can tackle the task of end to end fraud detection. More specifically, we are using the encoding part of the autoecoder as a feature extractor as well as a method to give us more data, where we need it. How exactly that works will be covered in the section on active learning. For now, let's take a little detour and look at how (variational) autoencoders work for time series.
+
+# (Variational) autoencoders for time series
+This section covers the how and why of time series (V)AEs, and gives a couple of examples where they have been used. Time series are such a big topic in finance that this book has a whole chapter about them. Autoencoders have found applications in connection to time series as they can encode a long time series in a single, descriptive vector. This vector can then for example be used to efficiently compare a time series to another time series, based on specific, and complex patterns that can not be captured with a simple correlation for instance. 
+
+Consider the 2010 'Flash Crash'. On May 6 2010, starting at 2:32, US markets saw a major loss of value. The Dow Jones Industrial Average lost about 9%, a trillion dollars of value were wiped out in a couple of minutes. 36 minutes later the crash was over, most lost value was regained and people started wondering what on earth just happened. 
+
+Five years later, a man named Navinder Singh Sarao was arrested for having in part caused the flash crash and having made $40 million in the process. Sarao engaged in a practice called 'spoofing' in which he used an automated bot which would place large sell orders which could not be filled in the market but would drive the price down. The bot would leave the orders in the order books of the stock exchange for only a short time before canceling them. In the meanwhile, Sarao would buy the stock at lower prices and profit of the stocks rebounding after the canceled sales orders. 
+
+While Sarao was certainly not the only one responsible for the flash crash, practices like spoofing are now illegal and exchanges have to monitor and flag it. (If you dig back into old blog posts about high-frequency trading you will find that some traders working at large firms openly recommend spoofing or front running large orders, but that is a story for another time).
+
+How would we detect someone engages in spoofing? One way is to use an autoencoder. Using large amounts of order book information, we can train an autoencoder to reconstruct 'normal' trading behavior. For traders whose trading patterns deviate a lot from normal trading, the reconstruction loss of the trained autoencoder for the transaction will be quite high. 
+
+Another option is to train the autonecoder on different kinds of patterns (illegal or not) and then cluster patterns in the latent space, just as we did for the credit card transactions.
+
+Recurrent neural networks by default take in a time series and output a single vector. They can also output sequences, if Keras `return_sequences` argument is set to `True`. Using recurrent neural networks such as `LSTM`'s, building an autoencoder for time series can be done as follows.
+
+```Python 
+from keras.models import Sequential
+from keras.layers import LSTM, RepeatVector
+
+model = Sequential() #1
+model.add(LSTM(latent_dim, input_shape=(maxlen, nb_features))) #2
+model.add(RepeatVector(maxlen)) #3
+model.add(LSTM(nb_features, return_sequences=True)) #4
+```
+
+\#1 A simple autoencoder can be built using the `Sequential` API. 
+
+\#2 We first feed our sequence length `maxlen` and with the number of features equal to `nb_features` into an `LSTM`. The `LSTM` will return only its last output, a single vector of dimension `latent_dim`. This vector is the encoding of our sequence. 
+
+\#3 To decode the vector, we need to repeat it over the length of the time series. This is done by the `RepeatVector` layer.
+
+\#4 Now we feed the sequence of repeated encodings into a decoding LSTM which this time returns the full sequence.
+
+Variational autoencoders also find their way into trading. They can be used to augment backtesting by generating new, unseen data for testing. They can also be used to generate data about contracts where data is missing. But most interesting, they can be used to learn about the driving variables in limit order book markets for instance. 
+
+It is reasonable to assume that just because two market days look a bit different, the same forces might be at work. Mathematically, we can assume that market data $\{x_k\}$ is sampled from a probability distribution $p(x)$ with a small number of latent variables $h$. Using an autoencoder, we can then approximate $p(h|x)$, the distribution of $h$ given $x$. This will allow us to analyze the driving forces $h$ in a market. 
+
+This solves the problem that a standard maximum likehood model for this kind of problem is computationally intractable. Two other methods performing the same feat are e.g. Markov Chain Monte Carlo or Hamilton Monte Carlo methods. While both will not be covered in this book, it is worthwile to understand that variational autoencoders address longstanding problems in mathematical finance in a computationally tractable way.
+
+But generative models can also be used to solve problems beyond the scope of traditional methods. The financial markets are fundamentally adversarial environments in which investors are trying to achieve something which is impossible in aggregate: Above average returns. Knowing that a company is doing well is not enough, if everyone knows the company does well, the stock price will be high and returns will be low. The key is to know the company is doing well while everyone else believes it is doing poorly. Markets are a zero-sum game theoretic environment. Generative adversarial networks (GANs), make use of these dynamics to generate realistic data.
+
+# GANs 
+Intuitively, GANs work a lot like an art forger and a museum curator. Every day, the art forger tries to sell some fake art to the museum. And every day the curator tries to distinguish if a certain piece is real and fake. The forger learns from his failures. By trying to fool the curator and observing success and failure, he becomes a better forger. But the curator learns too. By trying to stay ahead of the forger, she becomes a better curator. As time passes, the forgeries become better and the distinguishing process as well. After years of battle, the art forger is an expert that can draw just as well as Picasso and the curator is an expert that can distinguish a real painting by tiny details. 
+
+Technically, a GAN consists of two neural networks:
+- A _generator_ which produces data from a random latent vector
+- A _discriminator_ which classifies data as 'real', that is stemming from the training set, or 'fake', that is stemming from the generator.
+
+![GAN Scheme](./assets/gan_scheme.png)
+
+Once again, generative models are easier to understand when images are generated, so in this section we will refer to the data generated as images, although it could be all kinds of data.
+
+The training process for a GAN works as follows:
+1. A latent vector containing random numbers is created.
+2. The latent vector is fed into the _generator_ which produces an image. 
+3. A set of fake images from the generator is mixed with a set of real images from the training set. The discriminator is trained on binary classification of real and fake data.
+4. After the discriminator was trained for a bit, we feed in the fake images again. This time, we set the label of the fake images to 'real'. We backpropagate through the discriminator, and obtain the loss gradient with respect to the _input_ of the discriminator. We do _not_ update the weights of the discriminator based on this information.
+5. We now have gradients describing how we would have to change our fake image so that the discriminator would classify it as a real image. We use these gradients to backpropagate and train the _generator_.
+6. With our new and improved generator, we once again create fake images, which get mixed with real images to train the discriminator and whose gradients are used to train the generator again.
+
+Note: GAN training has a lot of similarities to the visualization of the network layers in chapter 3. Only that this time we do not just create one image that maximizes an activation function but we create a generative network that specializes in maximizing the activation function of another network. 
+
+Mathematically, generator $G$ and discriminator $D$ play a mini-max two player game with the value function $V(G,D)$
+
+$$
+\min_G \ \max_D V(G,D) = 
+\mathbb{E}_{x\sim p_{data}(x)} 
+[\log \ D(x)] + 
+\mathbb{E}_{z\sim p_{z}(z)}
+[\log (1-D(G(z)))]
+$$
+
+Where $x$ is an item drawn from the distribution of real data $p_{data}$ and $z$ is a latent vector dawn from the latent vector space $p_z$. 
+
+The output distribution of the generator is noted as $p_g$. It can be shown, that the global optimum of this game is $p_g = p_{data}$, that is, if the distribution of generated data is equal to the distribution of actual data. For a formal proof, see the original paper by Goodfellow et al. (2014).
+
+GANs get optimized following a game theoretic value function. Solving this type of optimization problem with deep learning is an active area of research, and an area we will visit again in chapter 7 for reinforcement learning. The fact that deep learning can be used to solve mini max games is exciting news for the field of finance and economics, which features many of such problems.
+
+## An MNIST GAN
+
+Without much further ado, lets implement a GAN to generate MNIST characters. Before we start, we need to do some imports.
+
+GANs are large models, in this section you will see how to combine `Sequential` and functional API models for easy model building.
+```Python 
+from keras.models import Model, Sequential
+```
+
+We will use a few new layer types:
+```Python 
+from keras.layers import Input, Dense, Dropout, Flatten
+from keras.layers import LeakyReLU, Reshape
+from keras.layers import Conv2D, UpSampling2D
+```
+- `LeakyReLU` is just like `ReLu`, except that the activation allows for small negative values. This prevents the gradient from becoming zero. This activation function works well for GANs, we will discuss the reasons for it in the next section.
+![Leaky Relu](./assets/leaky_relu.png)
+
+- Keras `Reshape` layer does the same as `np.reshape`: it brings a tensor into a new form.
+
+- `UpSampling2D` scales a 2D feature map up, e.g. by a factor of 2, by repeating all numbers in the feature map. 
+
+We will use an `Adam` optimizer as we often do.
+```Python
+from keras.optimizers import Adam
+```
+
+Neural network layers get initialized randomly. Usually, the random numbers are drawn from a distribution that supports learning well. For GANs it turns out a normal gaussian distribution is better. 
+```Python 
+from keras.initializers import RandomNormal
+```
+
+Now we build the generator model:
+```Python 
+generator = Sequential() #1 
+
+generator.add(Dense(128*7*7, 
+                    input_dim=latent_dim, 
+                    kernel_initializer=RandomNormal(stddev=0.02))) #2
+
+generator.add(LeakyReLU(0.2)) #3
+generator.add(Reshape((128, 7, 7))) #4
+generator.add(UpSampling2D(size=(2, 2))) #5
+
+generator.add(Conv2D(64,kernel_size=(5, 5),padding='same')) #6
+
+generator.add(LeakyReLU(0.2)) #7
+generator.add(UpSampling2D(size=(2, 2))) #8
+
+generator.add(Conv2D(1, kernel_size=(5, 5),
+                        padding='same', 
+                        activation='tanh')) #9
+  
+adam = Adam(lr=0.0002, beta_1=0.5)                      
+generator.compile(loss='binary_crossentropy', optimizer=adam) #10
+```
+
+\#1 We construct the generator as a sequential model.
+
+\#2 The first layer takes in the random latent vector and maps it to a vector with dimensions 128 * 7 * 7 = 6,272. It already significantly expands the dimensionality of our generated data. For this, fully connected layer, it is important to initialize weights from a normal gaussian distribution with a relatively small standard deviation. A gaussian distribution, as opposed to a uniform distribution, will have fewer extreme values, which makes training easier.
+
+\#3 The activation function for the first layer is `LeakyReLU`. We need to specify how steep the slope for negative inputs is, in this case, negative inputs are multiplied with 0.2
+
+\#4 Now we reshape our flat vector into a 3D tensor. This is the opposite to using a `Flatten` layer which we did in chapter 3. We now have a tensor with 128 channels in a 7 by 7 pixel image or feature map. 
+
+\#5 Using `UpSampling2D` we enlarge this image to 14 by 14 pixels. The `size` argument specifies the multiplied factor for width and height.
+
+\#6 Now we can apply a standard `Conv2D` layer. As opposed to most image classifiers we use a relatively large kernel size of 5 by 5 pixels.
+
+\#7 The activation following the `Conv2D` layer is another `LeakyReLU` 
+
+\#8 We upsample again, bringing the image to 28 by 28 pixels, the same dimensions as an MNIST image. 
+
+\#9 The final convolutional layer of our generator outputs only a single channel image, as MNIST images are black and white only. Notice how the activation of this final layer is a `'tanh'` activation. Tanh squishes all values to between negative one and one. This might be unexpected as image data usually does not feature any values below zero. Empirically it turned out however, that `'tanh'` activations work much better for GANs than `'sigmoid'` activations.
+
+\#10 Finally, we compile the generator to train with an `Adam` optimizer with a very small learning rate and smaller than usual momentum.
+
+The discriminator is a relatively standard image classifier that classifies images as real or fake. There are only a few GAN specific modifications
+```Python 
+# Discriminator
+discriminator = Sequential()
+discriminator.add(Conv2D(64, kernel_size=(5, 5), 
+                         strides=(2, 2), 
+                         padding='same', 
+                         input_shape=(1, 28, 28),
+                         kernel_initializer=RandomNormal(stddev=0.02))) #1
+
+discriminator.add(LeakyReLU(0.2))
+discriminator.add(Dropout(0.3))
+discriminator.add(Conv2D(128, kernel_size=(5, 5), 
+                         strides=(2, 2), 
+                         padding='same'))
+discriminator.add(LeakyReLU(0.2))
+discriminator.add(Dropout(0.3)) #2
+discriminator.add(Flatten())
+discriminator.add(Dense(1, activation='sigmoid'))
+discriminator.compile(loss='binary_crossentropy', optimizer=adam)
+```
+\#1 As with the generator, the first layer of the discriminator should be initialized randomly from a gaussian distribution.
+
+\#2 Dropout is commonly used in image classifiers. For GANs it should also be used just before the last layer.
+
+Now we have a generator and a discriminator. To train the generator, we have to get the gradients from the discriminator to backpropagate through and train the generator. This is where the power of Keras modular design comes into play.
+
+Note: Keras models can be treated just like Keras layers.
+
+The code below creates a GAN model which can be used to train the generator from the discriminator gradients.
+```Python 
+discriminator.trainable = False #1
+ganInput = Input(shape=(latent_dim,)) #2
+x = generator(ganInput) #3
+ganOutput = discriminator(x) #4
+gan = Model(inputs=ganInput, outputs=ganOutput) #5
+gan.compile(loss='binary_crossentropy', optimizer=adam) #6
+```
+
+\#1 When training the generator, we do not want to train the `discriminator`. When setting the `discriminator` to not trainable, the weights are frozen, only for the model that is compile with the non trainable weights. That is, we still can train the `discriminator` model on its own, but as soon as it becomes part of the GAN model which is compiled again, its weights are frozen.
+
+\#2 We create a new input for our GAN which takes in the random latent vector.
+
+\#3 We connect the generator model to the `ganInput` layer. The model can be used just as a layer under the functional API.
+
+\#4 We now connect the discriminator with frozen weights to the generator. Again, we call the model just like we would a use a layer in the functional API.
+
+\#5 We create a model which maps the `ganInput` to the output of the discriminator. 
+
+\#6 We compile our GAN model. Since we call compile here, the weights of the discriminator model are frozen for as long as they are part of the GAN model. Keras will throw a warning on training time that the weights are not frozen for the actual discriminator model.
+
+Training our GAN requires some customization of the training process and a couple of GAN specific tricks as well. More specifically, we have to write our own training loop which you can see below:
+```Python 
+epochs=50 
+batchSize=128
+batchCount = X_train.shape[0] // batchSize #1
+
+for e in range(1, epochs+1): #2
+    print('-'*15, 'Epoch %d' % e, '-'*15)
+    for _ in tqdm(range(batchCount)): #3
+      
+        noise = np.random.normal(0, 1, size=[batchSize, latent_dim]) #4
+        imageBatch = X_train[np.random.randint(0, 
+                                              X_train.shape[0],
+                                              size=batchSize)] #5
+
+        
+        generatedImages = generator.predict(noise) #6
+        X = np.concatenate([imageBatch, generatedImages]) #7
+
+        yDis = np.zeros(2*batchSize) #8
+        yDis[:batchSize] = 0.9 
+        
+        labelNoise = np.random.random(yDis.shape) #9
+        yDis += 0.05 * labelNoise + 0.05
+
+        
+        discriminator.trainable = True #10
+        dloss = discriminator.train_on_batch(X, yDis) #11
+
+        
+        noise = np.random.normal(0, 1, size=[batchSize, latent_dim]) #12
+        yGen = np.ones(batchSize) #13
+        discriminator.trainable = False #14
+        gloss = gan.train_on_batch(noise, yGen) #15
+
+    #16
+    dLosses.append(dloss)
+    gLosses.append(gloss)        
+```
+
+\#1 We have to write a custom loop to loop over the batches. To know how many batches there are, we need to make an integer division of our dataset size by our batch size.
+
+\#2 In the outer loop we iterate over the number of epochs we want to train.
+
+\#3 In the inner loop we iterate over the number of batches we want to train on in each epoch. The `tqdm` tool is helping us keep track of progress within the batch.
+
+\#4 We create a batch of random latent vectors.
+
+\#5 We randomly sample a batch of real MNIST images.
+
+\#6 We use the generator to generate a batch of fake MNIST images.
+
+\#7 We stack the real and fake MNIST images together.
+
+\#8 We create the target for our discriminator. Fake images are encoded with a zero, real images with a 0.9. This technique is called soft labels. Instead of hard labels (zero and one) we use something softer to not train the GAN too aggressively. This technique has been shown to make GAN training more stable.
+
+\#9 On top of using soft labels, we add some noise to the labels. This, once again, will make the training more stable.
+
+\#10 We make sure that the discriminator is trainable.
+
+\#11 We train the discriminator on a batch of real and fake data.
+
+\#12 We create some more random latent vectors for training the Generator.
+
+\#13 The target for generator trainings is always one. We want the discriminator the give us the gradients that would have made the fake image look like a real one.
+
+\#14 Just to be sure, we set the discriminator to not trainable, so that we can not break anything by accident.
+
+\#15 We train the GAN model. We feed in a batch of random latent vectors and train the generator part of the GAN so that the discriminator part would classify the generated images as real.
+
+\#16 We save the losses from training.
+
+
+Below you can see some of the generated MNIST characters:
+
+![GAN MNIST](./assets/gan_mnist_crop.png)
+
+Caption: GAN generated MNIST characters
+
+Most of these characters look like identifiable numbers, although some seem a bit off and there are some wired artifacts. 
+
+![Gan Progress](./assets/gan_progress.png)
+Caption: GAN training progress 
+Note: The loss in GAN training is not interpretable as it is for supervised learning. The loss of a GAN will not decrease even as the GAN makes progress.
+
+The loss of generator and discriminator is dependent on how well the other model does. If the generator gets better at fooling the discriminator, the discriminator loss will stay high. If one of the losses goes to zero, it means that the other model lost the race and can not fool or properly discriminate the other model anymore. This is one of the things that makes GAN training so hard: GANs don't converge to a low loss solution, they converge to an _equilibrium_ in which the generator fools the discriminator many times but not always. That equilibrium is not always stable. Part of the reason so much noise is added to labels and the networks themselves is that it increases the stability of the equilibrium.
+
+As GANs are unstable and difficult yet useful, a number of empirical tricks have been developed over time that make GAN training more stable. Knowing these tricks can help you with your GAN building and save you countless hours, even though there is often no theoretical reason for why these tricks work.
+
+## Understanding GAN latent vectors
+
+For autoencoders, the latent space was a relatively straight forward approximation of principal component analysis. Variational autoencoders create a latent space of distributions, which is useful but still easy to imagine as a form of PCA. So what is the latent space of a GAN if we just sample randomly from it during training. As it turns out, GANs self structure the latent space. Using the latent space of a GAN, you would still be able to cluster MNIST images by the character they display. Research has shown that the latent space of GANs often has some surprising features, such as 'smile vectors' along which generated face images smile more or less. Researchers have also shown that GANs can be used for latent space algebra, where adding the latent representation of different objects creates realistic, new objects. Yet, research on the latent space of GANs is still in its infancy and drawing conclusions about the world from its latent space representations is an active field of research.
+
+## GAN training tricks 
+1. Normalize the inputs
+
+Gans don't work well with extreme values so make sure you always have normalized inputs between -1 and 1. This is also the reason why you should use a `tanh` function as your generator output.
+
+
+2. Don't use the theoretical correct loss function
+
+If you read papers on GANs you will find that they give the generator optimization goal as: 
+$$min\ log\ (1-D)$$
+
+Where $D$ is the discriminator output. In practice it works better if the objective of the generator is:
+
+$$max\ log\ D$$
+
+In other words, instead of minimizing the negative discriminator output it is better to maximize the discriminator output. The reason is that the first objective often has vanishing gradients in the beginning of the GAN training process.
+
+3. Sample from a normal gaussian distribution 
+
+There is two reasons to sample from normal distributions instead of uniform distributions: First, GANs don't work well with extreme values and normal distributions have fewer extreme values than uniform distributions. Additionally, it has turned out that if the latent vectors are sampled from a normal distribution, the latent space becomes a sphere. The relationships between latent vectors in this sphere are easier to describe than latent vectors in a cube space.
+
+4. Use Batch normalization
+
+We already saw that GANs don't work well with extreme values since they are so fragile. Another way to reduce extreme values is to use batch normalization, discussed in chapter 3.
+
+5. Use separate batches for real and fake data 
+
+In the beginning, real and fake data might have very different distributions. As batch norm applies normalization over a batch, using the batches mean and standard deviation, it is more effective to keep the real and fake data separate. While this does lead to slightly less accurate gradient estimates, the gain from fewer extreme values is bigger.
+
+6. Use Soft and Noisy Labels
+
+GANs are fragile, the use of soft labels reduces the gradients and keeps the gradients from tipping over. Adding some random noise to labels also helps stabilizing the system.
+
+7. Use basic GANs
+
+There is now a wide range of GAN models. Many of them claim wild performance improvements, while in fact they do not work much better or often worse than a simple deep convolutional generative adversarial network or (DCGAN). That does not mean they have no justification for being, but for the bulk of tasks, more basic GANs do better. Another well working GAN is the adversarial autonecoder, which combines a VAE with a GAN by training the autocoder on the gradients of a discriminator.
+
+8. Avoid ReLU and MaxPool 
+
+ReLu activations and MaxPool layers are frequently used in deep learning, but they have the disadvantage of producing 'sparse gradients'. A ReLu activation will not have any gradient for negative inputs and a MaxPool layer will not have any gradients for all inputs that were not the maximum input. Since gradients are what the generator is being trained on, sparse gradients hurt generator training.
+
+9. Use the ADAM Optimizer
+
+This optimizer has been shown to work very well with GANs, while many other optimizers do not work well with them.
+
+10. Track failures early
+
+Sometimes, GANs fail for random reasons. Just choosing the 'wrong' random seed could set your training run up for failure. Usually, it is possible to see if a GAN goes completely off track by observing outputs. They should slowly become more like the real data. If the generator goes completely of track and produces only zeros for instance, you will be able to see it before spending days of GPU time on training that will go nowhere.
+
+11. Don't balance loss via statistics
+
+Keeping the balance between the generator and discriminator is a delicate task. Many practitioners therefore try to help the balance by training either the generator or discriminator a bit more depending on statistics. Usually, that does not work. GANs are very counterintuitive, and trying to help them with an intuitive approach usually makes matters worse. That is not to say there are no ways to help out GAN equilibriums. But the help should stem from a principled approach, such as 'train the generator while the generator loss is above X'.
+
+12. If you have labels, use them
+
+A slightly more sophisticated version of a GAN discriminator can not only classify data as real or fake, but also classify the class of the data. In the MNIST case, the discriminator would have 11 outputs, for the 10 real numbers as well as an output for fake. This allows us to create a GAN that can show more specific images. This is useful in the domain of semi-supervised learning which we will cover in the next section.
+
+13. Add noise to inputs, reduce it over time
+
+Noise adds stability to GAN training so it comes at no surprise that noisy inputs can help, especially in the early, unstable phases of training a GAN. Later however it can obfuscate too much and keep the GAN from generating realistic images. So we should reduce the noise applied to inputs over time.
+
+14. Use Dropouts in G in both train and test phase
+
+Some researchers find that using dropout on inference time leads to better results for the generated data. Why that is the case is still an open question.
+
+15. Historical averaging
+
+GANs tend to 'oscillate' with their weights moving rapidly around a mean during training. Historical averaging penelizes weights that are too far away from their historical average and reduces oscillation. It therefore increases the stability of GAN training.
+
+16. Replay buffers
+
+Replay buffers keep a number of older generated images so they can be reused for training the discriminator. This has a similar effect as historical averaging, reduces oscillation and increases stability. It also reduces the correlation between training data.
+
+17. Target networks
+
+Another 'anti-oscillation' trick is to use target networks. That is, to create copies of both the generator and discriminator, and then train the generator with a frozen copy of the discriminator and the discriminator with a frozen copy of the generator.
+
+18. Entropy regularization
+
+Entropy regularization means rewarding the network for outputting more different values. This can prevent the generator network from settling on a few things to produce, say, only the number seven. It is a regularization method as it prevents overfitting.
+
+20. Use Dropout or noise layers
+
+Noise is good for GANs. Keras does not only feature dropout layers, it also features a number of noise layers that add different kinds of noise to activations in a network. Read the documentation of these layers and see if they are helping for your specific GAN application: 
+https://keras.io/layers/noise/
+
+
+# Using less data: Active Learning
+Part of the motivation for generative models, be it GANs or VAEs, was always that it would allow us to generate data and therefore use less data. As data is inherently sparse and we never have enough of it, generative models seems as they are the free lunch economists warn about. But even the best GAN works with _no_ data. In this section we will have a look at the different methods to bootstrap models with as little data as possible. This is also called active learning or semi-supervised learning.
+
+Unsupervised learning uses no labels, but unlabeled data, to cluster this data in different ways. An example are autoencoders, where images can be transformed into learned, latent vectors which can then be clustered without the need for labels that describe the image.
+
+Supervised learning uses data with labels. An example is the image classifier we built in chapter 3 or most other models we build in this book. 
+
+Semi-supervised learning aims to perform tasks usually done by supervised models, but with less data by using unsupervised or generative methods. There is three ways this can work: First, by making smarter use of humans. Second, by making better use of unlabeled data. Third, by using generative models. 
+
+## Let humans label frontier points
+For all the talk about AI replacing humans, there are sure an awful lot of humans required to train AI systems. Although the numbers are not clear, it seems as there are between 500,000 and 750,000 registered 'Mechanical Turkers' on amazons Mechanical Turk (or MTurk) service. MTurk is a website that offers 'Human intelligence through an API', which in practice means that companies and researchers post simple jobs like filling out a survey or classifying an image and people all over the world perform these tasks for a few cents per task. For an AI to learn, humans need to provide labeled data. If the task is large scale, many companies hire MTurk to let humans do the labeling. If it is a small task you will often find the companies staff labeling data. 
+
+Surprisingly little thought goes into what these humans label. Because not all labels are equally useful. The image below shows a linear classifier. As you can see, the frontier point, that is close to the frontier between the two classes, shapes where the decision boundary, while the points further in the back are not as relevant.
+
+![Frontier points](./assets/frontier_point.png)
+Caption: Frontier points are more valuable
+
+Note: Frontier points close to the decision boundary are more valuable than points further away from it. You can train on less data by (1) labeling only a few images, (2) train a weak model (3) let that weak model make predictions for some unlabeled images, (4) label the images where the model is least confident about and add them to your training set, (5) repeat.
+
+This process of labeling data is much more efficient than just randomly labeling data and can accelerate your efforts quite drastically.
+
+## Leverage machines for human labeling
+In labeling, many companies rely on excel. They have human labelers look at something to label, such as an image or a text, and then type in the label in an excel spreadsheet. This is incredibly inefficient and error prone, but common practice. Some slightly more advanced labeling operations build simple web apps that let the user see the item to label and directly click on the label or press a hot key. This can accelerate the labeling process quite substantially, but is still not the optimal if there are many label categories. A better way is to once again, label a few images and pre-train a weak model. On labeling time, the computer shows the labeler the data as well as a label. The labeler only has to decide if this label is correct. This can be done easily with hot keys and the time to label a single item goes down dramatically. If the label was wrong, the label interface can either bring up a list of possible options, sorted by the probability the model assigned to them, or just put the item back on the stack and display the next most likely label the next time. A great implementation of this technique is 'Prodigy', a labeling tool by the company that makes SpaCy, which we learned about in chapter 5.
+
+![Prodigy](./assets/prodigy.png)
+Caption: Prodigy is a labeling tool that leverages machines. Source: https://prodi.gy/
+
+Note: Better user interface design and smart use of weak models can greatly accelerate labeling.
+
+## Pseudo labeling for unlabeled data
+Often there is plenty of unlabeled data available, but only little labeled data. That unlabeled data can still be used. First, you train a model on the labeled data that you have. Then you let that model make predictions on your corpus of unlabeled data. You treat those predictions as if they were true labels and train your model on the full, pseudo labeled, dataset. However, actual true labels should be used more often than the pseudo labels. The exact sampling rate for pseudo labels can vary for different circumstances. This works under the condition that errors are random. If they are biased, your model will be biased as well. This simple method is surprisingly effective and can greatly reduce labeling efforts. 
+
+## Using generative models
+As it turns out, GANs extend quite naturally to semi supervised training. By giving the discriminator two outputs we can train it to be a classifier as well.
+
+The first output of the discriminator only classifies data as real or fake, just as it did for the GAN above. The second head classifies the data by its class, say the digit an image represents, or an extra 'is fake' class. In the MNIST example the classifying head would have 11 classes, 10 digits plus the 'is fake class'. The trick is that the generator is one model and only the heads, that is the last layer, are different. This forces the 'real or not' classification to share weights with the 'which digit' classifier. The idea is that to determine if an image is real or fake, the classifier would have to figure out if it can classify this image into one class. If it can, the image is probably real. This approach, called semi-supervised generative adversarial network (SGAN) has been shown to generate more realistic data and improve deliver better results on limited data than standard supervised learning. Of course, GANs can be applied to more than just images. In the next section we will apply them to our fraud detection task.
+
+# Semi-Supervised Generative Adversarial Networks for fraud detection
+As a final applied project of this chapter, let's consider the credit card problem again. We will create an SGAN that looks as follows:
+
+![SGAN Scheme](./assets/sgan_scheme.png)
+
+We will train this model on fewer than 1000 transactions and still recieve a decent fraud detector. You can find the code for the SGAN on Kaggle under this link:
+https://www.kaggle.com/jannesklaas/semi-supervised-gan-for-fraud-detection/code
+
+In this case, our data has 29 dimensions. We choose our latent vectors to have ten dimensions.
+```Python 
+latent_dim=10
+data_dim=29
+```
+
+The generator model is constructed as a fully connected network with `LeakyReLU` activations and batch normalization. The output activation is a `tanh` activation.
+```Python 
+model = Sequential()
+model.add(Dense(16, input_dim=latent_dim))
+model.add(LeakyReLU(alpha=0.2))
+model.add(BatchNormalization(momentum=0.8))
+model.add(Dense(32, input_dim=latent_dim))
+model.add(LeakyReLU(alpha=0.2))
+model.add(BatchNormalization(momentum=0.8))
+model.add(Dense(data_dim,activation='tanh'))
+``` 
+
+To later use the generator model better, we wrap the model we created into a functional API model that maps the noise vector to a generated transaction record. Since most GAN literature is about images, and 'transaction record' is a bit of a mouthful, we just name our transaction records 'images'.
+```Python 
+noise = Input(shape=(latent_dim,))
+img = model(noise)
+        
+generator = Model(noise, img)
+```
+
+Just as the generator, we build the discriminator in the sequential API. As the discriminator has two heads, one for the classes, one for fake or no fake, we first only construct the base of the model.
+```Python 
+model = Sequential()
+model.add(Dense(31,input_dim=data_dim))
+model.add(LeakyReLU(alpha=0.2))
+model.add(BatchNormalization(momentum=0.8))
+model.add(Dropout(0.25))
+model.add(Dense(16,input_dim=data_dim))
+model.add(LeakyReLU(alpha=0.2))
+```
+
+Now we map the input of the discriminator to its two heads using the functional API.
+```Python 
+img = Input(shape=(data_dim,)) #1
+features = model(img) #2
+valid = Dense(1, activation="sigmoid")(features) #3
+label = Dense(num_classes+1, activation="softmax")(features) #4
+
+discriminator = Model(img, [valid, label]) #5
+```
+\#1 We create an input placeholder for the noise vector.
+
+\#2 We get the feature tensor from the discriminator base model.
+
+\#3 We create a `Dense` layer for classifying an transactions as real or not and map it to the feature vector.
+
+\#4 We create a second `Dense` layer for classifying transactions as fraudulent, genuine or fake.
+
+\#5 We create a model mapping the input to the two heads.
+
+
+To compile the discriminator with two heads, we need to use a few advanced model compiling tricks:
+```Python 
+optimizer = Adam(0.0002, 0.5) #1
+discriminator.compile(loss=['binary_crossentropy',
+                            'categorical_crossentropy'], #2
+                            loss_weights=[0.5, 0.5], #3
+                            optimizer=optimizer, #4
+                            metrics=['accuracy']) #5
+```
+\#1 We define an adam optimizer with a learning rate of 0.0002 and a momentum of 0.5
+
+\#2 Since we have two model heads, we can specify two losses. Our 'fake or not' head is a binary classifier so we use `'binary_crossentropy'` for it. Our classifying head is a multi class classifier, so we use `'categorical_crossentropy'` for the second head.
+
+\#3 We can specify how we want to weight the two different losses. In this case, we give all losses a 50% weight.
+
+\#4 We optimize our pre-defined adam optimizer.
+
+\#5 As long as we are not using soft labels, we can track progress using the accuracy metric.
+
+
+Finally, we create our combined GAN model.
+```Python 
+noise = Input(shape=(latent_dim,)) #1
+img = generator(noise) #2
+discriminator.trainable = False #3
+valid,_ = discriminator(img) #4
+combined = Model(noise , valid) #5
+combined.compile(loss=['binary_crossentropy'], #6
+                        optimizer=optimizer)
+```
+\#1 We create a placeholder for the noise vector input.
+
+\#2 We obtain a tensor representing the generated image by mapping the generator to the noise placeholder.
+
+\#3 We make sure we do not destroy the discriminator by setting it to not trainable.
+
+\#4 We only want the discriminator to believe the generated transactions are real, so we can discard the classification output tensor.
+
+\#5 We map the noise input to the 'fake or not fake' output of the discriminator.
+
+For training we define a train function that handles all the training for us:
+```Python 
+def train(X_train,y_train,
+          X_test,y_test,
+          generator,discriminator,
+          combined,
+          num_classes,
+          epochs, 
+          batch_size=128):
+    
+    f1_progress = [] #1
+    half_batch = int(batch_size / 2) #2
+
+    cw1 = {0: 1, 1: 1} #3
+    cw2 = {i: num_classes / half_batch for i in range(num_classes)}
+    cw2[num_classes] = 1 / half_batch
+
+    for epoch in range(epochs):
+      
+        idx = np.random.randint(0, X_train.shape[0], half_batch) #4
+        imgs = X_train[idx]
+
+        noise = np.random.normal(0, 1, (half_batch, 10)) #5
+        gen_imgs = generator.predict(noise)
         
         #6
-        inputs = np.zeros((min(len_memory, batch_size), env_dim))
-        targets = np.zeros((inputs.shape[0], num_actions))
+        valid = np.ones((half_batch, 1))
+        fake = np.zeros((half_batch, 1))
         
         #7
-        for i, idx in enumerate(np.random.randint(0, len_memory,
-                                                  size=inputs.shape[0])):
-            #8
-            state_t, action_t, reward_t, state_tp1 = self.memory[idx][0]
-            game_over = self.memory[idx][1]
-
-            #9
-            inputs[i:i+1] = state_t
-            
-            #10
-            targets[i] = model.predict(state_t)[0]
-            
-            #11
-            Q_sa = np.max(model.predict(state_tp1)[0])
-            
-            #12
-            if game_over:  
-                targets[i, action_t] = reward_t
-            else:
-                targets[i, action_t] = reward_t + self.discount * Q_sa
-        return inputs, targets
-```
-\#1 We implement the experience replay buffer as a Python class. A replay buffer object is responsible for storing experiences and generating training data. It therefore has to implement some of the most important pieces of the Q-Learning algorithm.
-
-\#2 To initialize a replay object we need to let it know how large its buffer should be and what the discount rate $\gamma$ is. The replay memory itself is a list of lists following the scheme 
-```
-[...
-[experience, game_over]
-[experience, game_over]
-...]
-```
-where `experience` is a tuple holding the experience information and `game_over` is a binary boolean value indicating if the game was over after this step. 
-
-\#3 When we want to remember a new experience, we add it to our list of experiences. Since we can not store infinite experiences, we delete the oldest experience if our buffer exceeds its maxumum length.
-
-\#4 With the `get_batch` function we can obtain a single batch of training data. To calculate $Q(s’,a’)$, we need a neural network as well, so we need to pass a Keras model to use the function.
-
-\#5 Before we start generating a batch, we need to know how many experiences we have stored in our replay buffer, how many possible actions there are and how many dimensions a game state has. 
-
-\#6 Next we need to set up placeholder arrays for the inputs and targets we want to train the neural network on.
-
-\#7 Finally, we loop over the experience replay in random order untill we have either sampled all stored experiences or filled the batch.
-
-\#8 We load the experience data as well as the `game_over` indicator from the replay buffer.
-
-\#9 We add the state $s$ to the input matrix. Later the model will train to map from this state to the expected reward.
-
-\#10 Next, we fill the expected reward for all actions with the expected reward calculated by the current model. This ensures that our model only trains on the action that was actually taken since the loss for all other actions is zero.
-
-\#11 Next we calculate $Q(s', a')$. We simply assume that for the next state $s'$ or `state_tp1` in code, the neural network will estimate the expected reward perfectly. As the network trains, this assumption slowly becomes true.
-
-\#12 If the game ended after state $S$, the expected reward from the action $a$ should be the received reward $r$. If it did not end, then the expected reward should be the received reward as well as the discounted expected future reward.
-
-## Defining the Q-Learning model
-Now it is time to define the model that will learn a Q-function for Catch. It turns out that already a relatively simple model can learn the function well. 
-
-We need to define the number of possible actions as well as the grid size. There are three possible actions (move left, stay, move right), and the game is being played on a 10 by 10 pixel grid.
-```Python
-num_actions = 3
-grid_size = 10
-```
-
-As this is a regression problem, the final layer has no activation function and the loss is a mean squared error loss. We optimize the network using stochastic gradient descent without momentum or any other bells and whistles.
-``` Python 
-model = Sequential()
-model.add(Dense(100, input_shape=(grid_size**2,), activation='relu'))
-model.add(Dense(100, activation='relu'))
-model.add(Dense(num_actions))
-model.compile(optimizer='sgd', loss='mse')
-```
-
-## Training to play Catch 
-A final ingredient to Q-Learning is exploration.
-
-Everyday life shows that sometimes you have to do something weird and/or random to find out whether there is something better than your daily trot.
-
-The same goes for Q-Learning. Always choosing the best option means you might miss out on some unexplored paths. To avoid this, the learner will sometimes choose a random option, and not necessarily the best.
-
-Now we can define the training method:
-
-```Python 
-def train(model,epochs):
-    #1
-    win_cnt = 0
-
-    win_hist = []
-
-    for e in range(epochs): #2
-        loss = 0.
-        env.reset()
-        game_over = False
-        input_t = env.observe()
+        labels = to_categorical(y_train[idx], num_classes=num_classes+1)
         
-        while not game_over: #3
-            #4
-            input_tm1 = input_t
+        #8
+        fake_labels = np.full((half_batch, 1),num_classes)
+        fake_labels = to_categorical(fake_labels,num_classes=num_classes+1)
+        #9
+        d_loss_real = discriminator.train_on_batch(imgs, 
+                                                  [valid, labels],
+                                                  class_weight=[cw1, cw2])
+        #10
+        d_loss_fake = discriminator.train_on_batch(gen_imgs, 
+                                                    [fake, fake_labels],
+                                                    class_weight=[cw1, cw2])
+        #11
+        d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
+
+        #12
+        noise = np.random.normal(0, 1, (batch_size, 10))
+        validity = np.ones((batch_size, 1))
+        #13
+        g_loss = combined.train_on_batch(noise, 
+                                          validity, 
+                                          class_weight=[cw1, cw2])
+
+        #14
+        print ("%d [D loss: %f] [G loss: %f]" % (epoch, g_loss))
+        
+        #15
+        if epoch % 10 == 0:
+            _,y_pred = discriminator.predict(X_test,batch_size=batch_size)
+            y_pred = np.argmax(y_pred[:,:-1],axis=1)
             
-            if np.random.rand() <= epsilon: #5
-                action = np.random.randint(0, num_actions, size=1)
-            else:
-                q = model.predict(input_tm1) #6
-                action = np.argmax(q[0])
-
-            #7
-            input_t, reward, game_over = env.act(action)
-            if reward == 1:
-                win_cnt += 1        
-
-            #8
-            exp_replay.remember([input_tm1, action, reward, input_t],
-                                game_over)    
-
-            #9
-            inputs, targets = exp_replay.get_batch(model,
-                                                  batch_size=batch_size)
-
-            batch_loss = model.train_on_batch(inputs, targets)
-
-            loss += batch_loss
+            f1 = f1_score(y_test,y_pred)
+            print('Epoch: {}, F1: {:.5f}'.format(epoch,f1))
+            f1_progress.append(f1)
             
-        win_hist.append(win_cnt)
-    return win_hist
+    return f1_progress
 ``` 
-\#1 We want to keep track of the progress of our Q-Learner, so we count the wins of the model over time.
+\#1 We create an empty array to monitor the F1 Score of the discriminator on the test set.
 
-\#2 We now play for a number of games, specified by the `epoch` argument. At the beginning of a game, we first reset the game, set the `game_over` indicator to `False`, and observe the initial state of the game.
+\#2 Since we use separate batch training steps for real and fake data, we effectively use a half batch for each of the training steps.
 
-\#3 We will then be playing frame by frame until the game is over.
+\#3 The classification head of the discriminator has a class label for 'this is fake'. Since half of the images are fake, we want to give this class a higher weight.
 
-\#4 At the start of a frame cycle, we save the previously observed input as `input_tm1`, input at time t minus one.
+\#4 We now draw a random sample of real data.
 
-\#5 Now comes the exploration part. We draw a random number between zero and one. If the number is smaller than `epsilon`, we pick a random action. This technique is also called 'epsilon-greedy' as we pick a random action with a probability of epsilon and greedily choose the action promising the highest rewards otherwise.
+\#5 We generate some random noise vectors and use the generator to create some fake data.
 
-\#6 If we choose a non random action, we let the neural network predict the expected rewards for all actions. We then pick the action with the highest expected reward.
+\#6 For the 'fake or not head' we create labels. All real images have the label 1 (real), all fake images have the label 0 (fake).
 
-\#7 We now act with our chosen or random action and observe a new state, a reward and information about whether the game is over. The game gives a reward of one if we win, so we eventually have to increase our win counter.
+\#7 We one hot encode the labels of our real data. By specifying that our data has one more classes than it actually has, we leave space for the 'is fake' class.
 
-\#8 We store the new experience in our experience replay buffer.
+\#8 Our fake data all has the 'is fake' label. We create a vector of those labels and one hot encode them, too.
 
-\#9 We then sample a new training batch from the experience replay and train on that batch.
+\#9 First, we train the discriminator on the real data.
 
-The graph below shows the rolling mean of successful games. After about 2,000 epochs of training, the neural network should be quite good at playing catch. 
-![Catch Progress](./assets/catch_progress.png)
-Caption: Progress of a Q-Learning neural network playing catch.
+\#10 Then we train the descriminator on the fake data.
 
-You have now successfully created your first reinforcement learning system. In the next section, we will explore the theoretical foundations of reinforcement learning and discover how the same system that learns to play catch can learn to rout orders in the futures market.
-# Markov processes and the bellman equation - A more formal introduction to RL 
-Following the long history of modern deep learning being a continuation of quantitative finance with more GPUs, the theoretical foundation of reinforcement learning lies in Markov models. A Markov model model describes a stochastic process with different states in which the probability of ending up in a specific state is purely dependent on the state one is currently in. Below you can see a simple Markov model describing recommendations given for a stock.
+\#11 total loss of the discriminator for this epoch is the mean of the loss from the real and fake data.
 
-![Markov Model](./assets/markov_model.png)
+\#12 Now we train the generator. We generate a batch full of noise vectors as well as a batch full of labels saying 'this is real data'.
 
-As you can see, there are three states in this model, BUY, HOLD and SELL. For each two states, there is a transition probability. For example the probability that a state gets a BUY recommendation if it had a HOLD recommendation in the previous round is described by $p(BUY|HOLD)$ which is equal to 0.5. There is a 50% chance that a stock that is currently in HOLD will move to BUY in the next round.
+\#13 With this data in hand we train the generator.
 
-States are associated with rewards. If you own a stock, and that stock has a BUY recommendation, the stock will go up and you will earn a reward of 1 in this case. If the stock has a sell recommendation, you will gain a negative reward, or punishment, of -1.
+\#14 To keep track of what is going on, we print out the progress. Remember that we do _not_ want the losses to go down, we want them to stay roughly constant. If either generator or discriminator becomes much better than the other the equilibrium breaks.
 
-Note: In some textbooks, the rewards are associated with state transitions and not states themselves. It turns out to be mathematically equivalent, and for the ease of notation we are associating the rewards with states here.
+\#15 Finally, we calculate and output the F1 score of using the discriminator as a fraud detection classifier for the data. This time, we only care about the classification data and discard the 'real or fake' head. We classify the transactions by the highest value that is not the 'is real' class of the classifier.
 
-In a Markov model, an agent can follow a policy, usually denoted as $\pi(s,a)$. A policy describes the probability of taking an action $a$ when in a state $s$. Say you are a trader, you own a stock and that stock gets a SELL recommendation. In that case you might choose to sell the stock in 50% of cases, hold the stock in 30% of cases and buy more in 20% of cases. In other word your policy for the state SELL can be described as: 
 
-$$\pi(SELL,sell) = 0.5$$
-$$\pi(SELL,hold) = 0.3$$
-$$\pi(SELL,buy) = 0.2$$
-
-Some traders have a better policy and can make more money of a state than others. Therefore, the value of a state $s$ depends on the policy $\pi$. The value function $V$ describes the value of a state $s$ when policy $\pi$ is followed. It is the expected return from state $s$ when policy $\pi$ is followed.
-
-$$V^\pi(s)=\mathbb{E}_\pi[R_t|s_t = s]$$
-
-The expected return is the reward gained immediately plus the discounted future rewards.
-
-$$R_t = 
-r_{t+1} + \gamma * r_{t+2} + \gamma^2 * r_{t+3} + \gamma^3 * r_{t+3}
-= \sum_{k=0}^{\infty}\gamma^k*r_{t+k+1}
-$$
-
-The other value function frequently used in RL is the function $Q(s,a)$ we have already seen in the previous section. $Q$ describes the expected return of taking action $a$ in a state $s$ if policy $\pi$ is followed.
-
-$$Q^\pi(s,a) = \mathbb{E}[R_t|s_t=s,a_t=a]$$
-
-Note: We use the expected value $\mathbb{E}$ since our environment and our actions are stochastic. We can not say for certain that we will land in a specific state, we can only give a probability.
-
-Intuitively, $Q$ and $V$ describe the same thing. If we find ourselves in a certain state, what should we do? $V$ gives recommendations regarding which state we should seek, $Q$ gives advice on which action we should take. Of course, $V$ implicitly assumes we have to take some action and $Q$ assumes that the result of our actions is landing in some state. In fact, both $Q$ and $V$ are derived from the so called bellman equation, which brings us back to the Markov model from the beginning of this section.
-
-If you assume that the environment you operate in can be described as a Markov model, you would really want to know two things: First, you would want to find out the _state transition probabilities_. If you are in a state $s$, what is the chance $\mathcal{P}_{ss'}^a$ that you end up in state $s'$ if you take action $a$? Mathematically:
-
-$$\mathcal{P}_{ss'}^a = Pr(s_{t+1} = s'|s_t = s, a_t = a)$$
-
-Equally, you would be interested with the expected reward $\mathcal{R}_{ss'}^a$ of being in state $s$, taking action $a$ and ending up in state $s'$:
-
-$$\mathcal{R}_{ss'}^a = 
-\mathbb{E}[r_{t+1}|s_t = s,s_{t+1} = s', a_t = a]
-$$
-
-With this in mind we can now derive the two Bellman equations for $Q$ and $V$. First, we rewrite the equation describing $V$ to contain the actual formula for $R_t$
-
-$$V^\pi = 
-\mathbb{E}_\pi \big[\sum_{k=0}^{\infty}\gamma^k*r_{t+k+1}|s_t = s \big]$$
-
-We can pull the first reward out of the sum:
-
-$$V^\pi(s) = 
-\mathbb{E}_\pi \big[
-r_{t+1} + \gamma * \sum_{k=0}^{\infty}\gamma^k*r_{t+k+2}|s_t = s \big]$$
-
-The first part of our expectation is the expected reward we directly receive from being in state $s$ and following policy $\pi$
-
-$$\mathbb{E}_\pi[r_{t+1}|s_t = s] = 
-\sum_a \pi(s,a) \sum_{s'}\mathcal{P}_{ss'}^a \mathcal{R}_{ss'}^a$$
-
-The equation above shows a nested sum. First, we sum over all actions $a$ weighted by their probability of occurrence under policy $\pi$. For each action we then sum over the distribution of rewards $\mathcal{R}$ from the transition from state $s$ to the next state $s'$ after an action $a$ weighted by the probability of this transition occurring following the transition probability $\mathcal{P}$.
-
-The second part of our expectation can be rewritten as follows:
-
-$$
-\mathbb{E}_\pi
-\bigg[\gamma \sum_{k=0}^{\infty}\gamma^k r_{t+k+2}|s_t = s\bigg] =
-
-\sum_a \pi(s,a) \sum_{s'}\mathcal{P}_{ss'}^a 
-
-\gamma \mathbb{E}_\pi
-\bigg[\sum_{k=0}^{\infty}\gamma^kr_{t+k+2}|s_{t+1} = s'\bigg]
-
-$$
-
-The expected discounted value of the future rewards after state $s$ is the discounted expected future value of all states $s'$ weighted by their probability of occurrence $\mathcal{P}$ and the probability of an action $a$ being taken following the policy $\pi$.
-
-This formula is quite a mouthful, but it already gives us a glimpse at the nature of the value function: It is recursive. If we now replace the expectation in our value function it becomes more clear:
-
-$$
-V^\pi(s) =
-\sum_a \pi(s,a) \sum_{s'}\mathcal{P}_{ss'}^a
-
-\Bigg[
-\mathcal{R}_{ss'}^a + 
-
-\gamma \mathbb{E}_\pi
-\bigg[\sum_{k=0}^{\infty}\gamma^kr_{t+k+2}|s_{t+1} = s'\bigg]
-\Bigg]
-$$
-
-The inner expectation represents the value function for the next step $s'$! That means we can replace the expectation with the value function $V(s')$
-
-$$
-V^\pi(s) =
-\sum_a \pi(s,a) \sum_{s'}\mathcal{P}_{ss'}^a
-
-\bigg[
-\mathcal{R}_{ss'}^a +
-
-\gamma V^\pi(s')
-
-\bigg]
-$$
-
-Following the same logic, we can derive the $Q$ function as:
-
-$$
-Q(s,a) = 
-
-\sum_{s'} \mathcal{P}_{ss'}^a
-
-\bigg[
-\mathcal{R}_{ss'}^a +
-
-\gamma Q^\pi(s',a')
-
-\bigg]
-$$
-
-Congratulations, you have just derived the Bellman equations. Take a second to pause and ponder and make sure you really understand the mechanics behind these equations. The core idea is that the value of a state can be expressed as the value of other states. For a long time, the go to approach to optimizing the Bellman equation was the build a model of the underlying Markov model and its state transition and reward probabilities. 
-
-However, the recursive structure the door for a technique called 'dynamic programming'. The idea behind dynamic programming is to solve easier subproblems to solve the solution of a larger problem. You already saw this in action in the catch example. There, we used a neural network to estimate $Q^\pi(s',a')$, except for states that ended the game. For these games, finding the reward associated with the state is easy: it is the final reward received at the end of the game. It was these states for which the neural network first developed an accurate estimate of the function $Q$. From there it could then go backwards and learn the values of states that were further away from the end of the game. There are more possible applications of this dynamic programming, model free approach to reinforcement learning. 
-
-Before we jump in on different kinds of systems that can be built using this theoretical foundation, we will pay a brief visit to the applications of the Bellman equation in economics. Readers familiar with the work discussed will find reference points they can use to develop a deeper understanding of the Bellman equations. Readers unfamiliar with these works will find inspiration for further reading and applications for techniques discussed in this chapter.
-
-## The Bellman equation in economics
-While the first application of the Bellman equation to economics occurred already in 1954, Robert C. Merton's 1973 article 'An Intertemporal Capital Asset Pricing Model' is perhaps the most well known application. Using the Bellman equation, Merton develops an capital asset pricing model that unlike the classic CAPM model works in continuous time and can account for changes in investment opportunity. 
-
-The recursiveness of the Bellman equation inspired the subfield of recursive economics. Nancy Stokey, Robert Lucas and Edward Prescott wrote an influential 1989 book titled 'Recursive Methods in Economic Dynamics' in which they apply the recursive approach to solve problems in economic theory. This book inspired others to use recursive economics to address a wide range of economic problems from the principal agent problem to optimal economic growth.
-
-Avinash Dixit and Robert Pindyck developed applied the approach successfully to capital budgeting in their 1994 book 'Investment Under Uncertainty' and Patrick Anderson applied it to the valuation of private businesses in his 2009 article 'The Value of Private Businesses in the United States'.
-
-While recursive economics still has many problems, including the large compute power required for it, it is a promising subfield of the dismal science. 
-
-
-# (Asynchronous) Advantage Actor Critic models
-Q-Learning as we saw above is quite useful, but has its drawbacks. For example as we have to estimate a Q value for each action, there has to be a discrete, limited set of actions. But what if the action space is continuous or extremely large? Say, you are using an RL algorithm to build a portfolio of stocks. Even if your universe of stocks consisted only of two stocks, say AMZN and AAPL, there would be an infinite amount of ways to balance them, 10% AMZN & 90% AAPL, 11% AMZM & 89% AAPL and so on. If your universe gets bigger, the amount of ways you can combine stocks explodes. 
-
-You could divide the continuous steps into discrete separations by say, allowing only full percent allocations, but even then you would have a potentially trillion dimensional action space. A workaround to having to select from such an action space is to learn the policy $\pi$ directly. Once you have learned a policy, you can just give it a state and it will give back a distribution of actions. This means that your actions will not be deterministic. A stochastic policy has advantages, especially in a game theoretic setting.
-
-Imagine you are playing rock, paper, scissors and you are following a deterministic policy. If your policy is to pick rock, you will always pick rock and as soon as your opponent figures out that you are always picking rock you will always loose. The Nash equilibrium, the solution of a non-cooperative game, for rock, paper scissors is to pick actions at random. Only a stochastic policy can do that.
-
-To learn a policy, we have to be able to compute a gradient with respect to a policy. And, contrary to most people's expectations, policies are differentiable. In this section we will build up a policy gradient step by step and use it to create an advantage actor critic (A2C) model for continuous control.
-
-The first piece to differentiating policies is to look at the advantage we can have by picking a particular action $a$ rather then just following the policy $\pi$.
-
-$$
-A(s,a) = Q_\pi(s,a) - V^pi(s)
-$$
-
-The advantage of action $a$ in state $s$ is the value of executing $a$ in $s$ minus the value of $s$ under policy $\pi$. We measure how good our policy $\pi$ is with $J(\pi)$, a function expressing the expected value of the starting state $s_0$.
-
-$$J(\pi)=\mathbb{E}_{p^{s_0}}[V(s_0)]$$
-
-Now to compute the gradient of the policy, we have to do two steps which are shown inside the expectation in the policy gradient formula:
-
-$$
-\nabla_\theta J(\pi)=\mathbb{E}_{s\sim p^\pi, a\sim \pi(s)}
-[A(s,a)\cdot \nabla_\theta\pi(a|s)]
-$$
-
-First we have to calculate the advantage of a given action $a$ with $A(s,a)$. Then we have to calculate the derivative of the weights of the neural network $\nabla_\theta$ with respect to increasing the probability $\pi(a|s)$ that $a$ is picked under the policy $\pi$.
-
-For actions with a positive advantage $A(s,a)$, we follow the gradient that would make $a$ more likely. For actions with a negative advantage we go into the exact opposite direction.
-
-The expectation says that we are doing this for all states and all actions. In practice we manually multiply the advantage of actions with their increased likelihood gradients. 
-
-One thing left is how do we compute the advantage? The value of taking an action is the reward earned directly from taking the action as well as the value of the state we find ourselves in after taking the action.
-
-$$Q(s,a) = r + \gamma V(s')$$
-
-So we can substitute $Q(s,a)$ in the advantage calculation:
-
-$$
-A(s,a) = Q(s,a) - V(s) = r + \gamma V(s') - V(s)
-$$
-
-As calculating $V$ turns out to be useful for calculating the policy gradient, researchers have come up with the 'Advantage Actor Critic' architecture. A single neural network with two heads learns both $V$ and $\pi$. As it turns out, sharing weights for learning the two functions turns out to be useful and accelerates training, if both have to extract features from the environment. If you are training an agent that operates on high dimensional image data for instance, the value function and the policy head both need to learn how to interpret the image. Sharing weights would help both master the common task. If you are training on lower dimensional data, it might make more sense to not share weights.
-
-![Advantage Actor Critic Scheme](./assets/actor_critic.png)
-
-If the action space is continuous, $\pi$ is represented by two outputs: the mean $\mu$ and standard deviation $\sigma$. This allows us to sample from a learned distribution just as we did for the autoencoder.
-
-A common variant of the advantage actor critic, or A2C, approach is the asynchronous advantage actor critic, or A3C. An A3C works exactly like an A2C, except that on training time, multiple agents are simulated in parallel. This means that more independent data can be gathered. independent data is important as too correlated examples can make a model overfit to specific situations and forget other situations. Since A3Cs and A2Cs work by the same principles and the implementation of parallel game play introduces some complexity that obfuscates the actual algorithm, we will just stick with an A2C in the examples below.
-
-## Learning to balance
-
-In this section, we will train an A2C model to swing up and balance a pendulum.
-![Pendulum Gym](./assets/pendulum_gym.png)
-
-The pendulum is controlled by a rotational force that can be applied in either direction. In the image above you can see the arrow that shows the force being applied. Control is continuous, the agent can apply more or less force. Force can be applied in both directions as a positive and negative force. 
-
-This relatively simple control task is a useful example of continuous control that can be easily extended to a stock trading task later. In addition, the task can be visualized so that we can get an intuitive gasp on how the algorithm learns and its pitfalls.
-
-Note: When implementing a new algorithm, try it out on a task you can visualize. Failures are often subtle and easier to spot visually than through data.
-
-The pendulum environment is part of the OpenAI gym, a suite of games made to train reinforcement learning algorithms. You can install it via the command line using
+Now that we have everything set up, we train our SGAN for 5,000 epochs. This takes about 5 minutes on a GPU, but could take much longer if you do not have a GPU.
+```Python
+f1_p = train(X_res,y_res,
+             X_test,y_test,
+             generator,discriminator,
+             combined,
+             num_classes=2,
+             epochs=5000, 
+             batch_size=128)
 ```
-pip install gym
-```
-See http://gym.openai.com/ for more information.
-
-Before we start we have to make some imports:
-
+Finally, we plot the F1 score of our semi supervised fraud classifier over time:
 ```Python 
-import gym #1
-
-import numpy as np #2
-
-from scipy.stats import norm #3
-from keras.layers import Dense, Input, Lambda
-from keras.models import Model
-from keras.optimizers import Adam
-from keras import backend as K
-
-from collections import deque #4
-import random
-``` 
-
-\#1 OpenAI's `gym` is a toolkit for developing reinforcement learning algorithms. It provides a number of game environments, from classic control tasks like pendulum to Atari games to robotics simulations.
-
-\#2 The `gym` is interfaced by `numpy` arrays. States, actions and environments are all presented in a `numpy` compatible format.
-
-\#3 Our neural network will be relatively small and based around the functional API. Since we once again learn a distribution we need to make use of `scipy`'s norm function which helps us take the norm of a vector.
-
-\#4 The python data structure `deque` is a highly efficient data structure that conveniently manages a maximum length for us. No more manually removing experiences! We can randomly sample from a `deque` using pythons `random` module.
-
-Now it is time to build the agent. The following methods all form the `A2CAgent` class.
-
-```Python 
-def __init__(self, state_size, action_size):
-    
-    self.state_size = state_size #1
-    self.action_size = action_size
-    self.value_size = 1
-    
-    self.exp_replay = deque(maxlen=2000) #2
-
-
-    self.actor_lr = 0.0001 #3
-    self.critic_lr = 0.001
-    self.discount_factor = .9
-
-    self.actor, self.critic = self.build_model() #4
-
-    
-    self.optimize_actor = self.actor_optimizer() #5
-    self.optimize_critic = self.critic_optimizer() 
+fig = plt.figure(figsize=(10,7))
+plt.plot(f1_p)
+plt.xlabel('10 Epochs')
+plt.ylabel('F1 Score Validation')
 ```
 
-\#1 First we need to define some game related variables. The state space size and the action space size are given by the game. Pendulum states consist of three variables dependent on the angle of the pendulum, . Namely a state consists of the sine of theta, the cosine of theta and the angular velocity. The value of a state is just a single scalar.
+![SGAN Progress](./assets/sgan_credit_card.png)
 
-\#2 Next we set up our experience replay buffer, which can save at maximum 2000 states. Larger RL experiments have much larger replay buffers (often around 5 million experiences), but for this task 2000 will do.
+As you can see, the model learns pretty quickly at first, but then 'collapses' with its F1 score going to zero. This is a textbook example of a collapsing GAN. As mentioned above, GANs are unstable. If the delicate balance between the generator and discriminator breaks, performance quickly deteriorates. It is an active area of reasearch to make GANs more stable. So far, many practitioners just try many runs with different hyperparameters and random seeds and hope to get lucky. Another popular method is to just to save the model every couple of epochs. The model seems to be a pretty decent fraud detector at around epoch 150 despite being trained on less than 1000 transactions.
 
-\#3 As we are training a neural network, we need to set some hyper-parameters. Even if actor and critic share weights, it turned out that the actor learning rate should usually be lower than the critic learning rate. This is because the policy gradient we train the actor on is more volatile. We also need to set the discount rate $\gamma$. Remember that the discount rate in reinforcement learning is applied differently than it is usually in finance. In finance, we discount by dividing future values by one plus the discount factor. In reinforcement learning we multiply with the discount rate. Therefore, a higher discount factor $\gamma$ means that future values are less discounted. 
+# Exercises
+- Create an SGAN to train MNIST an image classifier. How few images can you use to achieve over 90% classification accuracy.
 
-\#4 To actually build the model we define a separate method which we will discuss below.
+- Using LSTMs you can build an autoencoder for stock price movements. Using a dataset such as the DJIA stock prices, build an autoencoder that encodes stock movements. Then visualize what happens to the outputs as you move through the latent space. You can find the dataset here: https://www.kaggle.com/szrlee/stock-time-series-20050101-to-20171231
 
-\#5 The optimizers for actor and critic are custom optimizers. To define these we also create a separate function. The optimizers themselves are functions that can be called at training time.
+# Summary
+In this chapter you have learned about the two most important types of generative models: Autoencoders and GANs. You have learned about latent spaces and the use they have for financial analysis. You also got a first impression on how machine learning can solve game-theoretic optimization problems. In the next chapter we will deep dive into exactly that type of optimization as we cover reinforcement learning. 
 
 
-```Python
-def build_model(self):
-  
-    state = Input(batch_shape=(None, self.state_size)) #1
-    
-    actor_input = Dense(30, #2 
-                        activation='relu',
-                        kernel_initializer='he_uniform')(state)
-                        
-    mu_0 = Dense(self.action_size, #3
-                 activation='tanh',
-                 kernel_initializer='he_uniform')(actor_input)
-                 
-    mu = Lambda(lambda x: x * 2)(mu_0) #4
-    
-    sigma_0 = Dense(self.action_size, #5
-                    activation='softplus',
-                    kernel_initializer='he_uniform')(actor_input)
-
-    
-    sigma = Lambda(lambda x: x + 0.0001)(sigma_0) #6
-
-    critic_input = Dense(30, #7
-                         activation='relu',
-                         kernel_initializer='he_uniform')(state)
-    
-    #8
-    state_value = Dense(1, kernel_initializer='he_uniform')(critic_input)
-
-    
-    actor = Model(inputs=state, outputs=(mu, sigma)) #9
-    critic = Model(inputs=state, outputs=state_value) #10
-
-    
-    actor._make_predict_function() #11
-    critic._make_predict_function() 
-
-    #12
-    actor.summary()
-    critic.summary()
-    
-    #13
-    return actor, critic
-```
-\#1 As we are using the functional API, we have to define an input layer which we can use to feed the state to actor and critic.
-
-\#2 The actor has a hidden first layer as in input to the actor value function. It has 30 hidden units and a `'relu'` activation function. It is initializes by a `'he_uniform'` initializer. This initializer is only slightly different from the default `'glorot_uniform'` initializer. He-Uniform draws from a uniform distribution with the limits $\pm \sqrt{6 / i}$ where $i$ is the input dimension. The default glorot uniform samples from a uniform distribution with the limits  $\pm \sqrt{6 / (i+o)}$, with $o$ being the output dimensionality. The difference between the two is rather small, but, as it turns out the He uniform initializer work better for learning the value function and policy.
-
-\#3 The action space of pendulum ranges from -2 to 2. We use a regular 'tanh' activation which ranges from -1 to one first and correct the scaling later.
-
-\#4 To correct the scaling of the action space we now multiply the outputs of the `'tanh'` function by two. Using the `Lambda` layer we can define such a function manually in the computational graph. 
-
-\#5 The standard deviation should not be negative. The `'softplus'` activation works in principle just like `'relu'`, but with a soft edge:
-
-![Relu vs Softplus](./assets/rectifier_and_softplus_functions.png)
-
-\#6 To make sure the standard deviation is not zero, we add a tiny constant to it. Again we use the `Lambda` layer for this task. This also ensures that the gradients get calculated correctly as the model is aware of the constant added.
-
-\#7 The critic also has a hidden layer to calculate its value function.
-
-\#8 The value of a state is just a single scalar that can have any value. The value head thus only has one output and a linear, speak no, activation function.
-
-\#9 We define the actor to map from a state to a policy expressed by the mean $\mu$ and standard deviation $\sigma$.
-
-\#10 We define the critic to map from a state to a value of that state.
-
-\#11 While it is not strictly required for the A2C, if we want to use our agents for an asynchronous, A3C, approach we need to make the predict function threading safe. Keras loads the model on a GPU the first time you call `predict()`. If that happens from multiple threads, things can break. `_make_predict_function()` makes sure the model is already loaded on a GPU or CPU and is ready to predict, even from multiple threads.
-
-\#12 For debugging purposes we print the summaries of our models.
-
-\#13 Finally, we return the models. 
-
-
-Now, we have to create the optimizer for the actor. The actor uses a custom optimizer that optimizes it along the policy gradient. Before we define the optimizer however, we need to look at the last piece of the policy gradient.
-Remember how the policy gradient was dependent on the gradient of the weights $\nabla_\theta\pi(a|s)$ that would make action $a$ more likely? Keras can caluclate this derivative for us, but we need to provide Keras with the value of our policy $\pi$. To this end we need to define a probability density function. $\pi$ is a normal distribution with mean $\mu$ and standard deviation $\sigma$, so the probability density function $f$ is:
-$$
-f(x;\mu,\sigma^2)=
-\frac{1}{\sqrt{2\pi\sigma^2}}  * e^{\frac{-(a-\mu)^2}{2\sigma}}$$
-
-In this term $\pi$ stands for the constant, 3.14..., not for the policy. 
-Later we only need to take the logarithm of this probability density function. Why the logarithm? Taking the logarithm results in a smoother gradient. Maximizing the log of a probability means maximizing the probability, so we can just use the 'log trick' as it is called to improve learning.
-
-The value of the policy $\pi$ is the advantage of each action $a$ times the log probability of this action occuring as expressed by the probability density function $f$.
-
-```Python
-def actor_optimizer(self):
-    action = K.placeholder(shape=(None, 1)) #1
-    advantages = K.placeholder(shape=(None, 1))
-
-    mu, sigma_sq = self.actor.output #2
-
-    #3
-    pdf = 1. / K.sqrt(2. * np.pi * sigma_sq) * \
-                      K.exp(-K.square(action - mu) / (2. * sigma_sq))
-          
-    log_pdf = K.log(pdf + K.epsilon())#4
-    
-    exp_v = log_pdf * advantages #5
-
-    entropy = K.sum(0.5 * (K.log(2. * np.pi * sigma_sq) + 1.)) #6
-    exp_v = K.sum(exp_v + 0.01 * entropy) #7
-    actor_loss = -exp_v #8
-
-    optimizer = Adam(lr=self.actor_lr) #9
-    
-    #10
-    updates = optimizer.get_updates(self.actor.trainable_weights, 
-                                    [], 
-                                    actor_loss)
-
-    #11
-    train = K.function([self.actor.input, action, advantages], 
-                        [], 
-                        updates=updates)
-                        
-    #12
-    return train
-```
-
-\#1 First, we need to set up some placeholders for the action taken and the advantage of that action. We will fill in these placeholders when we call the optimizer.
-
-\#2 We get the outputs of the actor model. These are tensors which we can plug into our optimizer. Optimization of these tensors will be backpropagated and optimizes the whole model.
-
-\#3 Now we set up the probability density function. This step can look a bit intimidating but if you look closely it is the same probability density function we defined above.
-
-\#4 Now we apply the log trick. To ensure that we don't accidentially take the logarithm of zero, we add a tiny constant `epsilon`.
-
-\#5 The value of our policy is now the probability of an action $a$ times the probability of this action occurring.
-
-\#6 To reward the model for a probabilistic policy, we add an entropy term. The entropy is calculated with the term below: 
-
-$$\sum 0.5 (\log(2 \pi \sigma^2) +1)$$
-
-Where again $\pi$ is a constant 3.14... and $\sigma$ is the standard deviation.
-While the proof that this term expresses the entropy of a normal distribution is outside of the scope of this chapter, you can see that the entropy goes up if the standard deviation goes up.
-
-\#7 We add the entropy term to the value of the policy. By using `K.sum()` we sum the value over the batch.
-
-\#8 We want to maximize the value of the policy, but by default Keras performs gradient descent that minimizes losses. An easy trick is to turn the value negative and then minimize the negative value.
-
-\#9 To perform gradient descent, we use the `Adam` optimizer.
-
-\#10 We can retrieve an update tensor from the optimizer. The `get_updates()` takes three arguments, `parameters`, `constraints` and `loss`. We provide the parameters of the model, speak its weights. Since we don't have any constraints we just pass an empty list as a constraints. For a loss we pass the actor loss.
-
-\#11 Armed with the updates tensor we can now create a function which takes as input the actor model input, speak the state, as well as the two placeholders, the action and the advantages. It returns nothing, this the empty list, but applies the update tensor to the model involved. This function is callable as we will see later.
-
-\#12 We return the function. Since we call `actor_optimizer()` in the init function of our class, the optimizer function we just created becomes `self.optimize_actor`
-
-For the critic, we also need to create a custom optimizer. The loss for the critic is the mean squared error between the predicted value and the reward plus the predicted value of the next state.
-```Python
-def critic_optimizer(self):
-    discounted_reward = K.placeholder(shape=(None, 1)) #1
-
-    value = self.critic.output #2
-
-    loss = K.mean(K.square(discounted_reward - value)) #3
-
-    optimizer = Adam(lr=self.critic_lr) #4
-    
-    updates = optimizer.get_updates(self.critic.trainable_weights, 
-                                    [], 
-                                    loss)
-    
-    #6
-    train = K.function([self.critic.input, discounted_reward], 
-                       [], 
-                       updates=updates)
-                      
-    return train
-```
-
-\#1 Again we set up a placeholder for the variable we need. The `discounted_reward` contains the discounted future value of state $s'$ as well as the reward immediately earned. 
-
-\#2 The critic loss is the mean squared error between the critics output and the discounted reward. We first obtain the output tensor...
-
-\#3...before calculating the mean squared error between the output and discounted reward.
-
-\#4 Again we use an adam optimizer from which we obtain an update tensor, just as we did above.
-
-\#5 Finally, we roll the update into a single function just as we did above. This function will become `self.optimize_critic`
-
-
-For our agent to take actions, we need to define a method that produces actions from a state:
-```Python
-def get_action(self, state):
-    state = np.reshape(state, [1, self.state_size]) #1  
-    mu, sigma_sq = self.actor.predict(state) #2
-    epsilon = np.random.randn(self.action_size) #3
-    action = mu + np.sqrt(sigma_sq) * epsilon #4
-    action = np.clip(action, -2, 2) #5
-    return action
-```
-\#1 First, we reshape the state to make sure it has the shape the model expects.
-
-\#2 We predict the means and variance $\sigma^2$ for this action from the model.
-
-\#3 Like we did for the autoencoder, we first sample a random normal distribution with mean zero and standard deviation 1, before...
-
-\#4 ...adding the mean and multiplying by the standard deviation. Now we have our action, sampled from the policy.
-
-\#5 To make sure we are within bounds of the action space, we clip the action at -2, 2, so it won't be outside of those boundaries.
-
-At last, we need to train the model. The `train_model` function train the model after receiving one new experience.
-```Python
-def train_model(self, state, action, reward, next_state, done):
-    #1
-    self.exp_replay.append((state, action, reward, next_state, done))
-    
-    #2
-    (state, action, reward, next_state, done) = random.sample(self.exp_replay,
-                                                              1)[0]
-    #3
-    target = np.zeros((1, self.value_size))
-    advantages = np.zeros((1, self.action_size))
-
-    #4
-    value = self.critic.predict(state)[0]
-    next_value = self.critic.predict(next_state)[0]
-
-    #5
-    if done:
-        advantages[0] = reward - value
-        target[0][0] = reward
-    else:
-        advantages[0] = reward + self.discount_factor * (next_value) - value
-        target[0][0] = reward + self.discount_factor * next_value
-
-    #6
-    self.optimize_actor([state, action, advantages])
-    self.optimize_critic([state, target])
-```
-
-\#1 First the new experience is added to the experience replay. 
-
-\#2 Then, we immediately sample an experience from the experience replay. This way we break the correlation between samples the model trains on.
-
-\#3 We set up placeholders for the advantages and targets. We will fill them at step 5
-
-\#4 We predict the values for state $s$ and $s'$
-
-\#5 If the game ended after the current state $s$. The advantage is the reward we earned minus the value we assigned to the state and the target for the value function is just the reward we earned. If the game did not end after this state, the advantage is the reward earned plus the discounted value of the next state minus the value of this state. The target in that case is the reward earned plus the discounted value of the next state. 
-
-\#6 Knowing the advantage, the action taken and the value target, we can optimize both actor and critic with the optimizers we created earlier.
-
-And that is it, our `A2CAgent` class is done. Now it is time to use it. We define a `run_experiment` function. This function plays the game for a number of episodes. It is most useful to first train a new agent without rendering as training takes around 600 to 700 games until the agent does well. With your trained agent you can then watch the game play.
-
-```Python
-def run_experiment(render=False, agent=None, epochs = 3000):
-    env = gym.make('Pendulum-v0') #1
-    
-    state_size = env.observation_space.shape[0] #2
-    action_size = env.action_space.shape[0]
-
-    if agent = None: #3
-        agent = A2CAgent(state_size, action_size)
-
-    scores = [] #4
-
-    for e in range(epochs):  #5
-        done = False #6
-        score = 0
-        state = env.reset()
-        state = np.reshape(state, [1, state_size])
-
-        while not done: #7
-            if render: #8
-                env.render()
-
-            action = agent.get_action(state) #9
-            next_state, reward, done, info = env.step(action) #10
-            reward /= 10 #11
-            next_state = np.reshape(next_state, [1, state_size]) #12
-            agent.train_model(state, action, reward, next_state, done) #13
-
-            score += reward #14
-            state = next_state #15
-
-            if done: #16
-                scores.append(score) 
-                print("episode:", e, "  score:", score)
-                
-                #17
-                if np.mean(scores[-min(10, len(scores)):]) > -20:
-                    print('Solved Pendulum-v0 after {} iterations'.format(len(scores)))
-                    return agent, scores
-```
-
-\#1 First, we set up a new gym environment. This environment contains the pendulum game. We can pass actions to it and observe states and rewards.
-
-\#2 We obtain the action and state space from the game.
-
-\#3 If no agent was passed to the function, we create a new one.
-
-\#4 We set up an empty array to keep track of the scores over time.
-
-\#5 Now we play the game for a number of rounds specified by `epochs`
-
-\#6 At the beginning of a game, we set the 'game over indicator' to false, the score to zero and reset the game. By resetting the game we obtain the initial starting state.
-
-\#7 Now we play the game until it is over.
-
-\#8 If you passed `render = True` to the function, the game will be rendered on screen. Note that this won't work on a remote notebook like in Kaggle or Jupyter.
-
-\#9 We get an action from the agent...
-
-\#10 ...and act in the environment. When acting in the environement, we observe a new state, a reward and if the game was over. The `gym` also passes an info dictionary which we can ignore.
-
-\#11 The rewards from the game are all negative with a higher reward closer to zero being better. The rewards can be quite large though, so we reduce them. To extreme rewards can lead to too large gradients while training. That would hinder training.
-
-\#12 Before training with the model, we reshape the state, just to be sure.
-
-\#13 Now we train the agent on a new experience. As you have seen above, the agent will store the experience in its replay buffer and draw a random old experience to train from. 
-
-\#14 We increase the over reward to track the reward earned during one game.
-
-\#15 We set the new state to be the current state to prepare for the next frame of the game.
-
-\#16 If the game is over, we track and print out the game score. 
-
-\#17 The agent usually does pretty well after 700 epochs. We declare the game solved if the average reward over the last 20 games was better than -20. If that is the case, we exit the function and return the trained agent together with its scores.
-
-## Learning to trade 
-Reinforcement learning algorithms are largely developed in games and simulations where a failing algorithm won't cause any damage. However, once developed, an algorithm can be adapted to other, more serious tasks. Do demonstrate this, we will now create an A2C agent that learns how to balance a portfolio of stocks in a large universe of stocks. Please do not trade based on this algorithm, it is only a simplified and slightly naive implementation to demonstrate the concept.
-
-To train a new reinforcement learning algorithm, we first need to create a training environment. In this environment, the agent trades on real life stock data. The environment can be interfaced just like an OpenAI gym environment. Following the gym conventions for interfacing reduces complexity of development. Given a 100 day look back of the percentile returns of stocks in the universe, the agent has to return an allocation in form of a 100 dimensional vector. The allocation vector describes the share of assets the agent wants to allocate on one stock. A negative allocation means the agent is short trading the stock. For simplicities sake, transaction costs and slippage are not added to the environment. It would not be too difficult to add them however. The full implementation of the environment and agent can be found at:
-https://www.kaggle.com/jannesklaas/a2c-stock-trading
-
-The environment looks like this:
-
-```Python 
-class TradeEnv():    
-    def reset(self):
-        self.data = self.gen_universe() #1
-        self.pos = 0 #2
-        self.game_length = self.data.shape[0] #3
-        self.returns = [] #4
-
-        return self.data[0,:-1,:] #5
-    
-    def step(self,allocation): #6
-        ret = np.sum(allocation * self.data[self.pos,-1,:]) #7
-        self.returns.append(ret) #8
-        mean = 0 #9
-        std = 1
-        if len(self.returns) >= 20: #10
-            mean = np.mean(self.returns[-20:])
-            std = np.std(self.returns[-20:]) + 0.0001
-            
-        sharpe = mean / std #11
-        
-        if (self.pos +1) >= self.game_length: #12
-            return None, sharpe, True, {}  
-        else: #13
-            self.pos +=1
-            return self.data[self.pos,:-1,:], sharpe, False, {}
-        
-    def gen_universe(self): #14
-        stocks = os.listdir(DATA_PATH) 
-        stocks = np.random.permutation(stocks)
-        frames = [] 
-        idx = 0
-        while len(frames) < 100: #15
-            try: 
-                stock = stocks[idx]
-                frame = pd.read_csv(os.path.join(DATA_PATH,stock),
-                                    index_col='Date')
-                frame = frame.loc['2005-01-01':].Close
-                frames.append(frame)
-            except: # 19
-                e = sys.exc_info()[0]
-            idx += 1 
-
-        df = pd.concat(frames,axis=1,ignore_index=False) #16
-        df = df.pct_change()
-        df = df.fillna(0)
-        batch = df.values
-        episodes = [] #17
-        for i in range(batch.shape[0] - 101):
-            eps = batch[i:i+101]
-            episodes.append(eps)
-        data = np.stack(episodes)
-        assert len(data.shape) == 3 
-        assert data.shape[-1] == 100
-        return data
-``` 
-
-
-
-\#1 We load data for our universe.
-
-\#2 Since we are stepping through the data where each day is a step, we need to keep track of our position in time.
-
-\#3 We need to know when the game ends, so we need to know how much data we have.
-
-\#4 To keep track of returns over time, we set up an empty array.
-
-\#5 The initial state is the data for the first episode, until the last element which is the return of the next day, for all 100 stocks in the universe.
-
-\#6 At each step, the agent needs to provide an allocation to the environment. The reward the agent receives is the sharpe ratio, the ration between mean and standard deviation of returns, over the last 20 days. You could modify the reward function to e.g. include transaction costs or slippage. See the section on reward shaping later in this chapter.
-
-\#7 The return on the next day is the last element of the episode data.
-
-\#8 To calculate the sharpe ratio, we need to keep track of past returns.
-
-\#9 If we do not have 20 returns yet, mean and standard deviation of returns will be zero and one respectively. 
-
-\#10 If we do have enough data, we calculate the mean and standard deviation of the last 20 elements in our return tracker. We add a tiny constant to the standard deviation to avoid division by zero.
-
-\#11 We can now calculate the sharpe ratio which will the reward for the agent.
-
-\#12 If the game is over, the environment will return no next state, the reward and an indicator that the game is over as well as an empty info dictionary, to stick to the OpenAI gym convention.
-
-\#13 If the game is not over, the environment will return the next state, reward, an indicator that the game is not over, and an empty info dictionary.
-
-\#14 This function loads the daily returns of a universe of 100 random stocks. 
-
-\#15 The selector moves in random order over the files containing stock prices. Some of them are corrupted so that loading them will result in an error. The loader keeps trying until it has 100 pandas data-frames containing stock prices assembled. Only closing prices starting in 2005 will be considered.
-
-\#16 In the next step, all data-frames are concentrated. The percentile change in stock price is calculated. All missing values are filled with zero, speak no change. Finally, we extract the values from the data as a numpy array.
-
-\#17 The last thing to do is to transform the data into time series. The first 100 steps are the basis for the agents decision. The 101st element is the next days return, on which the agent will be evaluated. 
-
-
-We only have to make minor edits in the `A2CAgent` agent class. Namely, we only have to modify the model so that it can take in the time series of returns. To this end, we add 2 `LSTM` layers which actor and critic share.
-```Python
-def build_model(self):
-        state = Input(batch_shape=(None, #1
-                                   self.state_seq_length, 
-                                   self.state_size))
-        
-        x = LSTM(120,return_sequences=True)(state) #2
-        x = LSTM(100)(x)
-        
-        actor_input = Dense(100, activation='relu', #3
-                            kernel_initializer='he_uniform')(x)
-
-        mu = Dense(self.action_size, activation='tanh', #4
-                     kernel_initializer='he_uniform')(actor_input)
-                     
-        sigma_0 = Dense(self.action_size, activation='softplus',
-                        kernel_initializer='he_uniform')(actor_input)
-
-        sigma = Lambda(lambda x: x + 0.0001)(sigma_0)
-
-        critic_input = Dense(30, activation='relu',
-                             kernel_initializer='he_uniform')(x)
-        
-        state_value = Dense(1, activation='linear',
-                            kernel_initializer='he_uniform')(critic_input)
-
-        actor = Model(inputs=state, outputs=(mu, sigma))
-        critic = Model(inputs=state, outputs=state_value)
-
-        actor._make_predict_function()
-        critic._make_predict_function()
-
-        actor.summary()
-        critic.summary()
-
-        return actor, critic
-```
-
-\#1 The state now has a time dimension.
-
-\#2 The two `LSTM` layers are shared across actor and critic.
-
-\#3 Since the action space is larger, we also have to increase the size of the actors hidden layer.
-
-\#4 Outputs should lie between -1 and 1 ,100% short and 100% long, so we can save ourselves the step of multiplying the mean by two.
-
-And that is it! This algorithm can now learn to balance a portfolio just as it could learn to balance before.
-
-# Evolutionary strategies and genetic algorithms
-
-Recently, a decades old optimization algorithm for reinforcement learning algorithms has come back into fashion. Evolutionary strategies (ES) are much simpler than Q-Learning or A2C.
-
-Instead of training one model through backpropagation, we create a population of models by adding random noise to the weights of the original model. We then let each model run in the environment and evaluate its performance. The new model is the performance weighted average of all the models.
-
-![Evoltionary Strategy](./assets/evolutionary_strategy.png)
-
-
-To get a better grip on how this works, consider the following brief example. We want to find a vector that minimizes the mean squared error to a solution vector. The learner is not given the solution, but only the total error as a reward signal. 
-```Python 
-solution = np.array([0.5, 0.1, -0.3])
-def f(w):
-  reward = -np.sum(np.square(solution - w))
-  return reward
-```
-
-A key advantage of evolutionary strategies is that they have fewer hyper parameters. In this case, we need just three:
-```Python 
-npop = 50 #1 
-sigma = 0.1 #2 
-alpha = 0.1 #3 
-```
-\#1 Population size, we will create 50 versions of the model at each iteration.
-
-\#2 Noise standard deviation, the noise we add will have mean zero and a standard deviation of 0.1
-
-\#3 Learning rate, weights don't just simply get set to the new average, but are slowly moved in the direction to avoid overshooting.
-
-The optimization algorithm looks as follows:
-```Python 
-w = np.random.randn(3) #1
-for i in range(300): #2
-  N = np.random.randn(npop, 3) * sigma #3 
-  R = np.zeros(npop)
-  for j in range(npop): #4
-    w_try = w + N[j]
-    R[j] = f(w_try)
-
-  A = (R - np.mean(R)) / np.std(R) #5
-  w = w + alpha * np.dot(N.T, A)/npop #6
-```
-\#1 We start off with a random solution.
-
-\#2 Just like with the other RL algorithm, we train for a number of epochs, here 300.
-
-\#3 We create a noise matrix of 50 noise vectors with mean zero and standard deviation of `sigma`. 
-
-\#4 We now create and immediately evaluate our population by adding noise to the original weights and running the resulting vector through the evaluation function.
-
-\#5 We standardize the rewards by subtracting the mean and dividing by the standard deviation. The result can be interpreted as an advantage, that a particular member of the population has over the rest.
-
-\#6 Finally, we add the weighted average noise vector to the weight solution. We use a learning rate to slow down the process and avoid overshooting. 
-
-Similar to neural networks themselves, evolutionary strategies are loosely inspired by nature. In nature, species optimize themselves for survival using natural selection. Researchers have come up with many algorithms to imitate this process. The neural evolution strategy algorithm presented above works not only for single vectors, but for large neural networks as well. Evolutionary strategies are still a field of active research, and at the time of writing, no best practice has been settled on.
-
-Reinforcement learning and evolutionary strategies are the go to techniques if no supervised learning is possible but a reward signal is available. There are many applications in the financial industry where this is the case. From simple 'multi armed bandit' problems, such as the AHL order routing system, to complex trading systems. The next sections will introduce some practical tips for building RL systems and highlight some current research frontiers which are highly relevant to financial practitioners.
-
-# Practical tips for RL engineering
-## Designing good reward functions
-Reinforcement learning is the field of designing algorithms that maximize a reward function. But creating good reward functions is surprisingly hard, as everyone who has ever managed people knows. People game the system and machines do, too. The literature on RL is full of examples of researchers finding bugs in Atari games that had been hidden for years by an agent exploiting it. In the game 'Fishing' for example, OpenAI has reported a reinforcement learning agent achieving a higher score than is possible according to the game makers - without catching a single fish. 
-
-While it is fun for games, such behavior can be dangerous when happening in financial markets. An agent trained on maximizing returns from trading for example could resort to illegal trading activities like spoofing trades, without its owners knowing about it. There are three methods to create better reward functions:
-
-### Careful, manual reward shaping 
- 
-By manually creating rewards, practitioners can aid the system learn. This works especially well if the natural rewards of the environment are sparse. If, say a reward is usually only given if a trade is successful, and this is a rare event, it helps to manually add a function that gives a reward if the trade was nearly successful. Equally, if an agent is engaging in illegal trading, a hard coded 'robot policy' can be set up that gives a huge negative reward to the agent if it breaks the law. Reward shaping works if the rewards and the environment are relatively simple. In complex environments, it can defeat the purpose of using machine learning in the first place. Creating a complex reward function in a very complex environment can be just as big as a task as writing a rule based system acting in the environment.
-
-Yet, especially in finance, and especially in trading, hand crafted reward shaping is useful. Risk averse trading is an example of creating a clever objective function. Instead of maximizing the expected reward, risk adverse reinforcement learning maximizes an evaluation function $\mathcal{U}$ which is an extension of utility based shortfall to a multistage setting.
-
-$$
-\mathcal{U}_{s,a}(X) = 
-\sup\{ m \in \mathbb{R} |
-\mathbb{E}_{s\sim p^\pi, a\sim \pi(s)}[u(X-m) \geq 0]\}
-$$
-
-Where $u$ is a concave, continuous and strictly increasing function which can be freely chosen according to how much risk the trader is willing to take. The RL algorithm now maximizes:
-
-$$J(\pi) = \mathcal{U}[V(s_0)]$$
-
-### Inverse reinforcement learning
-In inverse reinforcement learning (IRL), a model is trained to predict the reward function of a human expert. A human expert is performing a task and the model observes states and actions. It then tries to find a value function that explains the human experts behavior. More specifically, by observing the expert, a policy trace of states and actions is created. One example is the the maximum likelihood inverse reinforcement learning algorithm which works as follows:
-
-- Guess a reward function $R$.
-- Compute the policy $\pi$ that follows from R, by training an RL agent.
-- Compute the probability that the actions observed $D$ were a result of $\pi$, $p(D|\pi)$. 
-- Compute the gradient with respect to $R$ and update it.
-- Repeat this process until $p(D|\pi)$ is very high. 
-
-
-### Learning from human preferences
-Similar IRL that produces a reward function from human examples, there are also algorithms that learn from human preferences. A reward predictor produces a reward function under which a policy is trained. The goal of the reward predictor is to produce a reward function which results in a policy which has a large human preference. Human preference is measured by showing the human the results of two policies and letting the human indicate which one is more preferable.
-
-![Learning from preferences](./assets/inverse_rl.png)
-
-## Robust RL
-Much like for GANs, RL can be fragile and not train to good results. RL algorithms are quite sensitive to hyperparmeter choices. But there are a few ways to make RL more robust:
-
-1. Using a larger experience replay buffer: The goal of using experience replay buffers is to collect uncorrelated experiences. This can be achieved by just creating a larger buffer, or a whole buffer database which can store millions of examples, possibly from different agents.
-
-2. Target networks: RL is unstable in part because the neural network relies on its own output for training. By using a frozen target network for generating training data, we can mitigate problems. The frozen target network should be updated only slowly by e.g. moving the weights of the target network only a few percent every few epochs in the direction of the trained network.
-
-3. Noisy inputs: Adding noise to the state representation helps the model generalize to other situations and avoids overfitting. It has been proven especially useful if the agent is trained in a simulation but needs to generalize to the real, more complex world.
-
-4. Adversarial examples: In a GAN like setup, an adversarial network can be trained to fool the model by changing the state representations. The model can in turn learn to ignore the adversarial attacks. This makes learning more robust.
-
-5. Separating policy learning from feature extraction. The most well known results in reinforcement learning have learned a game from raw inputs. However, this requires the neural network to interpret e.g. an image by learning how that image leads to rewards. It is easier, to separate the steps by e.g. first train an autoencoder that compresses state representations, then train a dynamics model that can predict the next compressed state and then training a relatively small policy network from the two inputs. 
-
-# Frontiers of RL 
-
-You have now seen the theory behind and application of the most useful RL techniques. Yet, RL is a moving field. This book can not cover all current trends that might be interesting to practitioners, but it can highlight some that are particularly useful for practitioners in the financial industry.
-
-## Multi & Many agent RL 
-Markets, by definition, include many agents. Lowe et al. 2017 'Multi-Agent Actor-Critic for Mixed Cooperative-Competitive Environments', see https://arxiv.org/abs/1706.02275, shows that reinforcement learning can be used to train agents that cooperate, compete and communicate depending on the situation. In an experiment, they let agents communicate, by including a communication vector into the action space. The communication vector one agent outputted was then made available to other agents. They showed that the agents learned to communicate to solve a task. Similar research showed that agents adopted collaborating or competing strategies based on the environment. In a task where agent had to collect reward tokens, agents collaborated as long as plenty of tokens were availeble and showed competitive behavior as tokens got sparse. Zheng et al. 2017 'MAgent: A Many-Agent Reinforcement Learning Platform for Artificial Collective Intelligence', see https://arxiv.org/abs/1712.00600, scaled the environment to include hundreds of agents. They showed that agents developed more complex strategies such as an encirclement attack on other agents through a combination of RL algorithms and clever reward shaping. Foerster et al. 2017 'Learning with Opponent-Learning Awareness', see https://arxiv.org/abs/1709.04326, developed a new kind of RL algorithm which allows agent to learn how another agent will behave and develop actions to influence the other agent.
-
-## Learning how to learn
-A shortcoming of deep learning is that skilled humans have to develop neural networks. A longstanding dream of researchers, and companies having to pay PhDs, is to automate the process of designing neural networks. One example of 'Auto-ML' is the neural evolution of augmenting topologies, NEAT, algorithm. NEAT uses an evolutionary strategy to design a neural network which is then trained by standard back-propagation.
-
-![A network developed by the NEAT algorithm](./assets/neat_net.png)
-
-As you can see in the image above, the network developed by NEAT are often smaller than traditional, layer based neural nets. They are hard to intuitively come up with. This is the strength of Auto-ML, it can find efficient strategies that humans would not have discovered. An alternative to using evolutionary algorithms for network design is to use reinforcement learning, which yields similar results. There are a couple 'off the shelf' Auto-ML solutions:
-- tpot (https://github.com/EpistasisLab/tpot), is a data science assistant that optimizes machine learning pipelines using genetic algorithms. It is built on top of scikit learn so it does not create deep learning models but models useful for strucutred data, such as random forests.
-
-- auto-sklearn (https://github.com/automl/auto-sklearn) is also based on scikit learn but focuses more on creating models rather than feature extraction.
-
-- AutoWEKA (https://github.com/automl/autoweka) is similar to auto-sklearn, except that it is built on the WEKA package which runs on Java. 
-
-- H2O AutoML (http://docs.h2o.ai/h2o/latest-stable/h2o-docs/automl.html) is an auto ML tool that is part of the H2O software package, which provides model selection and ensembling.
-
-- Google cloud Auto-ML (https://cloud.google.com/automl/) so far is focused on pipelines for computer vision.
-
-For the subfield of hyperparmeter search, there are a few packages availeble as well:
-
-- Hyperopt (https://github.com/hyperopt/hyperopt) allows for distributed, asynchronous hyperparameter search in python. 
-
-- Spearmint (https://github.com/HIPS/Spearmint), similar to Hyperopt, optimizes hyperparmeters, but using a more advances Bayesian optimization process.
-
-Auto-ML is still an active field of research, but it holds great promise. Many firms struggle to use machine learning due to a lack of skilled employees. If ML could optimize itself, more firms could start using ML.
-
-## Understanding the brain through RL
-The other emerging field in finance and economics is behavioral economics. But recently, reinforcement learning has been used to understand how the human brain works. Wang et al. 2018 'Prefrontal cortex as a meta-reinforcement learning system', see http://dx.doi.org/10.1038/s41593-018-0147-8, for example derive new insights into the frontal cortex and the function of dopamine. Similary, Banino et al. 2018 'Vector-based navigation using grid-like representations in artificial agents', see https://doi.org/10.1038/s41586-018-0102-6, replicate so called 'grid cells' that allow mammals to navigate using reinforcement learning. The method is similar: Both papers train RL algorithms on tasks related to the area of research, e.g. navigation. They then examine the learned weights of the model for emergent properties. Such insight can be used to create more capable RL agents but also to further the field of neuroscience. As economics comes to grip with the idea that humans are not rational, but irrational in predictable ways, understanding the brain becomes more important to understand economics. Results of neuroeconomics are particularly relevant to finance as they deal with how humans act under uncertainty, deal with risk why humans are loss averse. Using RL is a promising avenue to yield further insight into human behavior.
-
-# Exercises 
-- A simple RL task: Go to https://github.com/openai/gym, install the gym environment and train an agent to solve the 'Cartpole' problem.
-
-- A multi agent RL task: Go to https://github.com/crazymuse/snakegame-numpy, it is a gym like environment that lets you play multiple agents in a 'Snake' game. Experiment with different strategies. Can you create an agent that fools the other agent? What is the emergent behavior of the snakes? 
-
-# Summary 
-In this chapter, you learned about the main algorithms in RL, Q-Learning, policy gradients and evolutionary strategies. You saw how these algorithms can be applied to trading and learned about some of the pitfalls of applying RL. You also saw the direction of current research and how you can benefit from this research today. At this point in the book you are now equipped with a number of advanced machine learning algorithms, which are hopefully useful to you. In the next section we will discuss the practicalities of developing, debugging and deploying ML systems. We will break out of the data-science sandbox and get our models into the real world.

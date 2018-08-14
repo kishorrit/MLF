@@ -1,1211 +1,1705 @@
-# Chapter 6 Generative models
+# Chapter 5 - Natural Language processing
 
-Generative models generate new data. In a way, they are the exact opposite of the models we dealt with before. While an image classifier takes in a high dimensional input, the image, and outputs a low dimensional output such as the content of the image, a generative model goes exactly the other way around. It might for example draw images from the description of what is in them. So far, generative models are mostly used in image applications and they are still very experimental. Yet, there already have been several applications which caused uproar. In 2017, so called "DeepFakes" appeared on the internet. So called Generative Adversarial Models (GANs) which we will cover later in this chapter were used to generate pornographic videos featuring famous celebrities. The year before, researchers demoed a system in which they could generate videos of politicians saying anything the researcher wanted them to say, complete with realistic mouth movements and facial expressions. But there are positive applications as well. Generative models are especially useful if data is sparse. They can generate realistic data other models can train on. They can "translate" images, for example from satellite images to street maps. They can generate code from website screenshots. They can even be used to combat unfairness and discrimination in machine learning models. 
+It is no accident that Peter Brown, Co-CEO of Renaissance Technologies, one of the most successful quantitative hedge-funds of all time, previously worked at IBM applying machine learning to natural language problems. Information drives finance, and the most important source of information is written or spoken language. Ask any professional what they are actually spending time on and you will find that a significant part of finance is about reading. Headlines on tickers, Form-10Ks, the financial press, analyst reports, the list goes on and on. Automatically processing this information can increase speed of trades and increase the breath of information considered for trades while at the same time reducing costs.
 
-In the field of finance, data is frequently sparse. Think about the fraud case from chapter 2. There were not that many frauds in the dataset, so the model had a hard time detecting frauds. Usually, engineers would create synthetic data, by thinking about how fraud could be done. Machine learning models can do this themselves however. And in the process, they might even discover some useful features for fraud detection.
+But natural language processing (NLP) is also making inroads into finance in other areas. Insurances increasingly look to process claims automatically, retail banks try streamline their customer service and offer better products to their clients. Understanding text is increasingly becoming the go-to application of machine learning in finance.
 
-In algorithmic trading, data is frequently generated in simulators. Want to know how your algorithm would do in a global selloff? There are not that many global selloffs thankfully, so engineers at quant firms spend a lot of time creating simulations of selloffs. These simulators are often biased by the engineers experience and their feelings about what a selloff should look like. But what if models could learn what a selloff fundamentally looks like, and then create data describing an infinite amount of selloffs?
+Historically, NLP relied on hand crafted rules by linguists. Today, the linguists are getting replaced by neural networks that can learn the complex and often hard to codify rules of language. In this chapter, we will learn how to build powerful natural language models with Keras as well as how to use the SpaCy NLP library.
 
-# Understanding autoencoders
-Technically, autoencoders are not generative models since they can not create completely new kinds of data. Yet, variational autoencoders, a minor tweak to vanilla autonecoders, can. So it makes sense to first understand autoencoders by themselves, before adding the generative element. Autoencoders by themselves also have some interesting properties which can be exploited for applications like detecting credit card fraud. 
+# A quick guide to SpaCy
+SpaCy is a library for advanced natural language processing. It comes with a range of useful tools and pre-trained models that make NLP easier and more reliable. It is also pretty fast. To use SpaCy locally, you will need to install the library, and download its pre trained models separately:
 
-Given an input $x$, an autoencoder learns how to output $x$. It aims to find a function $f$ so that:
+```bash
+$ pip install -U spacy
 
-$$x = f(x)$$
+$ python -m spacy download en
+```
+In Kaggle, SpacCy is pre installed including the models.
 
-This might sound trivial at first, but the trick is that autoencoders have a bottleneck. The middle hidden layer size is smaller than the size of the input $x$. Therefore, the model has to learn a compressed representation that captures all important elements of $x$ in a smaller vector. 
+This chapter makes use of the english language models, but more are available. Most features are available in English, German, Spanish, Portuguese, French, Italian and Dutch. Entity recognition is available for many more languages through the multi-language model.
 
-![Autoncoder Scheme](./assets/autoencoder_scheme.png)
-Caption: Autoencoder Scheme
+The core of SpaCy are the `Doc` and `Vocab` classes. A `Doc` instance contains one document, including its text, tokenized version, recognized entities, etc. The `Vocab` class keeps track of all common information across documents. SpaCy is useful for its pipeline features, that contain many pieces needed for NLP. If this all seems a bit abstract right now, don't worry. This section will show you how to use SpaCy for many practical tasks. 
 
-This compressed representation aims to capture the 'essence' of the input. And that turns out to be useful. We might for example want to capture, what essentially distinguishes a fraudulent from a genuine transaction. Vanilla autoencoders accomplish something to standard principal component analysis (PCA): They allow us to reduce the dimensionality of our data and focus on what matters. But in contrast to PCA, autoencoders can be extended to generate more data of a certain type. They can better deal with image or video data since they can make use of the spatiality of data using convolutional layers. In this section, we will build two autoencoders. The first for hand written digits from the MNIST dataset. Generative models are easier to debug and understand for visual data because humans are intuitively good ad judging if two pictures show something similar, but less good at judging abstract data. We will then use the same autoencoder for a fraud detection task.
-
-## Autoencoder for MNIST 
-Lets start with a simple autoencoder for the MNIST dataset of hand drawn digits. An MNIST image is 28 by 28 pixels and can be flattened into a vector of 784 (equals 28 * 28) elements. We will compress this into a vector with only 32 elements by using an autoencoder.
-
-You can find the code for the MNIST autoencoder and variational autoencoder under the following URL:
-https://www.kaggle.com/jannesklaas/mnist-autoencoder-vae
-
-We set the encoding dimensionality hyperparameter now so we can use it later:
+The data for the first section we use a collection of 143,000 articles from 15 American publications. The data is spread out over three excel files. We can load them separately, merge them into one large dataframe and then delete the individual dataframes to save memory.
 
 ```Python 
-encoding_dim = 32 
+a1 = pd.read_csv('../input/articles1.csv',index_col=0)
+a2 = pd.read_csv('../input/articles2.csv',index_col=0)
+a3 = pd.read_csv('../input/articles3.csv',index_col=0)
+
+df = pd.concat([a1,a2,a3])
+
+del a1, a2, a3
 ```
 
-We construct the autoecoder using Keras functional API. While a simple autencoder could be constructed using the sequential API, it is a good refresher on how the functional API works.
+The data looks like this:
 
-First, we import the `Model` class that allows us to create functional API models. We also need to import `Input` and `Dense` layers. Remember that the functional API needs a separate input layer while the sequential API does not need one.
-```Python 
-from keras.models import Model
-from keras.layers import Input, Dense
-```
+|id|title|publication|author|date|year|month|url|content|
+|--|-----|-----------|------|----|----|-----|---|-------|
+|17283|House Republicans Fret...|New York Times|Carl Hulse|2016-12-31|2016.0|12.0|NaN|WASHINGTON — Congressional Republicans...|
 
-Now we are chaining up the autoencoder's layers: An `Input` layer, followed by a `Dense` layer which encodes the image to a smaller representation. This is followed by a decoding `Dense` layer which aims to reconstruct the original image.
-```Python 
-input_img = Input(shape=(784,))
-
-encoded = Dense(encoding_dim, activation='relu')(input_img)
-
-decoded = Dense(784, activation='sigmoid')(encoded)
-``` 
-
-After we have created and chained up the layers, we create a model which maps from the input to the decoded image.
-
-```Python 
-autoencoder = Model(input_img, decoded)
-``` 
-
-To get a better idea of what is going on, we can plot a visualization of the resulting autoencoder model. As of writing this code snippet will not work in Kaggle, but future versions of the Kaggle Kernels editor might change this
-
-```Python 
-from keras.utils import plot_model
-plot_model(autoencoder, to_file='model.png', show_shapes=True)
-```
-
-This is our autencoder:
-
-![Autoencoder Model](./assets/autoencoder_model.png)
-
-```Python 
-autoencoder.compile(optimizer='adadelta', loss='binary_crossentropy')
-```
-Caption: A simple autoencoder for MNIST
-
-To train this autoencoder, we use the X values as input and output:
-```Python 
-autoencoder.fit(X_train_flat, X_train_flat,
-                epochs=50,
-                batch_size=256,
-                shuffle=True,
-                validation_data=(X_test_flat, X_test_flat))
-```
-After we train this autoencoder, we can visually inspect how well it is doing. We first extract a single image from the test set. We need to add a batch dimension to this image to run it through the model, which is what we use `np.expand_dims` for. 
-
-```Python 
-original = np.expand_dims(X_test_flat[0],0)
-```
-Now, we run the original image through the autoencoder. The original image shows a seven, so we should hope that the output of our autoencoder shows a seven as well:
-```Python 
-seven = autoencoder.predict(original)
-```
-
-We now reshape both the autoencoder output as well as the original image back into 28 by 28 pixel images.
-```Python 
-seven = seven.reshape(1,28,28)
-original = original.reshape(1,28,28)
-```
-
-We plot the original and reconstructed image next to each other. `matplotlib` does not allow the image to have a batch dimension, so we need to pass an array without it. By indexing the images with `[0,:,:]` we pass only the first item in the batch with all pixels. This first item has no batch dimension anymore.
-```Python 
-fig = plt.figure(figsize=(7, 10))
-a=fig.add_subplot(1,2,1)
-a.set_title('Original')
-imgplot = plt.imshow(original[0,:,:])
-
-b=fig.add_subplot(1,2,2)
-b.set_title('Autoencoder')
-imgplot = plt.imshow(seven[0,:,:])
-```
-
-![Autoencoder result](./assets/seven_autoencoded.png)
-
-As you can see, the reconstructed seven is still a seven, so the autoencoder did manage to capture the general idea of what a seven is. It is a bit blurry around the edges, especially in the top left. It seems as the autoencoder is unsure about the length of the dashes, but it has a strongly encoded representation that there are two dashes for a seven and the general direction they follow. 
-
-An autoencoder like this basically performs principal component analysis (PCA). It learns which components matter most for a seven to be a seven. Being able to learn this representation is useful not only for images. In credit card fraud detection for example, such principal components make for good features another classifier can work with. In the next section we will apply an autoencoder to the credit card fraud problem.
-
-## Auto encoder for credit cards
-
-In this section, we will once again deal with the problem of credit card fraud. This time, we will use a slightly different dataset from that in chapter 1. The new dataset contains records of actual credit card transactions with anonymized features. The dataset does not lend itself to much feature engineering. We will have to rely on end to end learning methods to build a good fraud detector. 
-
-You can find the dataset under the following URL:
-https://www.kaggle.com/mlg-ulb/creditcardfraud
-
-And the notebook with an implementation of an autoencoder and variational autoencoder under this URL:
-https://www.kaggle.com/jannesklaas/credit-vae
-
-As usual, we first load the data. The time feature shows the absolute time of the transaction which makes it a bit hard to deal with here. So we will just drop it.
-```Python 
-df = pd.read_csv('../input/creditcard.csv')
-df = df.drop('Time',axis=1)
-``` 
-
-We separate the X data on the tansaction from the classification of the transaction and extract the numpy array that underlies the pandas dataframe.
-
-```Python
-X = df.drop('Class',axis=1).values 
-y = df['Class'].values
-```
-
-Now we need to scale the features. Feature scaling makes it easier for our model to learn a good representation of the data. This time around, we employ a slightly different method of feature scaling than before: We scale all features to be in between zero and one, as opposed to having mean zero and a standard deviation of one. This ensures that there are no very high or very low values in the dataset. But beware, that this method is susceptible to outliers influencing the result. For each column, we first subtract the minimum value, so that the new minimum value becomes zero. We then divide by the maximum value so that the new maximum value becomes one. By specifying `axis=0` we perform the scaling column wise.
-
-```Python 
-X -= X.min(axis=0)
-X /= X.max(axis=0)
-```
-
-Finally, we split our data:
-```Python
-from sklearn.model_selection import train_test_split
-X_train, X_test, y_train,y_test = train_test_split(X,y,test_size=0.1)
-```
-
-We we create the exact same autoencoder as we did before, just with different dimensions. Our input now has 29 dimensions, which we compress down to 12 dimensions before aiming to restore the original 29 dimensional output.
-```Python 
-from keras.models import Model
-from keras.layers import Input, Dense
-```
-
-You will notice that we are using the sigmoid activation function in the end. This is only possible because we scaled the data to have values between zero and one. We are also using a tanh activation of the encoded layer. This is just a style choice that worked well in experiements and ensures that encoded values are all between minus one and one. You might use different activations functions depending on your need. If you are working with images or deeper networks, a relu activation is usually a good choice. If you are working with a more shallow network as we are doing here, a tanh activation often works well.
-```Python 
-data_in = Input(shape=(29,))
-encoded = Dense(12,activation='tanh')(data_in)
-decoded = Dense(29,activation='sigmoid')(encoded)
-autoencoder = Model(data_in,decoded)
-```
-
-We use a mean squared error loss. This is a bit of an unusual choice at first, using a sigmoid activation with a mean squared error loss, yet it makes sense. Most people think that sigmoid activations have to be used with a crossentropy loss. But crossentropy loss encourages values to be either zero or one and works well for classification tasks where this is the case. But in our credit card example, most values will be around 0.5. Mean squared error is better at dealing with values where the target is not binary, but on a spectrum.
-```Python
-autoencoder.compile(optimizer='adam',loss='mean_squared_error')
-```
-
-After training, the autoencoder converges to a low loss. 
-```Python
-autoencoder.fit(X_train,
-                X_train,
-                epochs = 20, 
-                batch_size=128, 
-                validation_data=(X_test,X_test))
-```
-
-The reconstruction loss is low, but how do we know if our autoecoder is doing good? Once again, visual inspection to the rescue. Humans are very good at judging things visually, but not very good at judging abstract numbers. 
-
-We will first make some predictions, in which we run a subset of our test set through the autoencoder. 
-```Python 
-pred = autoencoder.predict(X_test[0:10])
-```
-
-We can then plot indivdual samples. The code below produces an overlaid barchart comparing the original transaction data with the reconstructed transaction data.
+We can plot the distribution of publishers to get an idea of what kind of news we are dealing with:
 ```Python 
 import matplotlib.pyplot as plt
-import numpy as np
-
-width = 0.8
-
-prediction   = pred[9]
-true_value    = X_test[9]
-
-indices = np.arange(len(prediction))
-
-fig = plt.figure(figsize=(10,7))
-
-plt.bar(indices, prediction, width=width, 
-        color='b', label='Predicted Value')
-
-plt.bar([i+0.25*width for i in indices], true_value, 
-        width=0.5*width, color='r', alpha=0.5, label='True Value')
-
-plt.xticks(indices+width/2., 
-           ['V{}'.format(i) for i in range(len(prediction))] )
-
-plt.legend()
-
-plt.show()
+plt.figure(figsize=(10,7))
+df.publication.value_counts().plot(kind='bar')
 ```
 
-![Autoencoder results](./assets/autoencoder_results.png)
+![News Page Distribution](./assets/news_page_distribution.png)
 
-Caption: Autoncoder reconstruction vs original data.
+The dataset contains no articles from classical financial news media but mostly articles from mainstream publications and politically oriented publications. 
 
-As you can see, our model does a fine job at reconstructing the original values. The visual inspection gives more insight than the abstract number.
+# Named entity recognition
+A common task in natural language processing is named entity recognition (NER). NER is about finding things the text explicitly refers to. Before discussing more about what is going on, lets jump right in and do some NER on the first article in our dataset.
 
-# Visualizing latent spaces with t-SNE 
-We now have a neural network that takes in a credit card transaction, and outputs a credit card transaction that looks more or less the same. But that is of course not why we built the autoecoder. The main advantage of an autoencoder is that we can now encode the transaction into a lower dimensional representation which captures the main elements of the transaction. To create the encoder model, all we have to do is to define a new Keras model, that maps from the input to the encoded state: 
-
+First we need to load SpaCy as well as the model for english language processing. 
 ```Python 
-encoder = Model(data_in,encoded)
+import spacy
+nlp = spacy.load('en')
 ```
 
-Note that you don't need to train this model again. The layers keep the weights from the autoencoder which we have trained before. 
-
-To encode our data, we now use the encoder model:
-
+We then select the text of the article from our data.
 ```Python 
-enc = encoder.predict(X_test)
+text = df.loc[0,'content']
 ```
 
-But how would we know if these encodings contain any meaningful information about fraud? Once again, visual representation is key. While our encodings are lower dimensional than the input data, they still have twelve dimensions. It is impossible for humans to think about twelve dimensional space, so we need to draw our encodings in a lower dimensional space while still preserving the characteristics we care about. 
-
-In our case, the characteristic we care about is _proximity_. We want points that are close to each other in the twelve dimensional space to be close to each other in the two dimensional plot. More precisely, we care about neighborhood, we want that the points that are closest to each other in the high dimensional space are also closest to each other in the low dimensional space. 
-
-Preserving neighborhood is relevant because we want to find clusters of fraud. If we find that fraudulent transactions form a cluster in our high dimensional encodings, we can use a simple check for if a new transaction falls into the fraud cluster to flag a transaction as fraudulent. 
-
-A popular method to project high dimensional data into low dimensional plots while preserving neighborhoods is called t-distributed stochastic neighbor embedding, or t-SNE. 
-
-In a nutshell, t-SNE aims to faithfully represent the probability that two points are neighbors in a random sample of all points. That is, it tries to find a low dimensional representation of the data in which points in a random sample have the same probability of being closest neighbors than in the high dimensional data. 
-
-
-
-![TSNE Info](./assets/tsne_info_one.png)
-Caption: How t-SNE measures similarity
-
-The t-SNE algorithm follows these steps:
-1. Calculate the _gaussian similarity_ between all points. This is done by calculating the euclidean (spatial) distance between points and the calculate the value of a gaussian curve at that distance, see graphic. The gaussian similarity for all points $j$ from point $i$ can be calculated as:
-
-$$p_{i|j} = \frac{exp(-||x_i-x_j||^2/2\sigma^2_i)}
-{\sum_{k \neq i} exp(-||x_i-x_k||^2/2\sigma^2_i)}$$
-
-Where $\sigma_i$ is the variance of the gaussian distribution. We will look at how to determine this variance later. Note that since the similarity between points $i$ and $j$ is scaled by the sum of distances between $i$ and all other points (expressed as $k$), the similarity between $i$ and $j$ ,$p_{i|j}$, can be different than the similarity between $j$ and $i$, $p_{j|i}$. Therefore, we average the two similarities to gain the final similarity which we work with going forward:
-
-$$p_{ij} = \frac{p_{i|j} + p_{j,i}}{2n}$$
-
-Where n is the number of datapoints.
-
-2. Randomly position the data points in the lower dimensional space.
-
-3. Calculate the _t-similarity_ between all points in the lower dimensional space. 
-
-$$q_{ij} = \frac{(1+||y_i - y_j||^2)^{-1}}
-{\sum_{k \neq l}(1+||y_k - y_l||^2)^{-1}}$$
-
-4. Just like in training neural networks, we will optimize the positions of the data points in the lower dimensional space by following the gradient of a loss function. The loss function in this case is the Kullback–Leibler (KL) divergence between the similarities in the higher and lower dimensional space. We will give the KL divergence a closer look in the section on variational autoencoders. For now, just think of it as a way to measure the difference between two distributions. The derivative of the loss function with respect to the position $y_i$ of a datapoint $i$ in the lower dimensional space is:
-
-$$\frac{d L}{dy_i} = 4 \sum{(p_{ij} − q_{ij})(y_i − y_j)}
-(1 + ||y_i − y_j||^2)^{-1}$$
-
-
-5. Adjust the data points in the lower dimensional space by using gradient descent. Moving points that were close in the high dimensional data closer together and moving points that were further away further from each other.
-
-$$y^{(t)} = y^{(t-1)} + \frac{d L}{dy} + \alpha(t) (y^{(t-1)} - y^{(t-2)})$$
-
-You will recognize this as a form of gradient descent with momentum, as the previous gradient is incorporated into the position update.
-
-The t-distribution used always has one degree of freedom. The choice of one degree of freedom leads to a simpler formula as well as some nice numerical properties that lead to faster computation and more useful charts.
-
- The standard deviation of the gaussian distribution can be influenced by the user with a _perplexity_ hyperparameter. Perplexity can be interpreted as the number of neighbors we expect a point to have. A low perplexity value emphasizes local proximities while a large perplexity value emphasizes global perplexity values. Mathematically, perplexity can be calculated as 
- 
- $$Perp(P_i) = 2^{H(P_i)}$$
-
-Where $P_i$ is a probability distribution over the position of all data points in the dataset and $H(P_i)$ is the Shanon entropy of this distribution calculated as: 
-$$H(P_i) = - \sum{p_{j|i} log_2 p_{j|i}}$$
-
-While the details of this formula are not very relevant to using t-SNE, it is important to know that t-SNE performs a search over values of the standard deviation $\sigma$ so that it finds a global distribution $P_i$ for which the entropy over our data is our desired perplexity. In other words, you need to specify the perplexity by hand, but what that perplexity means for your dataset also depends on the dataset. 
-
-Van Maarten and Hinton, the inventors of t-SNE, report that the algorithm is relatively robust to choices of perplexity between five and 50. The default value in most libraries is 30, which is a fine value for most datasets. If you find that your visualizations are not satisfactory, tuning the perplexity value is probably the first thing you want to do.
-
-For all the math involved, using t-SNE is suprisingly simple. Scikit Learn has a handy t-SNE implementation which we can use just like any algorithm in scikit. We first import the `TSNE` class. Then we create a new `TSNE` instance. We define that we want to train for 5000 epochs, use the default perplexity of 30 and the default learning rate of 200. We also specify that we would like output during the training process. We then just call `fit_transform` which transforms our twelve dimensional encodings into two dimensional projections.
-
+And now we run this piece of text through the english language model pipeline. This will create a `Doc` instance mentioned earlier. The instance holds a lot of information, including the named entities.
 ```Python 
-from sklearn.manifold import TSNE
-tsne = TSNE(verbose=1,n_iter=5000)
-res = tsne.fit_transform(enc)
+doc = nlp(text)
 ```
 
-As a word of warning, t-SNE is quite slow as it needs to compute the distances between all the points. By default, sklearn uses a faster version of t-SNE called Barnes Hut approximation, which is not as precise but significantly faster already. 
-
-There is a faster python implementation of t-SNE which can be used as a drop in replacement of sklearn's implementation. It is not as well documented however and has fewer features. You can find the faster implementation with installation instructions under the following URL:
-https://github.com/DmitryUlyanov/Multicore-TSNE 
-
-We can plot our t-SNE results as a scatter plot. For illustration, we will distinguish frauds from non frauds by color, with frauds being plotted in red and non frauds being plotted in blue. Since the actual values of t-SNE do not matter as much we will hide the axis.
+SpaCy comes with a handy visualizer called `displacy` which we can use to show the named entities in text.
 ```Python 
-fig = plt.figure(figsize=(10,7))
-scatter =plt.scatter(res[:,0],res[:,1],c=y_test, cmap='coolwarm', s=0.6)
-scatter.axes.get_xaxis().set_visible(False)
-scatter.axes.get_yaxis().set_visible(False)
+from spacy import displacy
+displacy.render(doc, #1
+                style='ent', #2
+                jupyter=True) #3
 ```
+\#1 We pass the document.
 
-![Credit Auto TSNE](./assets/credit_auto_tsne.png)
+\#2 We specify that we would like to render entities
 
-For easier spotting the cluster containing most frauds is marked with a circle. You can see that the frauds nicely separate from the rest of the transactions. Clearly, our autoencoder has found a way to distinguish frauds from genuine transaction without being given labels. This is a form of unsupervised learning. In fact, plain autoencoders perform an approximation of PCA, which is useful for unsupervised learning. In the chart you can see a few more clusters which are clearly separate from the other transactions but which are not frauds. Using autoencoders and unsupervised learning it is possible to separate and group our data in ways we did not even think about as much before. For example we might be able to cluster transactions by purchase type.
+\#3 We need to let `displacy` know that we are running this in a jupyter notebook so that rendering works correctly.
 
-Using our autoencoder, we could now use the encoded information as features for a classifier. But even better, with only a slight modification of the autoencoder, we can generate more data that has the underlying properties of a fraud case while having different features. This is done with a variational autoencoder which we will look at in the next section.
+![Spacy Tags](./assets/spacy_nyt_tags.png)
 
-# Variational Autoencoders
-Autoencoders are basically an approximation for PCA. However, they can be extended to become generative models. Given an input, variational autoencoders (VAEs) can create encoding _distributions_. This means, that for a fraud case, the encoder would produce a distribution of possible encodings which all represent the most important characteristics of the transaction so that the decoder could turn all encodings back into the original transaction. This is useful, since it allows us to generate data about transactions. One 'problem' of fraud detection is that there are not all that many fraudulent transactions. Using a variational autoencoder, we can sample any amount of transaction encodings and train our classifier with more fraud transaction data.
+And voila! As you can see, there are a few mishaps, such as blank spaces being classified as organizations or 'Obama' being classified as a place. This is because the tagging is done by a neural network and neural networks strongly dependent on the data they were trained on. You might need to fine tune the tagging model for your own purposes, and we will see in a minute how that works. You can also see that the NER offers a wide range of tags, some of which come with strange abbreviations. We will examine a full list of tags a bit later. For now, let's answer a different question: Which organizations do the news write about?
 
-How do VAEs do it? Instead of having just one compressed representation vector, a VAE has two: One for the mean encoding $\mu$ and one for the standard deviation of this encoding $\sigma$.
-
-![VAE Scheme](./assets/vae_scheme.png)
-
-Both mean and standard deviation are vectors just like the encoding vector we used for the vanilla autoencoder. However, to create the actual encoding we then sample by adding random noise with the standard deviation $\sigma$ to our encoding vector. 
-
-To achieve a broad distribution of values, our network trains with a combination of two losses: The reconstruction loss you know from the vanilla autoencoder as well as a KL divergence loss between the encoding distribution and a standard gaussian distribution with a standard deviation of one.
-
-## KL Divergence 
-Kullback–Leibler divergence, or KL divergence for short, is one of the metrics machine learning inherited from information theory, just like crossentropy. It is used frequently but many struggle understanding it. 
-
-KL divergence measures how much information is lost when a distribution $p$ is approximated with a distribution $q$.
-
-Imagine you were working on some financial model and have collected data on returns of a security. Your financial modeling tools all assume a normal distribution of returns. The chart below shows the actual distribution of returns versus an approximation using a normal distribution. For the sake of this example, lets assume there are only discrete returns. We will cover continuous distributions later.
-
-![Approximation vs actual](./assets/kl_divergence_dist.png)
-
-Of course the returns in your data are not exactly normally distributed. But just how much information about returns would you loose if you did loose the approximation?
-
-This is exactly what KL divergence is measuring. 
-
-$$D_{KL}(p||q) = \sum_{i=1}^Np(x_i) \cdot (log\ p(x_i) - log\ q(x_i))$$
-
-Where $p(x_i)$ and $q(x_i)$ are the probabilities that $x$, in this case the return, has some value $i$, say 5%. The formula above effectively expresses the expected difference in the logarithm of probabilities of the distribution $p$ and $q$.
-
-$$D_{KL} = E[log\ p(x) - log\ q(x)]$$
-
-This expected difference of log probabilities is the same as the average information lost if you approximate distribution $p$ with distribution $q$.
-
-Since 
-$$log\ a - log\ b = log\frac{a}{b}$$
-
-KL divergence is usually written out as 
-
-$$D_{KL}(p||q) = \sum_{i=1}^N p(x_i) \cdot log\ \frac{ p(x_i)}{q(x_i)}$$
-
-Or in its continuous form as
-
-$$D_{KL}(p||q) = 
-\int_{-\infty}^{\infty} p(x_i) \cdot log\ \frac{ p(x_i)}{q(x_i)}$$
-
-For variational autoencoders, we want the distribution of encodings to be a normal gaussian distribution with mean zero and a standard deviation of one.
-
-When $p$ is substituted with the normal gaussian distribution $\mathcal{N}(0,1)$, and the approximation $q$ is a normal distribution with mean $\mu$ and standard deviation $\sigma$, $\mathcal{N}(\mu,\sigma)$, the KL divergence simplifies to
-
-$$D_{KL} = -0.5 * (1+ log(\sigma) - \mu^2 - \sigma)$$
-
-The partial derivatives to our mean and standard deviation vectors are therefore:
-
-$$\frac{dD_{KL}}{d\mu} = \mu$$
-
-and
-
-$$\frac{dD_{KL}}{d\sigma} = -0.5 * \frac{(\sigma - 1)}{\sigma}$$
-
-
-You can see that the derivative with respect to $\mu$ is zero if $\mu$ is zero and the derivative with respect to $\sigma$ is zero if $\sigma$ is one. This loss term is added to the reconstruction loss.
-
-## MNIST Example 
-Now on to our first VAE. This VAE will work with the MNIST dataset, which makes it easier to form an intuition about how VAEs work. In the next section we will build the same VAE for credit card fraud detection.
-
-First we need to do some imports:
-```Python
-from keras.models import Model
-
-from keras.layers import Input, Dense, Lambda
-from keras import backend as K
-from keras import metrics
-```
-
-Notice two new imports: The `Lamba` layer and the `metrics` module. The `metrics` module provides metrics, like the crossentropy loss which we will use to build our custom loss function. The `Lambda` layer allows us to use Python functions as layers, which we will use to sample from the encoding distribution. We will see just how the `Lambda` layer works in a bit, but first we need to set up the rest of the neural network.
-
-
-First we define a few hyperparameters. Our data has an original dimensionality of 784, which we compress into a latent vector with 32 dimensions. Our network has an intermediate layer between the input and latent vector which has 256 dimensions. We will train for 50 epochs with a batch size of 100. 
+To make this exercise run faster, we will create a new pipeline in which we disable everything but NER.
 ```Python 
-batch_size = 100
-original_dim = 784
-latent_dim = 32
-intermediate_dim = 256
-epochs = 50
+nlp = spacy.load('en',
+                 disable=['parser', 
+                          'tagger',
+                          'textcat'])
 ``` 
 
-For computational reasons, it is easier to learn the log of the standard deviation rather than the standard deviation itself. We create the first half of our network in which the input `x` maps to the intermediate layer `h`. From this layer our network splits into `z_mean` which expresses $\mu$ and `z_log_var` which expresses $log\ \sigma$.
-
+Now we loop over the first 1000 articles from our dataset.
 ```Python 
-x = Input(shape=(original_dim,))
-h = Dense(intermediate_dim, activation='relu')(x)
-z_mean = Dense(latent_dim)(h)
-z_log_var = Dense(latent_dim)(h)
+from tqdm import tqdm_notebook
+
+frames = []
+for i in tqdm_notebook(range(1000)):
+    doc = df.loc[i,'content'] #1
+    text_id = df.loc[i,'id'] #2
+    doc = nlp(doc) #3
+    ents = [(e.text, e.start_char, e.end_char, e.label_) #4
+            for e in doc.ents 
+            if len(e.text.strip(' -—')) > 0]
+    frame = pd.DataFrame(ents) #5
+    frame['id'] = text_id #6
+    frames.append(frame) #7
+    
+npf = pd.concat(frames) #8
+
+npf.columns = ['Text','Start','Stop','Type','id'] #9   
 ```
 
-## Using the Lambda layer 
-The `Lambda` layer wraps an arbitrary expression, speak python function, as a Keras layer. Yet there are a few requirements. For backpropagation to work, the function needs to be differentiable. After all, we want to update the network weights by the gradient of the loss. Luckily, Keras comes with a number of functions in its `backend` module which are all differentiable. Simple python math, such as `y = x + 4` is fine as well. 
+\#1 We get the article content of the article at row `i`.
 
-Additionally, a `Lambda` function can take only one input argument. If the layer we want to create, the input is just the previous layer's output tensor. In this case, we want to create a layer with two inputs, $\mu$ and $\sigma$. So we will wrap both into a tuple which we can then take apart. Below you can see the function for sampling.
+\#2 We get the id of the article.
 
+\#3 We run the article through the pipeline.
+
+\#4 For all entities found, we save the text, index of the first and last character as well as the label, but only if the tag consists of more than white spaces and dashes. This removes some of the mishaps of the classification in which empty segments or delimiters are tagged.
+
+\#5 We create a pandas data frame out of the array of tuples created above
+
+\#6 We add the id of the article to all records of our named entities.
+
+\#7 We add the data frame containing all the tagged entities of one document to a list. This way we can build a collection of tagged entities over a larger number of articles.
+
+\#7 We concatenate all data frames in the list, meaning that we create one big table with all tags.
+
+Now we can plot the distribution of the types of entities that we found.
 ```Python 
-def sampling(args):
-    z_mean, z_log_var = args #1
-    epsilon = K.random_normal(shape=(K.shape(z_mean)[0], latent_dim), 
-                              mean=0.,
-                              stddev=1.0) #2
-    return z_mean + K.exp(z_log_var / 2) * epsilon #3
+npf.Type.value_counts().plot(kind='bar')
 ```
 
-\#1 We take apart the input tuple and have our two input tensors.
-\#2 We create a tensor containing random, normally distributed noise with a mean of zero and a standard deviation of one. The tensor has the shape as our input tensors (batch_size, latent_dim).
-\#4 Finally, we multiply the random noise with our standard deviation to give it the learned standard deviation and add the learned mean. Since we are learning the log standard deviation, we have to apply the exponent function to our learned tensor. 
+![Spacy Tag Distribution](./assets/spacy_tag_distribution.png)
 
-All these operations are differentiable since we are using Keras backend functions. Now we can turn this function into a layer and connect it to the previous two layers with one line:
+The english language NER that comes with SpaCy is a neural network trained on the OntoNotes 5.0 corpus. It can thus recognize the following categories:
 
-```Python 
-z = Lambda(sampling)([z_mean, z_log_var])
-```
+- `PERSON`: People, including fictional characters.
+- `ORG`: Companies, agencies, institutions.
+- `GPE`: Places including countries, cities & states.
+- `DATE`: Absolute (e.g. 'January 2017') or relative dates (e.g. 'two weeks')
+- `CARDINAL`: Numerals that are not covered by other types
+- `NORP`: Nationalities or religious or political groups.
+- `ORDINAL`: 'first', 'second', etc...
+- `TIME`: Times shorter than a day (e.g. 'two hours')
+- `WORK_OF_ART`: Titles of books, songs, etc.
+- `LOC`: Locations that are not `GPE`s, e.g. mountain ranges or streams
+- `MONEY`: Monetary values 
+- `FAC`: Facilities such as airports, highways or bridges
+- `PERCENT`: Percentages
+- `EVENT`: Named hurricanes, battles, sporting events, etc.
+- `QUANTITY`: Measurements such as weights or distance.
+- `LAW`: Named documents that are laws.
+- `PRODUCT`: Objects, vehicles, food, etc.
+- `LANGUAGE`: Any named language. 
 
-And voila, we got a custom layer which samples from a normal distribution described by two tensors. Keras can automatically backpropagate through this layer and train the weights of the layers before it.
-
-Now that we have encoded our data, we need to decode it as well. We do this with two `Dense` layers.
-```Python 
-decoder_h = Dense(intermediate_dim, activation='relu')(z)
-
-x_decoded = Dense(original_dim, activation='sigmoid')decoder_mean(h_decoded)
-```
-Our network is now complete. It encodes any MNIST image into a mean and a standard deviation tensor from which the decoding part then reconstructs the image. The only thing missing is the custom loss incentivising the network to both reconstruct images and produce a normal gaussian distribution in its encodings.
-
-## Creating a custom loss 
-The VAE loss is a combination of two losses: A reconstruction loss incentivizing the model to reconstruct its input well, and a KL divergence loss, incentivizing the model to approximate a normal gaussian distribution with its encodings. To create this combined loss, we have to calculate the two loss components separately first before combining them.
-
-The reconstruction loss is the same loss that we applied for the vanilla autoencoder. Binary crossentropy is an appropriate loss for MNIST reconstruction. Since Keras implementation of a binary crossentropy loss already takes the mean across the batch, an operation we only want to do later, we have to scale the loss back up, so we devide it by the output dimensionality.
-```Python 
-reconstruction_loss = original_dim * metrics.binary_crossentropy(x, x_decoded)
-```
-
-The KL divergence loss is the simplified versions od KL divergence discussed in the section on KL divergence:
-$$D_{KL} = -0.5 * (1+ log(\sigma) - \mu^2 - \sigma)$$
-
-Expressed in Python:
-```Python 
-kl_loss = - 0.5 * K.sum(1 + z_log_var - K.square(z_mean) 
-                                      - K.exp(z_log_var), axis=-1)     
-```
-
-Our final loss is then the mean of the sum of the reconstruction loss and KL divergence loss. 
-```Python 
-vae_loss = K.mean(reconstruction_loss + kl_loss)
-```
-
-Since we have used Keras backend for all calculations, the resulting loss is a tensor which can be automatically differentiated. 
-
-Now we create our model like usual:
+Next, we will have a look at the 15 most frequently named organizations:
 
 ```Python 
-vae = Model(x, x_decoded)
+orgs = npf[npf.Type == 'ORG']
+orgs.Text.value_counts()[:15].plot(kind='bar')
 ```
 
-Since we use a custom loss, we have the loss separately, and can't just add it in the compile statement:
+![Spacy Org Dist](./assets/spacy_org_distribution.png)
+
+As you can see, political institutions such as the senate are most frequently named in our news dataset. But some companies that were in the center of media attention are found as well. Also notice how 'the White House' and 'White House' are listed as two separate organizations. Depending in your needs you might want to do some post processing such as removing 'the' from organization names. Also note how 'Trump' is shown as an organization here. If you look at the tagged text above, you will also see that 'Trump' is tagged as a NORP, speak a political organization several times. This is because the NER infers the type of tag from context. Since Trump is U.S. president, his name often gets used in the same context as (political) organizations are. 
+
+From here, you could conduct all kinds of other investigations. The pre-trained NER gives a powerful tool that solves many common NLP tasks.
+
+## Fine tuning the NER
+Many times, you will find that the pre trained NER does not do well enough on the specific kind of text that you want to work with. To solve this problem, you will have to fine tune the NER model by training it with custom data. 
+
+Your training data should be in a form like this:
 ```Python 
-vae.add_loss(vae_loss)
+TRAIN_DATA = [
+    ('Who is Shaka Khan?', {
+        'entities': [(7, 17, 'PERSON')]
+    }),
+    ('I like London and Berlin.', {
+        'entities': [(7, 13, 'LOC'), (18, 24, 'LOC')]
+    })
+]
 ```
-Now we compile the model. Since our model already has a loss, we only have to specify the optimizer. 
+You provide a list of tuples of the string together with the start and end points as well as types of entities you want to tag. Data like this is usually collected through manual tagging, often on platforms like Amazon Mechanical Turk. The company behind SpaCy also made a (paid) data tagging system called prodigy which allows for efficient data collection.
+
+Once you have collected enough data, you can either fine tune a pre trained model or initialize a completely new model. 
+
+To load and finetune a model, use the `load()` function:
 ```Python 
-vae.compile(optimizer='rmsprop')
+nlp = spacy.load('en')
 ```
 
-Another side effect of the custom loss is that it compares the output of the VAE with the _input_ of the VAE, which makes sense as we want to reconstruct the input. Therefore we do not have to specify y values, only specifying an input is enough.
+To create a new model from scratch, use the `blank` function:
 ```Python 
-vae.fit(X_train_flat,
-        shuffle=True,
-        epochs=epochs,
-        batch_size=batch_size,
-        validation_data=(X_test_flat, None))
+nlp = spacy.blank('en')
 ```
+This creates an empty model ready for the english language. 
 
-## Using a VAE to generate data 
-So we got our autoencoder, how do we generate more data? We take an input, say a picture of a seven, and run it through the autoencoder multiple times. Since the autoencoder is randomly sampling from a distribution, the output will be slightly different at each run.
-
-From our test data, we take a seven.
+Either way, we need to get access to the NER component. If you have created a blank model, you need to create a NER pipeline component and add it to the model. If you have loaded an existing model, you can just access its existing NER.
 ```Python 
-one_seven = X_test_flat[0]
+if 'ner' not in nlp.pipe_names:
+    ner = nlp.create_pipe('ner')
+    nlp.add_pipe(ner, last=True)
+else:
+    ner = nlp.get_pipe('ner')
 ```
 
-We add a batch dimension and repeat the seven across the batch four times. Now we have a batch of four, identical sevens.
-```Python 
-one_seven = np.expand_dims(one_seven,0)
-one_seven = one_seven.repeat(4,axis=0)
-```
-
-We make a prediction on that batch. We get back the reconstructed sevens.
-```Python 
-s = vae.predict(one_seven)
-```
-
-We now reshape all the sevens back into image form.
-```Python 
-s= s.reshape(4,28,28)
-```
-
-And now we plot them:
-```Python 
-fig=plt.figure(figsize=(8, 8))
-columns = 2
-rows = 2
-for i in range(1, columns*rows +1):
-    img = s[i-1]
-    fig.add_subplot(rows, columns, i)
-    plt.imshow(img)
-plt.show()
-```
-
-![Many sevens](./assets/vae_mult_sevens.png)
-
-As you can see, all images show a seven. They look quite similar, but if you look closely you see there are distinct differences. The seven on the top left has a less pronounced stroke than the seven on the bottom left. The seven on the bottom right has a sight bow at the end. 
-
-The VAE has created new data. Using this data for more training is not as good as using completely new real world data, but it is still very useful. While generative models like this one are nice for eye candy, we will now discuss how this technique can be used for credit card fraud detection.
-
-## VAEs for end to end fraud detection
-To transfer the VAE from an MNIST example to a real fraud detection problem, all we have to do is change a three hyperparameters: Input, intermediate and latent dimensionality of the credit card VAE are smaller than for the MNIST VAE. The rest stays the same.
+Next, we need to ensure that our NER can recognize the labels we have. Imagine our data contained a new type of named entity like `ANIMAL`. With the `add_label` function we can add a label type to an NER.
 
 ```Python 
-original_dim = 29
-latent_dim = 6
-intermediate_dim = 16
+for _, annotations in TRAIN_DATA:
+    for ent in annotations.get('entities'):
+        ner.add_label(ent[2])
 ```
-The visualization below shows the resulting VAE including input and output shapes:
-![Credit VAE](./assets/credit_vae.png)
-Caption: Overview of the credit VAE 
 
-Armed with a VAE that can encode and generate credit card data, we can tackle the task of end to end fraud detection. More specifically, we are using the encoding part of the autoecoder as a feature extractor as well as a method to give us more data, where we need it. How exactly that works will be covered in the section on active learning. For now, let's take a little detour and look at how (variational) autoencoders work for time series.
+```Python 
+import random
 
-# (Variational) autoencoders for time series
-This section covers the how and why of time series (V)AEs, and gives a couple of examples where they have been used. Time series are such a big topic in finance that this book has a whole chapter about them. Autoencoders have found applications in connection to time series as they can encode a long time series in a single, descriptive vector. This vector can then for example be used to efficiently compare a time series to another time series, based on specific, and complex patterns that can not be captured with a simple correlation for instance. 
+#1
+other_pipes = [pipe for pipe in nlp.pipe_names if pipe != 'ner']
 
-Consider the 2010 'Flash Crash'. On May 6 2010, starting at 2:32, US markets saw a major loss of value. The Dow Jones Industrial Average lost about 9%, a trillion dollars of value were wiped out in a couple of minutes. 36 minutes later the crash was over, most lost value was regained and people started wondering what on earth just happened. 
+with nlp.disable_pipes(*other_pipes):
+    optimizer = nlp._optimizer #2
+    if not nlp._optimizer:
+        optimizer = nlp.begin_training()
+    for itn in range(5): #3
+        random.shuffle(TRAIN_DATA) #4
+        losses = {} #5
+        for text, annotations in TRAIN_DATA: #6
+            nlp.update( #7
+                [text],  
+                [annotations],  
+                drop=0.5,  #8
+                sgd=optimizer,  #9
+                losses=losses) #10
+        print(losses)
+```
+\#1 We disable all pipeline components that are not the NER by first getting a list of all components that are not the NER and then disabling them for training. 
 
-Five years later, a man named Navinder Singh Sarao was arrested for having in part caused the flash crash and having made $40 million in the process. Sarao engaged in a practice called 'spoofing' in which he used an automated bot which would place large sell orders which could not be filled in the market but would drive the price down. The bot would leave the orders in the order books of the stock exchange for only a short time before canceling them. In the meanwhile, Sarao would buy the stock at lower prices and profit of the stocks rebounding after the canceled sales orders. 
+\#2 Pre trained models come with an optimizer. If you have a blank model, you will need to create a new optimizer. Note that this also resets the model weights.
 
-While Sarao was certainly not the only one responsible for the flash crash, practices like spoofing are now illegal and exchanges have to monitor and flag it. (If you dig back into old blog posts about high-frequency trading you will find that some traders working at large firms openly recommend spoofing or front running large orders, but that is a story for another time).
+\#3 We now train for a number of epochs, in this case 5.
 
-How would we detect someone engages in spoofing? One way is to use an autoencoder. Using large amounts of order book information, we can train an autoencoder to reconstruct 'normal' trading behavior. For traders whose trading patterns deviate a lot from normal trading, the reconstruction loss of the trained autoencoder for the transaction will be quite high. 
+\#4 At the beginning of each epoch, we shuffle the training data using Pythons built in `random` module, which we imported above.
 
-Another option is to train the autonecoder on different kinds of patterns (illegal or not) and then cluster patterns in the latent space, just as we did for the credit card transactions.
+\#5 We create an empty dictionary to keep track of the losses.
 
-Recurrent neural networks by default take in a time series and output a single vector. They can also output sequences, if Keras `return_sequences` argument is set to `True`. Using recurrent neural networks such as `LSTM`'s, building an autoencoder for time series can be done as follows.
+\#6 Now we loop over the text and anonations in the training data.
+
+\#7 `nlp.update` performs one forward and backward pass and updates the neural network weights. We need to supply text and annotations and the function will figure out how to train a network from it.
+
+\#8 We can manually specify the dropout rate we want to use while training.
+
+\#9 We pass a stochastic gradient descent optimizer that performs the model updates. Note that you can not just pass a Keras or TensorFlow optimizer here but that SpaCy has its own optimizers.
+
+\#10 We can also pass a dictionary to write losses in which we print later to monitor progress.
+
+Your output should look something like this: 
+```
+{'ner': 5.0091189558407585}
+{'ner': 3.9693684224622108}
+{'ner': 3.984836024903589}
+{'ner': 3.457960373417813}
+{'ner': 2.570318400714134}
+```
+
+# Part of speech tagging
+On Tuesday, the 10th of October 2017, between 9:34 and 9:36, the Dow Jones newswire encountered a technical error that let it to post some strange headlines. One of them 'Google to buy Apple' sent apple stock up over two percent. While the algorithmic trading systems obviously failed to understand that such an acquisition would be impossible as Apple had a market capitalization of $800bn at the time and the move would likely not find regulatory approval, it is also a form of success. How did these algorithms find out who was doing what to whom? 
+
+The answer is part of speech (POS) tagging . It allows to understand which words take over which function in a sentence and how the words relate to each other.
+
+SpaCy comes with a handy, pre trained POS tagger:
+```Python 
+import spacy
+from spacy import displacy
+nlp = spacy.load('en')
+
+doc = 'Google to buy Apple'
+doc = nlp(doc)
+displacy.render(doc,style='dep',jupyter=True, options={'distance':120})
+```
+Again, we load the pretrained english model and run our sentence through it. Then we use `displacy` just as we did for NER. To make the graphic fit better in a book, we set the `'distance'` option to something shorter than the default so that words get displayed closer together.
+
+![Spacy POS](./assets/spacy_pos.png)
+
+As you can see, the POS tagger identified 'buy' as a verb and 'Google' and 'Apple' as the the nouns in the sentence. It also identified that 'Apple' is the object the action is applied to and that 'Google' is applying the action. 
+
+We can access this information for nouns like this:
+```Python 
+for chunk in doc.noun_chunks:
+    print(chunk.text, chunk.root.text, chunk.root.dep_,
+          chunk.root.head.text)        
+```
+
+Text  |Root Text|Root dep|Root Head Text
+------|--------|------|-------
+Google | Google | ROOT | Google
+Apple | Apple | dobj | buy
+
+'Google' is the root of the sentence, while 'Apple' is the object of the sentence. The verb applied to 'Apple' is 'buy'. From there it is only a hard coded model of price developments under and acquisition (demand for the target stock goes up, and with it the price) and a stock lookup table to a simple event driven trading algorithm. Making these algorithm understand context and plausibility is another story however.
+
+
+# Rule based matching
+
+Before deep learning and statistical modeling took over, natural language processing was all about rules. And rule based systems are not dead! They are often easy to set up and do simple tasks pretty well. Imagine you would want to find all mentions of 'Google' in a text. Would you really train a neural network based named entity recognizer, run all text through the neural network and then look for 'Google' in the entity texts, or would you just search for text that exactly matches 'Google' with a classic search algorithm? SpaCy comes with an easy to use rule based matcher.
+
+Before we start this section, make sure you reload a the english laguage model and import the matcher.
+```Python 
+import spacy
+from spacy.matcher import Matcher
+
+nlp = spacy.load('en')
+```
+
+The matcher searchers for patterns which we encode as a list of dictionaries. It operates token by token, that is word for word, except for punctuation and numbers, where a single symbol can be a token. As a starting example, lets search for the phrase 'Hallo, world'. We would define a pattern as follows:
+```Python 
+pattern = [{'LOWER': 'hello'}, {'IS_PUNCT': True}, {'LOWER': 'world'}]
+``` 
+This pattern is fulfilled, if the lower case first token is 'hallo'. That means, if the actual token text is 'Hallo' or 'HALLO' it would also fulfil the requirement. The second token has to be punctuation, so the phrase 'hallo. world' or 'hallo! world' would both work, but not 'hallo world'. The lower case of the third token has to be 'world', so 'WoRlD' would also be fine.
+
+The possible attributes for a token can be:
+- `'ORTH'`: The token text has to match exactly.
+- `'LOWER'`: The lower case of the token has to match.
+- `'LENGTH'`: The length of the token text has to match.
+- `'IS_ALPHA'`, `'IS_ASCII'`,`'IS_DIGIT'`: The token text has to consist of alphanumeric characters, ASCII symbols or digits.
+- `'IS_LOWER'`, `'IS_UPPER'`,`'IS_TITLE'`: The token text has to be lower case, upper case or title case.
+- `'IS_PUNCT'`, `'IS_SPACE'`,`'IS_STOP'`: Token text has to be punctuation, white space, or a stop word.
+- `'LIKE_NUM'`, `'LIKE_URL'`,`'LIKE_EMAIL'`: Token has to resemble a number, URL or email.
+- `'POS'`, `'TAG'`, `'DEP'`, `'LEMMA'`, `'SHAPE'`: The tokens position, tag, dependency, lemma or shape has to match. 
+- `'ENT_TYPE'`: The tokens entity type from NER has to match.
+
+SpaCys lemmatization is extremely useful. A lemma is the base version of a word. 'Was' for example is a version of 'be' so 'be' is the lemma for 'was' but also for 'is'. SpaCy can lemmatize words in context, meaning it uses the surrounding words to determine what the actual base version of a word is.
+To create a matcher, we have to pass on the vocabulary the matcher works on. In this case, we can just pass the vocabulary of our english language model:
+
+```Python 
+matcher = Matcher(nlp.vocab)
+```
+
+To add the required attributes to our matcher we call:
+
+```Python 
+matcher.add('HelloWorld', None, pattern)
+```
+The `add` function expects three arguments: A name of the pattern, in this case 'HalloWorld', so that we can keep track of the patterns we added. A function that can process matches once found. We pass `None`, here, meaning no function will be applied. But we will use this tool later. Finally, we need to pass the list of token attributes we want to search for.
+
+
+To use our matcher, we can simply call `matcher(doc)`. This will give us back all the matches the matcher found.
+```Python
+doc = nlp(u'Hello, world! Hello world!')
+matches = matcher(doc)
+``` 
+
+If we print out the matches, we can see the structure:
+```Python 
+matches
+```
+```
+[(15578876784678163569, 0, 3)]
+```
+The fist thing in a match is the hash of the string found. This is just to clearly identify what was found internally and we won't use it here. The next two numbers indicate the range in which the matcher found something, here tokens 0 to 3:
+
+We can get the text back by indexing the original document:
+``` 
+doc[0:3]
+```
+``` 
+Hello, world
+```
+
+## Add custom functions to matchers
+Lets move on to a more complex case. We know that the iPhone is a product. The neural network based matcher however, often classifies it as an organization. This happens because the word 'iPhone' gets used a lot in similar context as organizations, like in 'The iPhone offers ...' or 'The iPhone sold ...'. Lets build a rule based matcher that always classifies the word 'iPhone' as a product entity.
+
+First, we have to get the hash of the word 'PRODUCT'. Words in SpaCy can be uniquely identified by their hash. Entity types also get identified by their hash. To set an entity of the product type, we have to be able to provide the hash for the entity name. 
+
+We can get the name from the language models vocabulary:
+```Python 
+PRODUCT = nlp.vocab.strings['PRODUCT']
+```
+
+Next, we need to define an `on_match` rule. This function will be called every time the matcher finds a match. `on_match` rules get passed four arguments:
+- `matcher`: The matcher that made the match. 
+- `doc`: The document the match was made in.
+- `i`: The index of a mach. The first match in a document would have index zero, the second would have index one and so on.
+- `matches`: A list of all matches made.
+
+There are two things happening in our `on_match` rule:
+```Python 
+def add_product_ent(matcher, doc, i, matches):
+    match_id, start, end = matches[i] #1
+    doc.ents += ((PRODUCT, start, end),) #2
+``` 
+\#1 We index all matches to find our match at index `i`. One match is a tuple of a match id, the start of the match and the end of the match. 
+
+\#2 We add a new entity to the documents named entities. An entity is a tuple of the hash of the type of entity (the hash of the word 'PRODUCT' here), the start of the entity and the end of the entity. To append an entity, we have to nest it in another tuple. Tuples that contain only one value need to include a comma at the end. It is important to not overwrite `doc.ents`, as we otherwise would remove all the entities we already found.
+
+Now that we have a `on_match` rule we can define our matcher. 
+
+Note that matchers allow us to add multiple patterns, so we can add a matcher for just the word 'iPhone' and another pattern for the word iPhone together with a version number like 'iPhone 5':
+
+```Python 
+pattern1 = [{'LOWER': 'iphone'}] #1
+pattern2 = [{'ORTH': 'iPhone'}, {'IS_DIGIT': True}] #2
+
+matcher = Matcher(nlp.vocab) #3
+matcher.add('iPhone', add_product_ent,pattern1, pattern2) #3
+```
+\#1 We define the fist pattern.
+
+\#2 We define the second pattern.
+
+\#3 We create a new empty matcher.
+
+\#4 We add the patterns to the matcher. Both will fall under the rule called 'iPhone', and both will call our `on_match` rule called `add_product_ent`.
+
+We will now pass one of the news articles through the matcher.
+
+```Python 
+doc = nlp(df.content.iloc[14]) #1
+matches = matcher(doc) #2
+```
+\#1 We run the text through the pipeline to create an annonated document.
+\#2 We run the document through the matcher. This modifies the document created in the step before. We do not care as much about the matches but about how the `on_match` methods adds the matches as entities to our documents.
+
+And boom, all mentions of the word 'iPhone' (case independent), are now tagged as named entities of the type product. You can validate this by displaying the entities with `displacy`
+
+```Python 
+displacy.render(doc,style='ent',jupyter=True)
+``` 
+
+![Spacy now finds the iPhone as a product](./assets/spacy_iphone_product.png)
+
+## Adding the matcher to the pipeline
+
+Calling the matcher seperately is somewhat cumbersome. To add it to the pipeline, we have to wrap it into a function: 
+
+```Python 
+def matcher_component(doc):
+    matches = matcher(doc)
+    return doc
+```
+The SpaCy pipeline calls the components of the pipeline as functions and alway expects the anonated document to be returned. Returning anything else might break the pipeline. We can then add the matcher to the main pipeline like this: 
+
+```Python 
+nlp.add_pipe(matcher_component,last=True)
+```
+The matcher is now the last piece of the pipeline and iPhones get tagged based on the matchers rules.
+
+## Combining rule based and learning based systems
+One especially interesting aspect of SpaCy's pipeline system is that it is relatively easy to combine different aspects. We can for example combine the neural network based named entity recognition with a rule based matcher to find something like executive compensation information.
+
+Executive compensation is often reported in the press but hard to find in aggregate. One possible rule based matching pattern for executive compensation could look like this:
+
+```Python 
+pattern = [{'ENT_TYPE':'PERSON'}, 
+            {'LEMMA':'receive'}, 
+            {'ENT_TYPE':'MONEY'}]
+``` 
+
+A matcher looking for this pattern would pick up any combination of a Persons name (e.g. 'John Appleseed', or 'Daniel'), any version of the word receive ('received', 'receives', etc.) followed by any expression of money (e.g. '$4 Million'). This matcher could be run over a large text corpus with the `on_match` rule handily saving the found snippets into a database. A machine learning approach for naming entities as well as a rule based approach go seamlessly hand in hand. Since there is much more training data available with annotations for names and money rather than statements about executive education, it is much easier to combine the NER with a rule based method rather than training a new NER.
+
+# Regular expressions 
+Regular expressions, or regex, are a powerful form of rule based matching. Invented in the 1950s they were the most useful way to find things in text for a very long time, and proponents argue they still are. No chapter on NLP would be complete without mentioning them. This section is by no means a complete regex tutorial. It just introduces the general idea and shows how regex can be used in Python, pandas and SpaCy. 
+
+A very simple regex pattern could be `'a.'` Which would only find instances of the lower case letter a followed by a dot. But regex also allows to add ranges of patterns, for example `'[a-z].'` would find any lower case letter followed by a dot, and `'[xy].'` would find only the letters x or y followed by a dot. Regex patterns are case sensitive, so `'[A-Z]'` captures only upper case letters. This is useful if we are searching for expressions in which spelling is frequently different, for example the pattern `'seriali[sz]e'` would catch the British as well as American english version of the word. The same goes for numbers, `'[0-9]'` captures all numbers from 0 to 9. To find repetitions, you can use the `'*'` which captures zero or more occurrences, or the `'+'` which captures one or more occurrences. E.g. `'[0-9]+'` would capture any series of numbers, which might be useful when looking for years. `'[A-Z][a-z]+ [0-9]+'` for example would find all words starting with a capital letter followed by one or more digit, like 'March 2018' but also 'Jaws 2'. Curly brackets can be used to define the number of repetitions, `'[0-9]{4}'` would find number sequences with exactly four digits. As you can see, regex does not make any attempt to understand what is in the text, but rather offers a clever method of finding text that matches patterns. 
+
+A practical use case in the financial industry is finding the VAT number of companies in invoices. These follow a pretty strict pattern in most countries that can easily be encoded. VAT numbers in the Netherlands for example follow this regex pattern: `'NL[0-9]{9}B[0-9]{2}'`.
+
+## Using Python's regex module 
+Python has a built in tool for regex called re. It does not need to be installed as it is part of Python itself. 
+
+```Python 
+import re
+```
+Imagine we are working on an automatic invoice processor, and we want to find to find the VAT number of the company that sent us the invoice. For simplicity's sake, we only deal with Dutch VAT numbers. We know the pattern for a dutch VAT number:
+
+```Python 
+pattern = 'NL[0-9]{9}B[0-9]{2}'
+```
+
+A string that we want to search the BTW in might look like this:
+
+```Python 
+my_string = 'ING Bank N.V. BTW:NL003028112B01'
+```
+
+To find all occurrences of a BTW number in the string, we can call `re.findall`, which will return a list of all strings matching the pattern found. 
+
+``` Python 
+re.findall(pattern,my_string)
+``` 
+```
+['NL003028112B01']
+```
+
+`re` also allows to pass flags to make development of regex patterns a bit easier.
+
+To ignore the case of letters when matchin a regular expression for exaple we can add a `re.IGNORECASE` flag.
+``` Python 
+re.findall(pattern,my_string, flags=re.IGNORECASE)
+``` 
+
+Often, we are interested in a bit more information around our matches. To this end, there is a `match` object. `re.search` yields a `match` object for the first match found:
+
+```Python 
+match = re.search(pattern,my_string)
+```
+
+We can get more information out of this object, such as the location of our match: 
+```Python 
+match.span()
+```
+```
+(18, 32)
+```
+The span, the start and the end, of our match are the characters 18 to 32.
+
+## Regex in pandas
+Data for NLP problems often comes in pandas dataframes. Luckily, pandas natively supports regex. If for example we want to find out if any of the articles in our news dataset contains a dutch BTW number, we can pass:
+
+```Python 
+df[df.content.str.contains(pattern)]
+```
+This would yield all articles which include a Dutch btw, but unsurprisingly no articles do.
+
+## When to use regex and when not to
+Regex is a powerful tool and this very short introduction does not do it justice. In fact, there are several books longer than this one written purely on regex. Regex works well on simple, clear to define patterns. VAT numbers are the perfect examples, and email addresses or phone numbers are very popular use cases. However, regex fails when the pattern is hard to define or can only be inferred from context. It is not possible to create a rule based named entity recognizer that can spot that a word refers to the name of a person, because names follow no clear distinguishing pattern. So, next time you are looking to find something that is easy to spot for a human but hard to describe in rules, use a machine learning based solution. Next time you are looking for something clearly encoded, like a VAT number, use regex.
+
+# A text classification task
+
+A common NLP task is to classify text. The most common text classification is done in sentiment analysis, where texts are classified as positive or negative. In this section, we will consider a slightly harder problem: Classifying whether a tweet is about an actual disaster happening or not. Today, investors have developed a number of ways to gain information from tweets. Twitter users are often faster than news outlets to report disasters, such as a fire or a flood. This speed advantage can be used for event driven trading strategies for instance. Yet, not all tweets that contain words associated with disasters are actually about disasters. A tweet like: 'California forests on fire near San-Francisco' is a tweet that should be taken into consideration while: 'California this weekend was fire, good times in San-Francisco' can be safely ignored. 
+
+The goal of this task is to build a classifier that separates the tweets about real disasters from irrelevant tweets. The dataset consists of hand labeled tweets that were obtained by searching twitter for words common to disaster tweets like 'ablaze' or 'fire'.
+
+# Preparing the data
+
+Preparing text task of its own, because real world text is often messy and can not be fixed with a few simple scaling operations. People make typos, they add unnecessary characters, they use text encodings we can not read, etc. NLP involves its own set of data cleaning challenges and techniques. 
+
+## Sanitizing characters 
+To store text, computers need to encode the characters into bits. There are several different ways to do this and not all of them can deal with all characters. It is good practice to keep all text files in one encoding scheme, usually utf-8, but of course that does not always happen. Files might also be corrupted, meaning that a few bits are off rendering some characters unreadable. Therefore we need to sanitize our inputs first.
+
+Python offers a helpful `codecs` library that allows us to deal with different encodings. Our data is utf-8 encoded, but there are a few special characters in there that can not be read easily. Therefore, we have to sanitize our text of these special characters.
+```Python 
+import codecs
+input_file = codecs.open('../input/socialmedia-disaster-tweets-DFE.csv',
+                          'r',
+                          encoding='utf-8', 
+                          errors='replace')
+```
+`codecs.open` acts as a stand in replacement for pythons standard file opening function. It returns a file object which we can later read line by line. We specify the input path, that we want to read the file (with `'r'`), the expected encoding and what to do with errors. In this case we will replace errors with a special unreadable character marker.
+
+To write to the output file, we can just use Pythons standard `open()` function. This function will create a file at the specified file path we can write to. 
+```Python                         
+output_file = open('clean_socialmedia-disaster.csv', 'w')
+```
+Now, all we have to do is loop over the lines in our input file that we read with our `codecs` reader and save it as a regular csv file again.
+```Python
+for line in input_file:
+    out = line
+    output_file.write(line)
+
+```
+It is good practice that we close the file objects afterwards.
+```Python
+input_file.close()
+output_file.close()
+```
+
+Now we can read the sanitized csv file with pandas.
+```Python 
+df = pd.read_csv('clean_socialmedia-disaster.csv')
+```
+
+
+## Lemmatization
+
+Lemmas have already made several appearances in this chapter. A lemma in the field of linguistics, also called headword, is the word under which the set of related words or forms appears in a dictionary. 'Was' and 'is' appear under 'be', 'mice' appears under 'mouse' and so on. Often times, the specific form of a word does not matter very much, so it can be a good idea to convert all text into it's lemma form.
+
+SpaCy offers a handy way to lemmatize text, so once again, we load a SpaCy pipeline. Only that in this case we don't need any pipeline module but the tokenizer. The tokenizer splits text into separate words, usually by spaces. These individual words, or tokens, can then be used to look up their lemma. 
+```Python 
+import spacy
+nlp = spacy.load('en',disable=['tagger','parser','ner'])
+```
+
+Lemmatization can be slow, so for big files it makes sense to track progress. `tqdm` allows to show progress pars on the pandas `apply` function. All we have to do is to import `tqdm` as well as the notebook component for pretty rendering in our work environment. Then we have to tell `tqdm` we would like to use it with pandas.
+```Python 
+from tqdm import tqdm, tqdm_notebook
+tqdm.pandas(tqdm_notebook)
+```
+We can now run `progress_apply` on a data frame just as we would use the standard `apply` method, but it has a progress bar. 
+
+For each row, we loop over the words in the 'text' column and save the lemma of the word in a new 'lemmas' column.
+```Python 
+df['lemmas'] = df["text"].progress_apply(lambda row: 
+                                         [w.lemma_ for w in nlp(row)])
+```
+Our 'lemmas' column is a full of lists now, so to turn the lists back into texts, we join all elements of the lists with a space as a separator.
+
+```Python 
+df['joint_lemmas'] = df['lemmas'].progress_apply(lambda row: ' '.join(row))
+```
+
+## Preparing the target 
+There are several possible prediction target in this dataset. Humans were asked to rate a tweet, and apparently the were given three options:
+```Python 
+df.choose_one.unique()
+```
+
+```
+array(['Relevant', 'Not Relevant', "Can't Decide"], dtype=object)
+```
+Tweets for which humans can not decide whether it is about a real disaster or not are not interesting to us here. So we will just remove that category:
+
+```Python 
+df = df[df.choose_one != "Can't Decide"]
+```
+
+We are also only interested in mapping text to relevance, so we can drop all other metadata and just keep these two columns.
+```Python 
+df = df[['text','choose_one']]
+``` 
+Finally, we convert the target into numbers. This is a binary classification task as there are only two categories. So we map 'Relevant' to 1 and 'Not Relevant' to zero:
+```Python 
+f['relevant'] = df.choose_one.map({'Relevant':1,'Not Relevant':0})
+```
+
+## Preparing train and test set 
+Before we start building models, lets split our data in train and test set:
+```Python 
+from sklearn.model_selection import train_test_split
+X_train, X_test, y_train, y_test = train_test_split(df['joint_lemmas'], 
+                                                    df['relevant'], 
+                                                    test_size=0.2,
+                                                    random_state=42)
+```
+
+# Bag of words
+
+A simple, yet effective way of classifying text is to see text as a bag of words. That means, we do not care for the order in which words appear in the text, but only about which words appear in the text.
+## Count vectors
+One way of doing bag of words classification is by simply counting the occurrences of different words in a text. This is done with a so called count vector. Each word has an index, and for each text, the value of the count vector at that index is the number of occurrences of the word that belongs to the index. 
+
+A count vector for the text 'I see cats and dogs and elephants' could look like this:
+
+|i|see|cats|and|dogs|elephants|
+|-|---|---|---|---|--------|
+|1|1|1|2|1|1|
+
+In reality, count vectors are pretty sparse. There are about 23,000 different words in our text corpus. It makes sense to limit the amount of words we want to include in our count vectors. Rare words are often just gibberish or typos with no meaning. Keeping all rare words can be a source of overfitting. 
+
+We are using `sklearn`'s built in count vectorizer. By setting `max_features` we can control how many words we want to consider. In this case, we will only consider the 10,000 most frequent words: 
+```Python 
+from sklearn.feature_extraction.text import CountVectorizer
+
+count_vectorizer = CountVectorizer(max_features=10000)
+```
+Our count vectorizer can now transform texts into count vectors. Each count vector will have 10,000 dimensions. 
+```Python 
+X_train_counts = count_vectorizer.fit_transform(X_train)
+X_test_counts = count_vectorizer.transform(X_test)
+```
+Once we have obtained our count vectors, we can perform simple logistic regression on them. While we could use Keras for logistic regression as we did in chapter 1, it is often easier to just use the logistic regression class from sklearn:
+```Python 
+from sklearn.linear_model import LogisticRegression
+clf = LogisticRegression()
+
+clf.fit(X_train_counts, y_train)
+
+y_predicted = clf.predict(X_test_counts)
+```
+Now that we have predictions from our logistic regressor, we can measure its accuracy with `sklearn`:
+
+```Python 
+from sklearn.metrics import accuracy_score
+accuracy_score(y_test, y_predicted)
+```
+
+``` 
+0.8011049723756906
+``` 
+80% accuracy is pretty decent for such a simple method. A simple count vector based classification is useful as a baseline for more advanced methods which we will discuss later.
+
+## TF-IDF
+TF-IDF stands for 'Term Frequency, Inverse Document Frequency' and it aims to address a problem of simple word counting: Words that appear frequently in a text are important but words that appear in _all_ texts are not important. 
+
+The TF component is just like a count vector, except that TF divides the counts by the total number of words in a text. 
+
+The IDF component is the logarithm of the total number of texts in the entire corpus divided by the number of texts that include a specific word.
+
+TF-IDF is the product of these two measurements. TF-IDF vectors are like count vectors, except they contain the TF-IDF scores instead of the counts for words contain 
+
+ Words that appear frequently in one text but are rare across the entire corpus have a high score in the TF-IDF vector. We create TF-IDF vectors just as we created count vectors with `sklearn`:
+
+```Python 
+from sklearn.feature_extraction.text import TfidfVectorizer
+tfidf_vectorizer = TfidfVectorizer()
+
+X_train_tfidf = tfidf_vectorizer.fit_transform(X_train)
+X_test_tfidf = tfidf_vectorizer.transform(X_test)
+```
+
+Once we have the TF-IDF vectors, we can train a logistic regressor on them just like we did for count vectors:
+
+```Python 
+clf_tfidf = LogisticRegression()
+clf_tfidf.fit(X_train_tfidf, y_train)
+
+y_predicted = clf_tfidf.predict(X_test_tfidf)
+```
+
+In this case, TF-IDF does slightly worse than count vectors. The performance difference is very small though so that it might be attributable to chance in this case:
+
+```Python
+accuracy_score(y_pred=y_predicted, y_true=y_test)
+```
+
+```
+0.7978821362799263
+```
+
+# Topic modeling 
+
+A final, very useful application of word counting is topic modeling. Given a set of texts, can we find clusters of topics? The method to do this is called latent dirichlet allocation (LDA).
+
+The name is quite a mouth full but the algorithm is useful, so we will look at it step by step. LDA makes the following assumption about how texts are written.
+
+- First, a topic distribution is chosen, say 70% machine learning and 30% finance.
+- Second, a distribution of words for each topic is chosen. For example the topic 'machine learning' consists to 20% of the word 'tensor', 10% out of the word 'gradient' and so on. This means, that our topic distribution is a _distribution of distributions_, also called a dirichlet distribution.
+- Once the text gets written, two probabilistic decisions are made for each word: First, a topic is chosen from the distribution of topics in the document. Then, a word is chosen for the distribution of words in that document.
+
+Note that not all documents in a corpus have the same distribution of topics. Chapter 1 can be 80% about machine learning while chapter 4 is only 50% about machine learning. We need to specify a fixed number of topics however.
+
+In the learning process, we start out by assigning each word in the corpus randomly to one topic. 
+
+For each document, we then calculate
+$$p(t| d)$$
+
+That is the probability of each topic $t$ to be included in document $d$. For each word we then calculate
+
+$$p(w| t)$$
+
+That is the probability of a word $w$ to belong to a topic $t$
+
+We then assign the word to a new topic $t$ with the probability:
+
+$$p(t| d) * p(w| t)$$
+
+In other words, we assume that all words are already correctly assigned to a topic except for the word currently under consideration. We then try to assign words to topics to make documents more homogenous in their topic distribution. This way, words that actually belong to a topic cluster together.
+
+Scikit Learn offers an easy to use LDA tool. We first need to create a new LDA analyzer and specify the number of topics (called components here) we expect.
+
+```Python
+from sklearn.decomposition import LatentDirichletAllocation
+
+lda = LatentDirichletAllocation(n_components=2)
+```
+
+We then create count vectors, just as we did for the bag of words analysis. For LDA it is important to remove frequent words that don't mean anything like 'an' or 'the', so called stop words. The `CountVectorizer` comes with a built in stop word dictionary that removes these words automatically.
+
+```Python 
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+vectorizer = CountVectorizer(stop_words='english')
+tf = vectorizer.fit_transform(df['joint_lemmas'])
+```
+
+Now we fit the LDA to the count vectors.
+```
+lda.fit(tf)
+```
+
+To inspect our results, we can print out the most frequent words for each topic. To this end we first need to specify the number of words per topic we want to print. We also need to extract the mapping word count vector indices to words. 
+```Python 
+n_top_words = 5
+tf_feature_names = vectorizer.get_feature_names()
+```
+
+Now we can loop over the topics of the LDA, and print the most frequent words in in.
+```Python
+for topic_idx, topic in enumerate(lda.components_):
+        message = "Topic #%d: " % topic_idx
+        message += " ".join([tf_feature_names[i]
+                             for i in topic.argsort()[:-n_top_words - 1:-1]])
+        print(message)
+```
+
+```
+Topic #0: http news bomb kill disaster
+Topic #1: pron http like just https
+```
+As you can see, the LDA seems to have discovered the grouping into serious tweets and non serious ones by itself without being given the targets.
+
+This method is very useful for classifying news articles to. Investors might want to know if there is a news article mentionioning a risk factor they are exposed to. The same goes for support requests for consumer facing organizations which can be clustered this way.
+
+# Word embeddings
+The order of words in a text matters. Therefore, we can expect higher performance if we do not just look at texts in aggregate but see them as a sequence. The next sections make use of a lot of the techniques discussed in the last chapter but they add a critical ingredient: Word Vectors.
+
+Words and word tokens are categorical features. As such, we can not directly feed them into a neural net. Previously, we have dealt with categorical data by turning it into one hot encoded vectors. But for words, this is impractical. Since our vocabulary is 10,000 words, each vector would contain 10,000 numbers which are all zeros except for one. This is highly inefficient. Instead we will use an embedding.
+
+In practice, embeddings work like a look up table. For each token, they store a vector. When the token is given to the embedding layer, it returns the vector for that token and passes it through the neural network. As the network trains, the embeddings get optimized as well. Remember that neural networks work by calculating the derivative of the loss function with respect to the parameters (weights) of the model. Through back propagation we can also calculate the derivative of the loss function with respect to the input of the model. Thus we can optimize the embeddings to deliver ideal inputs that help our model.
+
+## Preprocessing for training with word vectors 
+Before we start with training word embeddings though, we need to do some preprocessing steps. Namely, we need to assign each word token a number and create a numpy array full of sequences. 
+
+Assigning numbers to tokens makes the training process smoother and decouples the tokenization process from the word vectors. Keras has a `Tokenizer` class that can create numeric tokens for words. By default, this tokenizer splits text by spaces. This works mostly fine in english, but in other languages it can be problematic. It is better to tokenize the text with SpaCy first, as we already did for our two previous methods, and then assign numeric tokens with Keras. 
+
+The Tokenizer also allows us to specify how many words we want to consider, so once again we will only use the 10,000 most used words.
+```Python
+from keras.preprocessing.text import Tokenizer
+import numpy as np
+
+max_words = 10000
+```
+
+The tokenizer works a lot like the `CountVectorizer` from `sklearn`. First we create a new tokenizer object. Then we fit the tokenizer, and finally, we can transform the text to tokenized sequences.
+``` Python 
+tokenizer = Tokenizer(num_words=max_words)
+tokenizer.fit_on_texts(df['joint_lemmas']) 
+sequences = tokenizer.texts_to_sequences(df['joint_lemmas'])
+```
+
+The `sequences` variable now holds all of our texts as numeric tokens. We can look up the mapping of words to numbers from the tokenizers word index: 
+```Python 
+word_index = tokenizer.word_index
+print('Token for "the"',word_index['the'])
+print('Token for "Movie"',word_index['movie'])
+```
+``` 
+Token for "the" 4
+Token for "Movie" 333
+```
+As you can see, frequently used words like 'the' have lower token numbers than less frequent words like 'movie'. You can also see that the `word_index` is a dictionary. If you are using your model in production, you can save this dictionary to disk to convert words to tokens later.
+
+Finally, we need to turn our sequences into sequences of equal length. This is not always nessecary, some model types can deal with sequences of different lengths, but it usually makes sense and is often required. We will examine which models need equal length sequences in the next section on building custom NLP models.
+
+Keras `pad_sequences` function allows to easily bring all sequences to the same length by either cutting off sequences or adding zeros at the end. We will bring all tweets to a length of 140 characters, which for a long time was the maximum lenght tweets could have.
+```Python 
+from keras.preprocessing.sequence import pad_sequences
+
+maxlen = 140
+
+data = pad_sequences(sequences, maxlen=maxlen)
+```
+
+Finally, we split our data in a training and validation set.
+
+```Python 
+from sklearn.model_selection import train_test_split
+X_train, X_test, y_train, y_test = train_test_split(data,
+                                                    df['relevant'],
+                                                    test_size = 0.2, 
+                                                    shuffle=True, 
+                                                    random_state = 42)
+```
+
+Now we are ready to train our own word vectors.
+## Training your own word vectors 
+
+Embeddings are a their own layer type in Keras. To use them, we have to specify how large we want the word vectors to be. A 50 dimensional vector is able to capture good embeddings even for quite large vocabularies. We also have to specify for how many words we want embeddings and how long our sequences are. Our model is now a simple logistic regressor which trains its own embeddings.
+```Python 
+from keras.models import Sequential
+from keras.layers import Embedding, Flatten, Dense
+
+embedding_dim = 50
+
+model = Sequential()
+model.add(Embedding(max_words, embedding_dim, input_length=maxlen))
+model.add(Flatten())
+model.add(Dense(1, activation='sigmoid'))
+```
+
+Notice how we do not have to specify an input shape as usual. Even specifying the input length is only necessary if the following layers require knowledge of the input length. `Dense` layers require knowledge about the input size. Since we are using a dense layers directly, we need to specify the input length here.
+
+Word embeddings have _many_ parameters. You can see this if you are printing out the models summary:
+```Python 
+model.summary()
+```
+```
+_________________________________________________________________
+Layer (type)                 Output Shape              Param #   
+=================================================================
+embedding_2 (Embedding)      (None, 140, 50)           500000    
+_________________________________________________________________
+flatten_2 (Flatten)          (None, 7000)              0         
+_________________________________________________________________
+dense_3 (Dense)              (None, 1)                 7001      
+=================================================================
+Total params: 507,001
+Trainable params: 507,001
+Non-trainable params: 0
+_________________________________________________________________
+```
+The embedding layer has 50 parameters for 10,000 words equalling 500,000 parameters in total. This makes training slower and can increase the chance of overfitting.
+
+We can now compile and train our model as usual. 
+```Python 
+model.compile(optimizer='adam',
+              loss='binary_crossentropy',
+              metrics=['acc'])
+              
+history = model.fit(X_train, y_train,
+                    epochs=10,
+                    batch_size=32,
+                    validation_data=(X_test, y_test))
+```
+
+This model achieves about 76% accuracy on the test set but over 90% accuracy on the training set. The many parameters in the custom embeddings lead to overfitting. To avoid overfitting and reduce training time, you are often better off using pre trained word embeddings.
+
+## Loading pre trained word vectors 
+Like in computer vision, NLP models can benefit from using pre trained pieces of other models. In this case, we will use the pre trained GloVe vectors. GloVe stands for Global Vectors for Word Representation, and is a project of the Stanford NLP group. GloVe provides different sets of vectors trained on different texts. We will use word embeddings trained on wikipedia texts as well as the Gigaword dataset. In total, the vectors were trained on a text of 6 billion tokens. An alternative to GloVe is Word2Vec, a similar set of word vectors that you might try out. GloVe and Word2Vec are relatively similar although the training method for them was different. They each have their strengths and weaknesses and in practice it is often worth trying out both.
+
+A nice feature of GloVe vectors is that they encode word meanings in vector space so that 'word algebra' becomes possible. The vector for 'king' minus the vector for 'man' plus the vector for 'woman' for example results in a vector pretty close to 'queen'. This means the differences between the vectors for 'man' and 'woman' are the same as the differences for the vectors of 'king' and 'queen' as the differentiating features for both are nearly the same.
+
+Equally, swords describing similar things such as 'frog' and 'toad' are very close to each other in the GloVe vector space. Encoding semantic meanings in vectors offers a range of other exciting opportunities for document similarity and topic modeling as we will see later in this chapter. But the semantic vectors are also pretty useful to serve for a wide range of NLP tasks, such as our text classification problem.
+
+The actual GloVe vectors are in a text file. We will use the 50 dimensional embeddings trained on 6 billion tokens. First we need to open the file:
+```Python
+import os
+glove_dir = '../input/glove6b50d'
+f = open(os.path.join(glove_dir, 'glove.6B.50d.txt'))
+```
+Then we create an empty dictionary which will later map words to embeddings.
+```Python 
+embeddings_index = {}
+```
+
+In the dataset, each line represents a new word embedding. The line starts with the word and the embedding values follow. We can read out the embeddings like this:
+```Python 
+for line in f: #1
+    values = line.split() #2
+    word = values[0] #3
+    embedding = np.asarray(values[1:], dtype='float32') #4
+    embeddings_index[word] = embedding dictionary #5
+f.close() #6
+```
+\#1 We loop over all lines in the file. Each line contains a word and embedding. 
+
+\#2 We split the line by whitespace.
+
+\#3 The first thing in the line is always the word.
+
+\#4 Then come the embedding values. We immediately transform them into a numpy array and make sure there are all floating point numbers, that is decimals.
+
+\#5 We then save the embedding vector in our embedding dictionary.
+
+\#6 Once we are done with it we close the file.
+
+Now we have a dictionary mapping words to their embeddings:
+```Python 
+print('Found %s word vectors.' % len(embeddings_index))
+``` 
+```
+Found 400000 word vectors.
+```
+This version of GloVe has vectors for 400,000 words. Which should be enough to cover most words we will encounter. However, there might be some words, for which we still do not have a vector. For these words we will just create random vectors. To make sure these vectors are not too much off, it is a good idea to use the same mean and standard deviation for the random vectors as from the trained vectors. To this end we need to calculate mean and standard deviation for the GloVe vectors.
+
+```Python 
+all_embs = np.stack(embeddings_index.values())
+emb_mean = all_embs.mean()
+emb_std = all_embs.std()
+``` 
+
+Our embedding layer will be a matrix with a row for each word and a column for each element of the embedding. Therefore, we need to specify how many dimensions one embedding has. The version of GloVe we loaded earlier has 50 dimensional vectors.
+
+```Python 
+embedding_dim = 50
+```
+
+Next, we need to find out how many words we actually have. Although we have set the maximum to 10,000, there might be fewer words in our corpus. At this point we also retrieve the word index from the tokenizer, which we will use later.
+```Python 
+word_index = tokenizer.word_index
+nb_words = min(max_words, len(word_index))
+```
+To create our embedding matrix, we first create a random matrix with the same mean and std as the embeddings.
+
+```Python 
+embedding_matrix = np.random.normal(emb_mean, 
+                                    emb_std, 
+                                    (nb_words, embedding_dim))
+```
+
+Embedding vectors need to be in the same position as their token number. A word with token 1 needs to be in row 1 (rows start with zero) and so on. We can now replace the random embeddings for the words for which we do have trained embeddings with trained embeddings.
+
+```Python 
+for word, i in word_index.items(): #1
+    if i >= max_words: #2
+        continue  
+    embedding_vector = embeddings_index.get(word) #3
+    if embedding_vector is not None: #4
+        embedding_matrix[i] = embedding_vector
+```
+\#1 Loop over all words in the word index.
+
+\#2 If we are above the amount of words we want to use we do nothing.
+
+\#3 Get the embedding vector for the word. This operation might return none if there is no embedding for this word.
+
+\#4 If there is an embedding vector, put it in the embedding matrix.
+
+To use the pre trained embeddings, we just have to set the weights in the embedding layer to the embedding matrix we just created. To make sure the carefully created weights are not destroyed we set the layer to not trainable. 
+```Python 
+model = Sequential()
+model.add(Embedding(max_words, 
+                    embedding_dim, 
+                    input_length=maxlen, 
+                    weights = [embedding_matrix], 
+                    trainable = False))
+                    
+model.add(Flatten())
+model.add(Dense(1, activation='sigmoid'))
+```
+This model can be compiled and trained just like any other Keras model. You will notice that it trains much faster than the model in which we trained our own embeddings and suffers less from overfitting. Its overall performance on the test set is roughly the same however.
+
+Word embeddings are pretty cool in reducing training time and helping to build accurate models. However, semantic embeddings go further. They can for example be used to measure how similar two texts are semantically, even if they include different words.
+
+## Time series models with word vectors.
+Text is a time series. Different words follow each other and the order in which they do matters. Therefore, every neural network based technique from last chapter can also be used for NLP. In addition there are some building blocks that were not introduced in the last chapter that are useful for NLP.
+
+Let's start with an LSTM. All you have to change from the implementation in the last chapter is that the first layer of the network should be an embedding layer. This example uses a `CuDNNLSTM` layer which trains much faster than a regular `LSTM` layer but is otherwise the same. If you do not have a GPU, replace `CuDNNLSTM` with `LSTM`.
+```Python 
+from keras.layers import CuDNNLSTM
+model = Sequential()
+model.add(Embedding(max_words, 
+                    embedding_dim, 
+                    input_length=maxlen, 
+                    weights = [embedding_matrix], trainable = False))
+model.add(CuDNNLSTM(32))
+model.add(Dense(1, activation='sigmoid'))
+``` 
+
+One technique used frequently in NLP but less frequently in time series forecasting is a bidirectional RNN. 
+
+A bidirectional RNN is basically just two recurrent neural networks. One gets fed the sequence forward, the other one backward. 
+![Bidirectional RNN](./assets/bidirectional_rnn.png)
+
+In Keras, there is a `Bidirectional` layer in which we can wrap any recurrent neural network layer, such as an `LSTM`:
+```Python 
+from keras.layers import Bidirectional
+model = Sequential()
+model.add(Embedding(max_words, 
+                    embedding_dim, 
+                    input_length=maxlen, 
+                    weights = [embedding_matrix], trainable = False))
+model.add(Bidirectional(CuDNNLSTM(32)))
+model.add(Dense(1, activation='sigmoid'))
+```
+
+Word embeddings enrich neural networks. They are a space efficient and powerful method to transform words into numbers a neural network can work with. But there are more advantages of encoding semantics as vectors. We can perform vector math on them! This is useful if we want to measure the similarity between two texts for instance.
+
+# Document similarity with word embeddings
+Practical use case of word vectors is to compare the semantic similarity between documents. If you are a retail bank, insurance company or any other company that sells to end users, you will have to deal with support requests. Many customers have similar requests. By finding out how similar texts are semantically, previous answers to similar requests can be reused and service can be improved.
+
+SpaCy has a built in function to measure the similarity between two sentences. It also comes with pre trained vectors, from the Word2Vec model which is similar to GloVe. This methods works by averaging the embedding vectors of all words in a text and then measuring the cosine of the angle between the average vectors. Two vectors pointing in roughly the same direction will have a high similarity score, vectors pointing in different directions will have a low similarity score.
+
+![Similarity Vectors](./assets/similarity_vectors.png)
+
+```Python 
+sup1 = nlp('I would like to open a new checking account')
+sup2 = nlp('How do I open a checking account?')
+```
+As you can see, these requests are pretty similar:
+```Python 
+sup1.similarity(sup2)
+```
+```
+0.7079433112862716
+```
+And indeed their similarity score is quite high. This simple averaging method works pretty decently. It is not however able to capture things like negations well as a single deviating vector might not influence the average too much. E.g. 'I would like to close a checking account' has a semantically different meaning than 'I would like to open a checking account' but the model sees them as pretty similar. Yet, this approach is still useful and a good illustration of the advantages of representing semantics as vectors.
+
+# A quick tour of the Keras functional API
+
+So far, we used Sequential models. In the Sequential model, layers get stacked on top of each other when we call model.add(). In the functional API, we have a bit more control and can specify how layers should be connected. Let's look at a simply two layer network in both the Sequential and functional way:
 
 ```Python 
 from keras.models import Sequential
-from keras.layers import LSTM, RepeatVector
+from keras.layers import Dense, Activation
 
-model = Sequential() #1
-model.add(LSTM(latent_dim, input_shape=(maxlen, nb_features))) #2
-model.add(RepeatVector(maxlen)) #3
-model.add(LSTM(nb_features, return_sequences=True)) #4
-```
-
-\#1 A simple autoencoder can be built using the `Sequential` API. 
-
-\#2 We first feed our sequence length `maxlen` and with the number of features equal to `nb_features` into an `LSTM`. The `LSTM` will return only its last output, a single vector of dimension `latent_dim`. This vector is the encoding of our sequence. 
-
-\#3 To decode the vector, we need to repeat it over the length of the time series. This is done by the `RepeatVector` layer.
-
-\#4 Now we feed the sequence of repeated encodings into a decoding LSTM which this time returns the full sequence.
-
-Variational autoencoders also find their way into trading. They can be used to augment backtesting by generating new, unseen data for testing. They can also be used to generate data about contracts where data is missing. But most interesting, they can be used to learn about the driving variables in limit order book markets for instance. 
-
-It is reasonable to assume that just because two market days look a bit different, the same forces might be at work. Mathematically, we can assume that market data $\{x_k\}$ is sampled from a probability distribution $p(x)$ with a small number of latent variables $h$. Using an autoencoder, we can then approximate $p(h|x)$, the distribution of $h$ given $x$. This will allow us to analyze the driving forces $h$ in a market. 
-
-This solves the problem that a standard maximum likehood model for this kind of problem is computationally intractable. Two other methods performing the same feat are e.g. Markov Chain Monte Carlo or Hamilton Monte Carlo methods. While both will not be covered in this book, it is worthwile to understand that variational autoencoders address longstanding problems in mathematical finance in a computationally tractable way.
-
-But generative models can also be used to solve problems beyond the scope of traditional methods. The financial markets are fundamentally adversarial environments in which investors are trying to achieve something which is impossible in aggregate: Above average returns. Knowing that a company is doing well is not enough, if everyone knows the company does well, the stock price will be high and returns will be low. The key is to know the company is doing well while everyone else believes it is doing poorly. Markets are a zero-sum game theoretic environment. Generative adversarial networks (GANs), make use of these dynamics to generate realistic data.
-
-# GANs 
-Intuitively, GANs work a lot like an art forger and a museum curator. Every day, the art forger tries to sell some fake art to the museum. And every day the curator tries to distinguish if a certain piece is real and fake. The forger learns from his failures. By trying to fool the curator and observing success and failure, he becomes a better forger. But the curator learns too. By trying to stay ahead of the forger, she becomes a better curator. As time passes, the forgeries become better and the distinguishing process as well. After years of battle, the art forger is an expert that can draw just as well as Picasso and the curator is an expert that can distinguish a real painting by tiny details. 
-
-Technically, a GAN consists of two neural networks:
-- A _generator_ which produces data from a random latent vector
-- A _discriminator_ which classifies data as 'real', that is stemming from the training set, or 'fake', that is stemming from the generator.
-
-![GAN Scheme](./assets/gan_scheme.png)
-
-Once again, generative models are easier to understand when images are generated, so in this section we will refer to the data generated as images, although it could be all kinds of data.
-
-The training process for a GAN works as follows:
-1. A latent vector containing random numbers is created.
-2. The latent vector is fed into the _generator_ which produces an image. 
-3. A set of fake images from the generator is mixed with a set of real images from the training set. The discriminator is trained on binary classification of real and fake data.
-4. After the discriminator was trained for a bit, we feed in the fake images again. This time, we set the label of the fake images to 'real'. We backpropagate through the discriminator, and obtain the loss gradient with respect to the _input_ of the discriminator. We do _not_ update the weights of the discriminator based on this information.
-5. We now have gradients describing how we would have to change our fake image so that the discriminator would classify it as a real image. We use these gradients to backpropagate and train the _generator_.
-6. With our new and improved generator, we once again create fake images, which get mixed with real images to train the discriminator and whose gradients are used to train the generator again.
-
-Note: GAN training has a lot of similarities to the visualization of the network layers in chapter 3. Only that this time we do not just create one image that maximizes an activation function but we create a generative network that specializes in maximizing the activation function of another network. 
-
-Mathematically, generator $G$ and discriminator $D$ play a mini-max two player game with the value function $V(G,D)$
-
-$$
-\min_G \ \max_D V(G,D) = 
-\mathbb{E}_{x\sim p_{data}(x)} 
-[\log \ D(x)] + 
-\mathbb{E}_{z\sim p_{z}(z)}
-[\log (1-D(G(z)))]
-$$
-
-Where $x$ is an item drawn from the distribution of real data $p_{data}$ and $z$ is a latent vector dawn from the latent vector space $p_z$. 
-
-The output distribution of the generator is noted as $p_g$. It can be shown, that the global optimum of this game is $p_g = p_{data}$, that is, if the distribution of generated data is equal to the distribution of actual data. For a formal proof, see the original paper by Goodfellow et al. (2014).
-
-GANs get optimized following a game theoretic value function. Solving this type of optimization problem with deep learning is an active area of research, and an area we will visit again in chapter 7 for reinforcement learning. The fact that deep learning can be used to solve mini max games is exciting news for the field of finance and economics, which features many of such problems.
-
-## An MNIST GAN
-
-Without much further ado, lets implement a GAN to generate MNIST characters. Before we start, we need to do some imports.
-
-GANs are large models, in this section you will see how to combine `Sequential` and functional API models for easy model building.
-```Python 
-from keras.models import Model, Sequential
-```
-
-We will use a few new layer types:
-```Python 
-from keras.layers import Input, Dense, Dropout, Flatten
-from keras.layers import LeakyReLU, Reshape
-from keras.layers import Conv2D, UpSampling2D
-```
-- `LeakyReLU` is just like `ReLu`, except that the activation allows for small negative values. This prevents the gradient from becoming zero. This activation function works well for GANs, we will discuss the reasons for it in the next section.
-![Leaky Relu](./assets/leaky_relu.png)
-
-- Keras `Reshape` layer does the same as `np.reshape`: it brings a tensor into a new form.
-
-- `UpSampling2D` scales a 2D feature map up, e.g. by a factor of 2, by repeating all numbers in the feature map. 
-
-We will use an `Adam` optimizer as we often do.
-```Python
-from keras.optimizers import Adam
-```
-
-Neural network layers get initialized randomly. Usually, the random numbers are drawn from a distribution that supports learning well. For GANs it turns out a normal gaussian distribution is better. 
-```Python 
-from keras.initializers import RandomNormal
-```
-
-Now we build the generator model:
-```Python 
-generator = Sequential() #1 
-
-generator.add(Dense(128*7*7, 
-                    input_dim=latent_dim, 
-                    kernel_initializer=RandomNormal(stddev=0.02))) #2
-
-generator.add(LeakyReLU(0.2)) #3
-generator.add(Reshape((128, 7, 7))) #4
-generator.add(UpSampling2D(size=(2, 2))) #5
-
-generator.add(Conv2D(64,kernel_size=(5, 5),padding='same')) #6
-
-generator.add(LeakyReLU(0.2)) #7
-generator.add(UpSampling2D(size=(2, 2))) #8
-
-generator.add(Conv2D(1, kernel_size=(5, 5),
-                        padding='same', 
-                        activation='tanh')) #9
-  
-adam = Adam(lr=0.0002, beta_1=0.5)                      
-generator.compile(loss='binary_crossentropy', optimizer=adam) #10
-```
-
-\#1 We construct the generator as a sequential model.
-
-\#2 The first layer takes in the random latent vector and maps it to a vector with dimensions 128 * 7 * 7 = 6,272. It already significantly expands the dimensionality of our generated data. For this, fully connected layer, it is important to initialize weights from a normal gaussian distribution with a relatively small standard deviation. A gaussian distribution, as opposed to a uniform distribution, will have fewer extreme values, which makes training easier.
-
-\#3 The activation function for the first layer is `LeakyReLU`. We need to specify how steep the slope for negative inputs is, in this case, negative inputs are multiplied with 0.2
-
-\#4 Now we reshape our flat vector into a 3D tensor. This is the opposite to using a `Flatten` layer which we did in chapter 3. We now have a tensor with 128 channels in a 7 by 7 pixel image or feature map. 
-
-\#5 Using `UpSampling2D` we enlarge this image to 14 by 14 pixels. The `size` argument specifies the multiplied factor for width and height.
-
-\#6 Now we can apply a standard `Conv2D` layer. As opposed to most image classifiers we use a relatively large kernel size of 5 by 5 pixels.
-
-\#7 The activation following the `Conv2D` layer is another `LeakyReLU` 
-
-\#8 We upsample again, bringing the image to 28 by 28 pixels, the same dimensions as an MNIST image. 
-
-\#9 The final convolutional layer of our generator outputs only a single channel image, as MNIST images are black and white only. Notice how the activation of this final layer is a `'tanh'` activation. Tanh squishes all values to between negative one and one. This might be unexpected as image data usually does not feature any values below zero. Empirically it turned out however, that `'tanh'` activations work much better for GANs than `'sigmoid'` activations.
-
-\#10 Finally, we compile the generator to train with an `Adam` optimizer with a very small learning rate and smaller than usual momentum.
-
-The discriminator is a relatively standard image classifier that classifies images as real or fake. There are only a few GAN specific modifications
-```Python 
-# Discriminator
-discriminator = Sequential()
-discriminator.add(Conv2D(64, kernel_size=(5, 5), 
-                         strides=(2, 2), 
-                         padding='same', 
-                         input_shape=(1, 28, 28),
-                         kernel_initializer=RandomNormal(stddev=0.02))) #1
-
-discriminator.add(LeakyReLU(0.2))
-discriminator.add(Dropout(0.3))
-discriminator.add(Conv2D(128, kernel_size=(5, 5), 
-                         strides=(2, 2), 
-                         padding='same'))
-discriminator.add(LeakyReLU(0.2))
-discriminator.add(Dropout(0.3)) #2
-discriminator.add(Flatten())
-discriminator.add(Dense(1, activation='sigmoid'))
-discriminator.compile(loss='binary_crossentropy', optimizer=adam)
-```
-\#1 As with the generator, the first layer of the discriminator should be initialized randomly from a gaussian distribution.
-
-\#2 Dropout is commonly used in image classifiers. For GANs it should also be used just before the last layer.
-
-Now we have a generator and a discriminator. To train the generator, we have to get the gradients from the discriminator to backpropagate through and train the generator. This is where the power of Keras modular design comes into play.
-
-Note: Keras models can be treated just like Keras layers.
-
-The code below creates a GAN model which can be used to train the generator from the discriminator gradients.
-```Python 
-discriminator.trainable = False #1
-ganInput = Input(shape=(latent_dim,)) #2
-x = generator(ganInput) #3
-ganOutput = discriminator(x) #4
-gan = Model(inputs=ganInput, outputs=ganOutput) #5
-gan.compile(loss='binary_crossentropy', optimizer=adam) #6
-```
-
-\#1 When training the generator, we do not want to train the `discriminator`. When setting the `discriminator` to not trainable, the weights are frozen, only for the model that is compile with the non trainable weights. That is, we still can train the `discriminator` model on its own, but as soon as it becomes part of the GAN model which is compiled again, its weights are frozen.
-
-\#2 We create a new input for our GAN which takes in the random latent vector.
-
-\#3 We connect the generator model to the `ganInput` layer. The model can be used just as a layer under the functional API.
-
-\#4 We now connect the discriminator with frozen weights to the generator. Again, we call the model just like we would a use a layer in the functional API.
-
-\#5 We create a model which maps the `ganInput` to the output of the discriminator. 
-
-\#6 We compile our GAN model. Since we call compile here, the weights of the discriminator model are frozen for as long as they are part of the GAN model. Keras will throw a warning on training time that the weights are not frozen for the actual discriminator model.
-
-Training our GAN requires some customization of the training process and a couple of GAN specific tricks as well. More specifically, we have to write our own training loop which you can see below:
-```Python 
-epochs=50 
-batchSize=128
-batchCount = X_train.shape[0] // batchSize #1
-
-for e in range(1, epochs+1): #2
-    print('-'*15, 'Epoch %d' % e, '-'*15)
-    for _ in tqdm(range(batchCount)): #3
-      
-        noise = np.random.normal(0, 1, size=[batchSize, latent_dim]) #4
-        imageBatch = X_train[np.random.randint(0, 
-                                              X_train.shape[0],
-                                              size=batchSize)] #5
-
-        
-        generatedImages = generator.predict(noise) #6
-        X = np.concatenate([imageBatch, generatedImages]) #7
-
-        yDis = np.zeros(2*batchSize) #8
-        yDis[:batchSize] = 0.9 
-        
-        labelNoise = np.random.random(yDis.shape) #9
-        yDis += 0.05 * labelNoise + 0.05
-
-        
-        discriminator.trainable = True #10
-        dloss = discriminator.train_on_batch(X, yDis) #11
-
-        
-        noise = np.random.normal(0, 1, size=[batchSize, latent_dim]) #12
-        yGen = np.ones(batchSize) #13
-        discriminator.trainable = False #14
-        gloss = gan.train_on_batch(noise, yGen) #15
-
-    #16
-    dLosses.append(dloss)
-    gLosses.append(gloss)        
-```
-
-\#1 We have to write a custom loop to loop over the batches. To know how many batches there are, we need to make an integer division of our dataset size by our batch size.
-
-\#2 In the outer loop we iterate over the number of epochs we want to train.
-
-\#3 In the inner loop we iterate over the number of batches we want to train on in each epoch. The `tqdm` tool is helping us keep track of progress within the batch.
-
-\#4 We create a batch of random latent vectors.
-
-\#5 We randomly sample a batch of real MNIST images.
-
-\#6 We use the generator to generate a batch of fake MNIST images.
-
-\#7 We stack the real and fake MNIST images together.
-
-\#8 We create the target for our discriminator. Fake images are encoded with a zero, real images with a 0.9. This technique is called soft labels. Instead of hard labels (zero and one) we use something softer to not train the GAN too aggressively. This technique has been shown to make GAN training more stable.
-
-\#9 On top of using soft labels, we add some noise to the labels. This, once again, will make the training more stable.
-
-\#10 We make sure that the discriminator is trainable.
-
-\#11 We train the discriminator on a batch of real and fake data.
-
-\#12 We create some more random latent vectors for training the Generator.
-
-\#13 The target for generator trainings is always one. We want the discriminator the give us the gradients that would have made the fake image look like a real one.
-
-\#14 Just to be sure, we set the discriminator to not trainable, so that we can not break anything by accident.
-
-\#15 We train the GAN model. We feed in a batch of random latent vectors and train the generator part of the GAN so that the discriminator part would classify the generated images as real.
-
-\#16 We save the losses from training.
-
-
-Below you can see some of the generated MNIST characters:
-
-![GAN MNIST](./assets/gan_mnist_crop.png)
-
-Caption: GAN generated MNIST characters
-
-Most of these characters look like identifiable numbers, although some seem a bit off and there are some wired artifacts. 
-
-![Gan Progress](./assets/gan_progress.png)
-Caption: GAN training progress 
-Note: The loss in GAN training is not interpretable as it is for supervised learning. The loss of a GAN will not decrease even as the GAN makes progress.
-
-The loss of generator and discriminator is dependent on how well the other model does. If the generator gets better at fooling the discriminator, the discriminator loss will stay high. If one of the losses goes to zero, it means that the other model lost the race and can not fool or properly discriminate the other model anymore. This is one of the things that makes GAN training so hard: GANs don't converge to a low loss solution, they converge to an _equilibrium_ in which the generator fools the discriminator many times but not always. That equilibrium is not always stable. Part of the reason so much noise is added to labels and the networks themselves is that it increases the stability of the equilibrium.
-
-As GANs are unstable and difficult yet useful, a number of empirical tricks have been developed over time that make GAN training more stable. Knowing these tricks can help you with your GAN building and save you countless hours, even though there is often no theoretical reason for why these tricks work.
-
-## Understanding GAN latent vectors
-
-For autoencoders, the latent space was a relatively straight forward approximation of principal component analysis. Variational autoencoders create a latent space of distributions, which is useful but still easy to imagine as a form of PCA. So what is the latent space of a GAN if we just sample randomly from it during training. As it turns out, GANs self structure the latent space. Using the latent space of a GAN, you would still be able to cluster MNIST images by the character they display. Research has shown that the latent space of GANs often has some surprising features, such as 'smile vectors' along which generated face images smile more or less. Researchers have also shown that GANs can be used for latent space algebra, where adding the latent representation of different objects creates realistic, new objects. Yet, research on the latent space of GANs is still in its infancy and drawing conclusions about the world from its latent space representations is an active field of research.
-
-## GAN training tricks 
-1. Normalize the inputs
-
-Gans don't work well with extreme values so make sure you always have normalized inputs between -1 and 1. This is also the reason why you should use a `tanh` function as your generator output.
-
-
-2. Don't use the theoretical correct loss function
-
-If you read papers on GANs you will find that they give the generator optimization goal as: 
-$$min\ log\ (1-D)$$
-
-Where $D$ is the discriminator output. In practice it works better if the objective of the generator is:
-
-$$max\ log\ D$$
-
-In other words, instead of minimizing the negative discriminator output it is better to maximize the discriminator output. The reason is that the first objective often has vanishing gradients in the beginning of the GAN training process.
-
-3. Sample from a normal gaussian distribution 
-
-There is two reasons to sample from normal distributions instead of uniform distributions: First, GANs don't work well with extreme values and normal distributions have fewer extreme values than uniform distributions. Additionally, it has turned out that if the latent vectors are sampled from a normal distribution, the latent space becomes a sphere. The relationships between latent vectors in this sphere are easier to describe than latent vectors in a cube space.
-
-4. Use Batch normalization
-
-We already saw that GANs don't work well with extreme values since they are so fragile. Another way to reduce extreme values is to use batch normalization, discussed in chapter 3.
-
-5. Use separate batches for real and fake data 
-
-In the beginning, real and fake data might have very different distributions. As batch norm applies normalization over a batch, using the batches mean and standard deviation, it is more effective to keep the real and fake data separate. While this does lead to slightly less accurate gradient estimates, the gain from fewer extreme values is bigger.
-
-6. Use Soft and Noisy Labels
-
-GANs are fragile, the use of soft labels reduces the gradients and keeps the gradients from tipping over. Adding some random noise to labels also helps stabilizing the system.
-
-7. Use basic GANs
-
-There is now a wide range of GAN models. Many of them claim wild performance improvements, while in fact they do not work much better or often worse than a simple deep convolutional generative adversarial network or (DCGAN). That does not mean they have no justification for being, but for the bulk of tasks, more basic GANs do better. Another well working GAN is the adversarial autonecoder, which combines a VAE with a GAN by training the autocoder on the gradients of a discriminator.
-
-8. Avoid ReLU and MaxPool 
-
-ReLu activations and MaxPool layers are frequently used in deep learning, but they have the disadvantage of producing 'sparse gradients'. A ReLu activation will not have any gradient for negative inputs and a MaxPool layer will not have any gradients for all inputs that were not the maximum input. Since gradients are what the generator is being trained on, sparse gradients hurt generator training.
-
-9. Use the ADAM Optimizer
-
-This optimizer has been shown to work very well with GANs, while many other optimizers do not work well with them.
-
-10. Track failures early
-
-Sometimes, GANs fail for random reasons. Just choosing the 'wrong' random seed could set your training run up for failure. Usually, it is possible to see if a GAN goes completely off track by observing outputs. They should slowly become more like the real data. If the generator goes completely of track and produces only zeros for instance, you will be able to see it before spending days of GPU time on training that will go nowhere.
-
-11. Don't balance loss via statistics
-
-Keeping the balance between the generator and discriminator is a delicate task. Many practitioners therefore try to help the balance by training either the generator or discriminator a bit more depending on statistics. Usually, that does not work. GANs are very counterintuitive, and trying to help them with an intuitive approach usually makes matters worse. That is not to say there are no ways to help out GAN equilibriums. But the help should stem from a principled approach, such as 'train the generator while the generator loss is above X'.
-
-12. If you have labels, use them
-
-A slightly more sophisticated version of a GAN discriminator can not only classify data as real or fake, but also classify the class of the data. In the MNIST case, the discriminator would have 11 outputs, for the 10 real numbers as well as an output for fake. This allows us to create a GAN that can show more specific images. This is useful in the domain of semi-supervised learning which we will cover in the next section.
-
-13. Add noise to inputs, reduce it over time
-
-Noise adds stability to GAN training so it comes at no surprise that noisy inputs can help, especially in the early, unstable phases of training a GAN. Later however it can obfuscate too much and keep the GAN from generating realistic images. So we should reduce the noise applied to inputs over time.
-
-14. Use Dropouts in G in both train and test phase
-
-Some researchers find that using dropout on inference time leads to better results for the generated data. Why that is the case is still an open question.
-
-15. Historical averaging
-
-GANs tend to 'oscillate' with their weights moving rapidly around a mean during training. Historical averaging penelizes weights that are too far away from their historical average and reduces oscillation. It therefore increases the stability of GAN training.
-
-16. Replay buffers
-
-Replay buffers keep a number of older generated images so they can be reused for training the discriminator. This has a similar effect as historical averaging, reduces oscillation and increases stability. It also reduces the correlation between training data.
-
-17. Target networks
-
-Another 'anti-oscillation' trick is to use target networks. That is, to create copies of both the generator and discriminator, and then train the generator with a frozen copy of the discriminator and the discriminator with a frozen copy of the generator.
-
-18. Entropy regularization
-
-Entropy regularization means rewarding the network for outputting more different values. This can prevent the generator network from settling on a few things to produce, say, only the number seven. It is a regularization method as it prevents overfitting.
-
-20. Use Dropout or noise layers
-
-Noise is good for GANs. Keras does not only feature dropout layers, it also features a number of noise layers that add different kinds of noise to activations in a network. Read the documentation of these layers and see if they are helping for your specific GAN application: 
-https://keras.io/layers/noise/
-
-
-# Using less data: Active Learning
-Part of the motivation for generative models, be it GANs or VAEs, was always that it would allow us to generate data and therefore use less data. As data is inherently sparse and we never have enough of it, generative models seems as they are the free lunch economists warn about. But even the best GAN works with _no_ data. In this section we will have a look at the different methods to bootstrap models with as little data as possible. This is also called active learning or semi-supervised learning.
-
-Unsupervised learning uses no labels, but unlabeled data, to cluster this data in different ways. An example are autoencoders, where images can be transformed into learned, latent vectors which can then be clustered without the need for labels that describe the image.
-
-Supervised learning uses data with labels. An example is the image classifier we built in chapter 3 or most other models we build in this book. 
-
-Semi-supervised learning aims to perform tasks usually done by supervised models, but with less data by using unsupervised or generative methods. There is three ways this can work: First, by making smarter use of humans. Second, by making better use of unlabeled data. Third, by using generative models. 
-
-## Let humans label frontier points
-For all the talk about AI replacing humans, there are sure an awful lot of humans required to train AI systems. Although the numbers are not clear, it seems as there are between 500,000 and 750,000 registered 'Mechanical Turkers' on amazons Mechanical Turk (or MTurk) service. MTurk is a website that offers 'Human intelligence through an API', which in practice means that companies and researchers post simple jobs like filling out a survey or classifying an image and people all over the world perform these tasks for a few cents per task. For an AI to learn, humans need to provide labeled data. If the task is large scale, many companies hire MTurk to let humans do the labeling. If it is a small task you will often find the companies staff labeling data. 
-
-Surprisingly little thought goes into what these humans label. Because not all labels are equally useful. The image below shows a linear classifier. As you can see, the frontier point, that is close to the frontier between the two classes, shapes where the decision boundary, while the points further in the back are not as relevant.
-
-![Frontier points](./assets/frontier_point.png)
-Caption: Frontier points are more valuable
-
-Note: Frontier points close to the decision boundary are more valuable than points further away from it. You can train on less data by (1) labeling only a few images, (2) train a weak model (3) let that weak model make predictions for some unlabeled images, (4) label the images where the model is least confident about and add them to your training set, (5) repeat.
-
-This process of labeling data is much more efficient than just randomly labeling data and can accelerate your efforts quite drastically.
-
-## Leverage machines for human labeling
-In labeling, many companies rely on excel. They have human labelers look at something to label, such as an image or a text, and then type in the label in an excel spreadsheet. This is incredibly inefficient and error prone, but common practice. Some slightly more advanced labeling operations build simple web apps that let the user see the item to label and directly click on the label or press a hot key. This can accelerate the labeling process quite substantially, but is still not the optimal if there are many label categories. A better way is to once again, label a few images and pre-train a weak model. On labeling time, the computer shows the labeler the data as well as a label. The labeler only has to decide if this label is correct. This can be done easily with hot keys and the time to label a single item goes down dramatically. If the label was wrong, the label interface can either bring up a list of possible options, sorted by the probability the model assigned to them, or just put the item back on the stack and display the next most likely label the next time. A great implementation of this technique is 'Prodigy', a labeling tool by the company that makes SpaCy, which we learned about in chapter 5.
-
-![Prodigy](./assets/prodigy.png)
-Caption: Prodigy is a labeling tool that leverages machines. Source: https://prodi.gy/
-
-Note: Better user interface design and smart use of weak models can greatly accelerate labeling.
-
-## Pseudo labeling for unlabeled data
-Often there is plenty of unlabeled data available, but only little labeled data. That unlabeled data can still be used. First, you train a model on the labeled data that you have. Then you let that model make predictions on your corpus of unlabeled data. You treat those predictions as if they were true labels and train your model on the full, pseudo labeled, dataset. However, actual true labels should be used more often than the pseudo labels. The exact sampling rate for pseudo labels can vary for different circumstances. This works under the condition that errors are random. If they are biased, your model will be biased as well. This simple method is surprisingly effective and can greatly reduce labeling efforts. 
-
-## Using generative models
-As it turns out, GANs extend quite naturally to semi supervised training. By giving the discriminator two outputs we can train it to be a classifier as well.
-
-The first output of the discriminator only classifies data as real or fake, just as it did for the GAN above. The second head classifies the data by its class, say the digit an image represents, or an extra 'is fake' class. In the MNIST example the classifying head would have 11 classes, 10 digits plus the 'is fake class'. The trick is that the generator is one model and only the heads, that is the last layer, are different. This forces the 'real or not' classification to share weights with the 'which digit' classifier. The idea is that to determine if an image is real or fake, the classifier would have to figure out if it can classify this image into one class. If it can, the image is probably real. This approach, called semi-supervised generative adversarial network (SGAN) has been shown to generate more realistic data and improve deliver better results on limited data than standard supervised learning. Of course, GANs can be applied to more than just images. In the next section we will apply them to our fraud detection task.
-
-# Semi-Supervised Generative Adversarial Networks for fraud detection
-As a final applied project of this chapter, let's consider the credit card problem again. We will create an SGAN that looks as follows:
-
-![SGAN Scheme](./assets/sgan_scheme.png)
-
-We will train this model on fewer than 1000 transactions and still recieve a decent fraud detector. You can find the code for the SGAN on Kaggle under this link:
-https://www.kaggle.com/jannesklaas/semi-supervised-gan-for-fraud-detection/code
-
-In this case, our data has 29 dimensions. We choose our latent vectors to have ten dimensions.
-```Python 
-latent_dim=10
-data_dim=29
-```
-
-The generator model is constructed as a fully connected network with `LeakyReLU` activations and batch normalization. The output activation is a `tanh` activation.
-```Python 
 model = Sequential()
-model.add(Dense(16, input_dim=latent_dim))
-model.add(LeakyReLU(alpha=0.2))
-model.add(BatchNormalization(momentum=0.8))
-model.add(Dense(32, input_dim=latent_dim))
-model.add(LeakyReLU(alpha=0.2))
-model.add(BatchNormalization(momentum=0.8))
-model.add(Dense(data_dim,activation='tanh'))
+model.add(Dense(64, input_dim=64))
+model.add(Activation('relu'))
+model.add(Dense(4))
+model.add(Activation('softmax'))
+model.summary()
+```
+
+```
+Layer (type)                 Output Shape              Param #   
+=================================================================
+dense_1 (Dense)              (None, 64)                4160      
+_________________________________________________________________
+activation_1 (Activation)    (None, 64)                0         
+_________________________________________________________________
+dense_2 (Dense)              (None, 4)                 260       
+_________________________________________________________________
+activation_2 (Activation)    (None, 4)                 0         
+=================================================================
+Total params: 4,420
+Trainable params: 4,420
+Non-trainable params: 0
+_________________________________________________________________
+```
+The above model is a simple model implemented in the sequential API as we did it throughout this book so far. We will now implement the same model in the sequential API:
+
+```Python 
+from keras.models import Model #1
+from keras.layers import Dense, Activation, Input 
+
+model_input = Input(shape=(64,)) #2
+x = Dense(64)(model_input) #3
+x = Activation('relu')(x) #4
+x = Dense(4)(x)
+model_output = Activation('softmax')(x)
+
+model = Model(model_input, model_output) #5
+model.summary()
+```
+Notice the differences to the sequential API:
+\#1 Instead of defining the model first with `model = Sequential()`, you now define the computational graph first and then turn it into a model using the `Model` class.
+
+\#2 Inputs are now their own layer. 
+
+\#3 Instead of using `model.add()` you know define the layer and then pass on an input layer or the output tensor of the previous layer.
+
+\#4 You create models by stringing layers on a chain. `Dense(64)(model_input)` for instance returns a tensor. You pass on this tensor to the next layer, like in `Activation('relu')(x)`. This function will return a new output tensor which you can pass to the next layer and so on. This way you create a computational graph like a chain.
+
+\#5 To create a model, you pass the model input layer as well as the final output tensor of your graph into the `Model` class.
+
+Functional API models can be used just like sequential API models. In fact, from the output of this models summary, you can see it is pretty much the same as the model we just created with the sequential API.
+
+```
+Layer (type)                 Output Shape              Param #   
+=================================================================
+input_2 (InputLayer)         (None, 64)                0         
+_________________________________________________________________
+dense_3 (Dense)              (None, 64)                4160      
+_________________________________________________________________
+activation_3 (Activation)    (None, 64)                0         
+_________________________________________________________________
+dense_4 (Dense)              (None, 4)                 260       
+_________________________________________________________________
+activation_4 (Activation)    (None, 4)                 0         
+=================================================================
+Total params: 4,420
+Trainable params: 4,420
+Non-trainable params: 0
+_________________________________________________________________
+```
+
+You can see that the functional API can connect layers in more advanced ways than the Sequential model. We can also separate the layer creation and connection step. This keeps the code clean and allows us to use the same layer for different purposes.
+
+The code segment below will create the exact same model as the segment above, but with separate layer creation and connection steps.
+```Python 
+model_input = Input(shape=(64,))
+
+dense = Dense(64)
+
+x = dense(model_input)
+
+activation = Activation('relu')
+
+x = activation(x)
+
+dense_2 = Dense(4)
+
+x = dense_2(x)
+
+model_output = Activation('softmax')(x)
+
+model = Model(model_input, model_output)
+```
+
+Layers can be reused. We could for example train some layers in one computational graph and then use them for another, as we will do in the section on sequence to sequence models below.
+
+One more caveat before we use the functional API to build advanced models is that the activation function of any layer can also be specified directly in the layer. So far we have used a separate activation layer which increases clarity, but is not strictly required. A `Dense` layer with a relu acativation function can also be specified as:
+
+```Python
+Dense(24, activation='relu')
+```
+
+When using the functional API, this can be easier than adding an activation function.
+
+# Attention
+Are you paying attention? If so, certainly not to every equally. In any text, some words matter more than others. An attention mechanism is a way for a neural network to 'focus' on a certain element in a sequence. Focusing, for neural networks, means amplifying what is important.
+
+![Attention](./assets/attention.png)
+
+Attention layers are fully connected layers that take in a sequence and output the weighting for a sequence. The sequence is the multiplied with the weightings.
+
+```Python 
+def attention_3d_block(inputs,time_steps,single_attention_vector = False):
+    #1
+    input_dim = int(inputs.shape[2])
+    #2
+    a = Permute((2, 1),name='Attent_Permute')(inputs)
+    #3
+    a = Reshape((input_dim, time_steps),name='Reshape')(a) 
+    #4
+    a = Dense(time_steps, activation='softmax', name='Attent_Dense')(a) # Create attention vector
+    #5
+    if single_attention_vector:
+        #6
+        a = Lambda(lambda x: K.mean(x, axis=1), name='Dim_reduction')(a)
+        #7 
+        a = RepeatVector(input_dim, name='Repeat')(a)
+    #8
+    a_probs = Permute((2, 1), name='Attention_vec')(a) 
+    #9
+    output_attention_mul = Multiply(name='Attention_mul')([inputs, a_probs]) 
+    return output_attention_mul
+```
+\#1 Our input has the shape `(batch_size, time_steps, input_dim)`, where `time_steps` is the length of the sequence, and `input_dim` is the dimensionality of the input. If we applied this directly to a text series with the embeddings used above, `input_dim` would be 50, the same as the embedding dimensionality.
+
+\#2 We then swap (permute) the axis for `time_steps` and `input_dim` so that the tensor has a shape of `(batch_size, input_dim, time_steps)`.
+
+\#3 If everything went fine, our tensor is already in the shape we want it to. We are adding a reshaping operation just to be sure.
+
+\#4 Now comes the trick. We run our input through a dense layer with a softmax activation. This will generate a weighting for each element in the series, just as shown above. This dense layer is what is trained inside the attention block.
+
+\#5 By default, the dense layer computes attention for each input dimension individually. That is, for our word vectors, it would compute 50 different weightings. That can be useful if we are working with time series models where the input dimensions sincerely represent different things. But in this case, we want to weight words as a whole. 
+
+\#6 To create one attention value per word, we average the attention layer across the input dimensions. Our new tensor has the shape `(batch_size, 1, time_steps)`
+
+\#7 In order to multiply the attention vector with the input, we need to repeat the weightings across the input dimension. After repetition, the tensor has shape `(batch_size, input_dim, time_steps)` again, but with the same weights across the `input_dim` dimension.
+
+\#8 To match the shape of the input, we permute the axis for `time_steps` and `input_dim` back, so that the attention vector once again has a shape of `(batch_size, time_steps, input_dim)`.
+
+\#9 Finally, we apply the attention to the input by element wise multiplying the attention vector with the input. We return the resulting tensor.
+
+The flowchart below gives an overview of the process:
+
+![Attention Block](./assets/attention_block.png)
+
+Notice how the function above defines takes a tensor as an input, defines a graph, and returns a tensor. We can now call this function as part of our model building process:
+
+```Python 
+input_tokens = Input(shape=(maxlen,),name='input')
+
+embedding = Embedding(max_words, 
+                      embedding_dim, 
+                      input_length=maxlen, 
+                      weights = [embedding_matrix], 
+                      trainable = False, name='embedding')(input_tokens)
+
+attention_mul = attention_3d_block(inputs = embedding,
+                                   time_steps = maxlen,
+                                   single_attention_vector = True)
+
+lstm_out = CuDNNLSTM(32, return_sequences=True, name='lstm')(attention_mul)
+
+
+
+attention_mul = Flatten(name='flatten')(attention_mul)
+output = Dense(1, activation='sigmoid',name='output')(attention_mul)
+model = Model(input_tokens, output)
+```
+
+In this case, we are using the attention block right after the embeddings, meaning we amplify or suppress certain word embeddings we could equally well use the attention block after the LSTM. In many cases, you will find attention blocks to be powerful tools in your arsenal when building models that deal with any kind of sequence, especially in natural language processing.
+
+
+To become more comfortable with how the functional API strings up layers and how the attention block reshapes tensors, take a look at the models summary below.
+```Python 
+model.summary()
+```
+
+```
+__________________________________________________________________________________________________
+Layer (type)                    Output Shape         Param #     Connected to                     
+==================================================================================================
+input (InputLayer)              (None, 140)          0                                            
+__________________________________________________________________________________________________
+embedding (Embedding)           (None, 140, 50)      500000      input[0][0]                      
+__________________________________________________________________________________________________
+Attent_Permute (Permute)        (None, 50, 140)      0           embedding[0][0]                  
+__________________________________________________________________________________________________
+Reshape (Reshape)               (None, 50, 140)      0           Attent_Permute[0][0]             
+__________________________________________________________________________________________________
+Attent_Dense (Dense)            (None, 50, 140)      19740       Reshape[0][0]                    
+__________________________________________________________________________________________________
+Dim_reduction (Lambda)          (None, 140)          0           Attent_Dense[0][0]               
+__________________________________________________________________________________________________
+Repeat (RepeatVector)           (None, 50, 140)      0           Dim_reduction[0][0]              
+__________________________________________________________________________________________________
+Attention_vec (Permute)         (None, 140, 50)      0           Repeat[0][0]                     
+__________________________________________________________________________________________________
+Attention_mul (Multiply)        (None, 140, 50)      0           embedding[0][0]                  
+                                                                 Attention_vec[0][0]              
+__________________________________________________________________________________________________
+flatten (Flatten)               (None, 7000)         0           Attention_mul[0][0]              
+__________________________________________________________________________________________________
+output (Dense)                  (None, 1)            7001        flatten[0][0]                    
+==================================================================================================
+Total params: 526,741
+Trainable params: 26,741
+Non-trainable params: 500,000
+__________________________________________________________________________________________________
 ``` 
 
-To later use the generator model better, we wrap the model we created into a functional API model that maps the noise vector to a generated transaction record. Since most GAN literature is about images, and 'transaction record' is a bit of a mouthful, we just name our transaction records 'images'.
+This model can be trained just as any Keras model. It achieves about 80% accuracy on the validation set.
+
+# Seq2Seq models
+
+In 2016, Google announced that it had replaced the entire google translate algorithm with a single neural network. The special thing about the Google Neural Machine Translation system is that it translates many languages 'end to end' using only a single model. It works by encoding the semantics of a sentence and then decoding the semantics into the desired output language. The fact that such a system is possible at all baffled many linguists and other researchers as it shows that machine learning can create systems that accurately capture high level meanings and semantics without being given any explicit rules. These semantic meanings are represented as an encoding vector and while we don't quite yet know how to interpret these vectors there are sure a lot of useful applications for them. Translating from one language to another is popular, but we could use a similar approach to 'translate' a report into a summary. Text summarization has made great strides, but it requires a lot of compute power to deliver sensible results, so we will focus on language translation in this chapter.
+
+## Seq2Seq architecture overview 
+If all phrases had the exact same length, we could simply use an LSTM (or multiple). Remember that an LSTM can also return a full sequence of the same length as the input sequence. However, in many cases sequences will not have the same length. To deal with different lengths of phrases, we first create an encoder which aims to capture the sentences semantic meaning. We then create a decoder, which has two inputs: The encoded semantics and the sequence that was already produced. The decoder then predicts the next item in the sequence. For our character level translator this looks like this:
+![Seq2Seq architecture overview](./assets/seq2seq_overview.png)
+Note how the output of the decoder is used as the input of the decoder again. This process is only stopped once the decoder produces a < STOP > tag that indicates that the sequence is over.
+
+## The data 
+We use a dataset of English phrases and their Translation. This dataset was obtained from the Tabotea project, a translation database. The data file can be found attached to the code on Kaggle. We implement this model on a character level, which means we won't tokenize words as in previous models but characters. This makes the task harder for our network because it now also has to learn how to spell words! But on the other hand there are much less characters than words so we can just one hot encode characters and don't have to work with embeddings. This makes our model a bit simpler. To get started, we have to set a few parameters: 
+
 ```Python 
-noise = Input(shape=(latent_dim,))
-img = model(noise)
-        
-generator = Model(noise, img)
+batch_size = 64  # 1
+epochs = 100  # 2
+latent_dim = 256  # 
+num_samples = 10000  # 
+data_path = 'fra-eng/fra.txt'
 ```
+\#1 Batch size for training.
 
-Just as the generator, we build the discriminator in the sequential API. As the discriminator has two heads, one for the classes, one for fake or no fake, we first only construct the base of the model.
+\#2 Number of epochs to train for.
+
+\#3 Dimensionality of the encoding vectors. How many numbers to we use to encode the meaning of a sentence.
+
+\#3 Number of samples to train on. The whole dataset has about 140,000 samples. However, we will train on fewer for memory and time reasons.
+
+\#4 Path to the data txt file on disk.
+
+Input (English) and target (French) is tab delimited in the data file. Each row represents a new phrase. The translations are separated by a tab (escaped character: \\t). So we loop over the lines and read out inputs and targets by splitting the lines at the tab symbol.
+
+To build up our tokenizer, we also need to know which characters are present in our dataset. So for all characters we check whether they are already in our set of seen characters and if not add them to it.
+
+First we set up the holding variables for texts and characters:
 ```Python 
-model = Sequential()
-model.add(Dense(31,input_dim=data_dim))
-model.add(LeakyReLU(alpha=0.2))
-model.add(BatchNormalization(momentum=0.8))
-model.add(Dropout(0.25))
-model.add(Dense(16,input_dim=data_dim))
-model.add(LeakyReLU(alpha=0.2))
-```
-
-Now we map the input of the discriminator to its two heads using the functional API.
+input_texts = []
+target_texts = []
+input_characters = set()
+target_characters = set()
+``` 
+Then we loop over as many lines as we want samples and extract the texts and characters:
 ```Python 
-img = Input(shape=(data_dim,)) #1
-features = model(img) #2
-valid = Dense(1, activation="sigmoid")(features) #3
-label = Dense(num_classes+1, activation="softmax")(features) #4
-
-discriminator = Model(img, [valid, label]) #5
-```
-\#1 We create an input placeholder for the noise vector.
-
-\#2 We get the feature tensor from the discriminator base model.
-
-\#3 We create a `Dense` layer for classifying an transactions as real or not and map it to the feature vector.
-
-\#4 We create a second `Dense` layer for classifying transactions as fraudulent, genuine or fake.
-
-\#5 We create a model mapping the input to the two heads.
-
-
-To compile the discriminator with two heads, we need to use a few advanced model compiling tricks:
-```Python 
-optimizer = Adam(0.0002, 0.5) #1
-discriminator.compile(loss=['binary_crossentropy',
-                            'categorical_crossentropy'], #2
-                            loss_weights=[0.5, 0.5], #3
-                            optimizer=optimizer, #4
-                            metrics=['accuracy']) #5
-```
-\#1 We define an adam optimizer with a learning rate of 0.0002 and a momentum of 0.5
-
-\#2 Since we have two model heads, we can specify two losses. Our 'fake or not' head is a binary classifier so we use `'binary_crossentropy'` for it. Our classifying head is a multi class classifier, so we use `'categorical_crossentropy'` for the second head.
-
-\#3 We can specify how we want to weight the two different losses. In this case, we give all losses a 50% weight.
-
-\#4 We optimize our pre-defined adam optimizer.
-
-\#5 As long as we are not using soft labels, we can track progress using the accuracy metric.
-
-
-Finally, we create our combined GAN model.
-```Python 
-noise = Input(shape=(latent_dim,)) #1
-img = generator(noise) #2
-discriminator.trainable = False #3
-valid,_ = discriminator(img) #4
-combined = Model(noise , valid) #5
-combined.compile(loss=['binary_crossentropy'], #6
-                        optimizer=optimizer)
-```
-\#1 We create a placeholder for the noise vector input.
-
-\#2 We obtain a tensor representing the generated image by mapping the generator to the noise placeholder.
-
-\#3 We make sure we do not destroy the discriminator by setting it to not trainable.
-
-\#4 We only want the discriminator to believe the generated transactions are real, so we can discard the classification output tensor.
-
-\#5 We map the noise input to the 'fake or not fake' output of the discriminator.
-
-For training we define a train function that handles all the training for us:
-```Python 
-def train(X_train,y_train,
-          X_test,y_test,
-          generator,discriminator,
-          combined,
-          num_classes,
-          epochs, 
-          batch_size=128):
+lines = open(data_path).read().split('\n')
+for line in lines[: min(num_samples, len(lines) - 1)]:
     
-    f1_progress = [] #1
-    half_batch = int(batch_size / 2) #2
+    input_text, target_text = line.split('\t') #1
+    
+    target_text = '\t' + target_text + '\n' #2
+    input_texts.append(input_text)
+    target_texts.append(target_text)
 
-    cw1 = {0: 1, 1: 1} #3
-    cw2 = {i: num_classes / half_batch for i in range(num_classes)}
-    cw2[num_classes] = 1 / half_batch
+    for char in input_text: #3
+        if char not in input_characters:
+            input_characters.add(char)
+            
+    for char in target_text:
+        if char not in target_characters:
+            target_characters.add(char)
+```
+\#1 Input and target are split by tabs, English TAB French, so we split the lines by tabs to obtain input and target texts.
 
-    for epoch in range(epochs):
-      
-        idx = np.random.randint(0, X_train.shape[0], half_batch) #4
-        imgs = X_train[idx]
+\#2 We use "tab" as the "start sequence" character for the targets, and "\n" as "end sequence" character. This way we know when to stop decoding.
 
-        noise = np.random.normal(0, 1, (half_batch, 10)) #5
-        gen_imgs = generator.predict(noise)
+\#3 Loop over the characters in the input text, add all characters that we have not seen yet to our set of input characters.
+
+\#4 Loop over the characters in the output text, add all characters that we have not seen yet to our set of output characters.
+
+We now create lists of alphabetically sorted input and output characters:
+```Python 
+input_characters = sorted(list(input_characters))
+target_characters = sorted(list(target_characters))
+```
+
+And we count how many input and output characters we have. This in important since we need to know how many dimensions our one hot encodings should have.
+```Python 
+num_encoder_tokens = len(input_characters)
+num_decoder_tokens = len(target_characters)
+```
+Instead of using Keras tokenizer, we will build our own dictionary mapping characters to token numbers.
+```Python 
+input_token_index = {char: i for i, char in enumerate(input_characters)}
+target_token_index = {char: i for i, char in enumerate(target_characters)}
+```
+We can see how this works by printing the token numbers for all characters in a short sentence:
+```Python 
+for c in 'the cat sits on the mat':
+    print(input_token_index[c], end = ' ')
+```
+
+```
+63 51 48 0 46 44 63 0 62 52 63 62 0 58 57 0 63 51 48 0 56 44 63 
+```
+
+Next, we build up our model training data. Remember that our model has two inputs but one output. While our model can handle sequences of any length, it is handy to prepare the data in Numpy and thus to know how long our longest sequence is:
+
+```Python 
+max_encoder_seq_length = max([len(txt) for txt in input_texts])
+max_decoder_seq_length = max([len(txt) for txt in target_texts])
+
+print('Max sequence length for inputs:', max_encoder_seq_length)
+print('Max sequence length for outputs:', max_decoder_seq_length)
+```
+```
+Max sequence length for inputs: 16
+Max sequence length for outputs: 59
+```
+
+Now we prepare input and output data for our model. 
+
+`encoder_input_data` is a 3D array of shape (num_pairs, max_english_sentence_length, num_english_characters) containing a one-hot vectorization of the English sentences.
+
+```Python 
+encoder_input_data = np.zeros(
+    (len(input_texts), max_encoder_seq_length, num_encoder_tokens),
+    dtype='float32')
+``` 
+
+`decoder_input_data` is a 3D array of shape (num_pairs, max_french_sentence_length, num_french_characters) containg a one-hot vectorization of the French sentences.
+
+```Python 
+decoder_input_data = np.zeros(
+    (len(input_texts), max_decoder_seq_length, num_decoder_tokens),
+    dtype='float32')
+```
+
+`decoder_target_data` is the same as decoder_input_data but offset by one timestep. `decoder_target_data[:, t, :]` will be the same as `decoder_input_data[:, t + 1, :]`.
+```Python 
+decoder_target_data = np.zeros(
+    (len(input_texts), max_decoder_seq_length, num_decoder_tokens),
+    dtype='float32')
+```
+
+You can see that the input and output of the decoder is the same except that the output is one timestep ahead. This makes sense when you consider that we will feed an unfinished sequence into the decoder and want it to predict the next character. We will use the functional API to create a model with two inputs.
+
+You see that the decoder also has two inputs: the decoder inputs and the encoded semantics. The encoded semantics however are not directly the outputs of the encoder LSTM but its _states_. In an LSTM, states are the hidden memory of the cells. What happens is that the first 'memory' of our decoder is the encoded semantics. To give the decoder this first memory, we can initialize its states with the states of the decoder LSTM.
+
+To return states, we have to set the `return_state` argument, configuring a RNN layer to return a list where the first entry is the outputs and the next entries are the internal RNN states. We once again are using a `CuDNNLSTM`. If you do not have a GPU, replace it with an `LSTM`, but note that training this model without a GPU can take very long.
+```Python
+#1
+encoder_inputs = Input(shape=(None, num_encoder_tokens), 
+                       name = 'encoder_inputs')
+
+#2                       
+encoder = CuDNNLSTM(latent_dim, 
+                   return_state=True, 
+                   name = 'encoder')
+
+#3                   
+encoder_outputs, state_h, state_c = encoder(encoder_inputs)
+
+#4
+encoder_states = [state_h, state_c]
+```
+\#1 We create an input layer for our encoder.
+
+\#2 We create the LSTM encoder.
+
+\#3 We link the LSTM ecoder to the input layer and get back the outputs and states.
+
+\#4 We discard `encoder_outputs` and only keep the states.
+
+Now we define the decoder. The decoder uses the states of the encoder as initial states for its decoding LSTM.
+
+You can think of it like this: Imagine, you were a translator translating English to French. When tasked with translating, you would first listen to the English speaker and form ideas about what the speaker wants to say in your head. You would then use these ideas to form a French sentence expressing the same idea.
+
+It is important to understand that we do not just pass a variable, but a piece of the computational graph. This means, we can later back-propagate from the decoder to the encoder. To use the analogy above: You might think that your French translation suffered from a poor understanding of the English sentence, so you start changing your English comprehension based on the outcomes of your French translation.
+```Python 
+#1
+decoder_inputs = Input(shape=(None, num_decoder_tokens), 
+                       name = 'decoder_inputs')
+#2                   
+decoder_lstm = CuDNNLSTM(latent_dim, 
+                        return_sequences=True, 
+                        return_state=True, 
+                        name = 'decoder_lstm')
+
+#3                      
+decoder_outputs, _, _ = decoder_lstm(decoder_inputs,
+                                     initial_state=encoder_states)
+
+#4                                     
+decoder_dense = Dense(num_decoder_tokens, 
+                     activation='softmax', 
+                     name = 'decoder_dense')
+                     
+decoder_outputs = decoder_dense(decoder_outputs)
+```
+\#1 Set up the decoder inputs.
+
+\#2 We set up our decoder to return full output sequences, and to return internal states as well. We don't use the return states in the training model, but we will use them for inference.
+
+\#3 Connect the decoder to the decoder inputs and specify the internal state. As mentioned above, we don't use the internal states of the decoder for training so we discard them here.
+
+\#4 Finally, we need to decide which character we want to use as the next character. This is a classification task so we will use a simple dense layer with a softmax activation function.
+
+We now have the pieces we need and can define our model with two inputs and one output: 
+
+```Python
+model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
+```
+
+If you have the graphviz library installed, you can visualize the model very nicely. Unfortunately this code snippet won't work on Kaggle.
+```Python
+from IPython.display import SVG
+from keras.utils.vis_utils import model_to_dot
+
+SVG(model_to_dot(model).create(prog='dot', format='svg'))
+```
+
+![Seq2Seq Visal](./assets/seq2seq_model_vis.png)
+
+You can now compile and train the model. Since we have to choose between a number of possible characters to output next, this is basically a multi-class classification task. Therefore we use a categorical cross-entropy loss.
+```Python
+model.compile(optimizer='rmsprop', loss='categorical_crossentropy')
+history = model.fit([encoder_input_data, decoder_input_data], 
+                    decoder_target_data,
+                    batch_size=batch_size,
+                    epochs=epochs,
+                    validation_split=0.2)
+```
+
+The training process takes about 7 minutes on a GPU. If we plot the models progress, you can see that it is overfitting:
+
+![Seq2Seq Overfitting](./assets/seq2seq_overfitting.png)
+
+This is largely because we use only 10,000 sentence pairs of only relatively short sentences. Next to being a bigger model, a real translation or summarization system would have to be trained on many more examples. To allow you to follow the examples without owning a massive datacenter however, we are just using a smaller model to give an example of what a seq2seq architecture can do.
+
+## Creating inference models 
+Overfitting or not, we would like to use our model now. Using a seq2seq model for inference, that is making translations in this case, requires us to build a separate inference model which uses the weights trained in the training model, but does the routing a bit different. More specifically, we will separate encoder and decoder. This way, we can first create the encoding once and then use it for decoding instead of creating it again and again.
+
+The encoder model maps from the encoder inputs to the encoder states:
+```Python 
+encoder_model = Model(encoder_inputs, encoder_states)
+```
+The decoder model takes in the encoder memory plus it's own memory from the last character as an input and spits out a prediction plus its own memory to be used for the next character.
+
+```Python 
+# Inputs from the encoder
+#1
+decoder_state_input_h = Input(shape=(latent_dim,))
+decoder_state_input_c = Input(shape=(latent_dim,))
+
+# Create a combined memory to input into the decoder
+#2
+decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+
+# Decoder
+#3
+decoder_outputs, state_h, state_c = decoder_lstm(decoder_inputs, initial_state=decoder_states_inputs)
+
+#4
+decoder_states = [state_h, state_c]
+
+# Predict next char
+#5
+decoder_outputs = decoder_dense(decoder_outputs)
+
+#6
+decoder_model = Model(
+    [decoder_inputs] + decoder_states_inputs,
+    [decoder_outputs] + decoder_states)
+```
+\#1 The encoder memory consists of two states. We need co create two inputs for both of them.
+
+\#2 We then combine the two states into one memory representation.
+
+\#3 We then connect the decoder lstm we trained earlier to the decoder inputs and the encoder memory.
+
+\#4 We combine the two states of the decoder lstm into one memory representation.
+
+\#5 We reuse the dense layer of the decoder to predict the next character.
+
+\#6 Finally, we set up the decoder model to take the in the character input as well as the state input and map it to the character output as well as state output.
+
+## Making translations 
+
+We can now start to use our model. First we create an index which maps tokens to characters again.
+
+```Python 
+reverse_input_char_index = {i: char 
+                            for char, i in input_token_index.items()}
+reverse_target_char_index = {i: char 
+                             for char, i in target_token_index.items()}
+```
+
+When we translate a phrase, we now first encode the input. We then loop, feeding the decoder states back into the decoder until we receive a STOP (in our case we use the tab character to signal STOP).
+
+The `target_seq` is a numpy array representing the last character predicted by the decoder.
+
+```Python 
+def decode_sequence(input_seq):
+    
+    #1
+    states_value = encoder_model.predict(input_seq)
+    
+    #2
+    target_seq = np.zeros((1, 1, num_decoder_tokens))
+    
+    #3
+    target_seq[0, 0, target_token_index['\t']] = 1.
+
+    #4 
+    stop_condition = False
+    decoded_sentence = ''
+    
+    #5
+    while not stop_condition:
         
         #6
-        valid = np.ones((half_batch, 1))
-        fake = np.zeros((half_batch, 1))
-        
+        output_tokens, h, c = decoder_model.predict(
+            [target_seq] + states_value)
+
         #7
-        labels = to_categorical(y_train[idx], num_classes=num_classes+1)
-        
+        sampled_token_index = np.argmax(output_tokens[0, -1, :])
+
         #8
-        fake_labels = np.full((half_batch, 1),num_classes)
-        fake_labels = to_categorical(fake_labels,num_classes=num_classes+1)
+        sampled_char = reverse_target_char_index[sampled_token_index]
+        
         #9
-        d_loss_real = discriminator.train_on_batch(imgs, 
-                                                  [valid, labels],
-                                                  class_weight=[cw1, cw2])
+        decoded_sentence += sampled_char
+
+
         #10
-        d_loss_fake = discriminator.train_on_batch(gen_imgs, 
-                                                    [fake, fake_labels],
-                                                    class_weight=[cw1, cw2])
-        #11
-        d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
+        if (sampled_char == '\n' or
+           len(decoded_sentence) > max_decoder_seq_length):
+            stop_condition = True
+
+        # 11
+        target_seq = np.zeros((1, 1, num_decoder_tokens))
+        target_seq[0, 0, sampled_token_index] = 1.
 
         #12
-        noise = np.random.normal(0, 1, (batch_size, 10))
-        validity = np.ones((batch_size, 1))
-        #13
-        g_loss = combined.train_on_batch(noise, 
-                                          validity, 
-                                          class_weight=[cw1, cw2])
+        states_value = [h, c]
 
-        #14
-        print ("%d [D loss: %f] [G loss: %f]" % (epoch, g_loss))
-        
-        #15
-        if epoch % 10 == 0:
-            _,y_pred = discriminator.predict(X_test,batch_size=batch_size)
-            y_pred = np.argmax(y_pred[:,:-1],axis=1)
-            
-            f1 = f1_score(y_test,y_pred)
-            print('Epoch: {}, F1: {:.5f}'.format(epoch,f1))
-            f1_progress.append(f1)
-            
-    return f1_progress
-``` 
-\#1 We create an empty array to monitor the F1 Score of the discriminator on the test set.
-
-\#2 Since we use separate batch training steps for real and fake data, we effectively use a half batch for each of the training steps.
-
-\#3 The classification head of the discriminator has a class label for 'this is fake'. Since half of the images are fake, we want to give this class a higher weight.
-
-\#4 We now draw a random sample of real data.
-
-\#5 We generate some random noise vectors and use the generator to create some fake data.
-
-\#6 For the 'fake or not head' we create labels. All real images have the label 1 (real), all fake images have the label 0 (fake).
-
-\#7 We one hot encode the labels of our real data. By specifying that our data has one more classes than it actually has, we leave space for the 'is fake' class.
-
-\#8 Our fake data all has the 'is fake' label. We create a vector of those labels and one hot encode them, too.
-
-\#9 First, we train the discriminator on the real data.
-
-\#10 Then we train the descriminator on the fake data.
-
-\#11 total loss of the discriminator for this epoch is the mean of the loss from the real and fake data.
-
-\#12 Now we train the generator. We generate a batch full of noise vectors as well as a batch full of labels saying 'this is real data'.
-
-\#13 With this data in hand we train the generator.
-
-\#14 To keep track of what is going on, we print out the progress. Remember that we do _not_ want the losses to go down, we want them to stay roughly constant. If either generator or discriminator becomes much better than the other the equilibrium breaks.
-
-\#15 Finally, we calculate and output the F1 score of using the discriminator as a fraud detection classifier for the data. This time, we only care about the classification data and discard the 'real or fake' head. We classify the transactions by the highest value that is not the 'is real' class of the classifier.
-
-
-Now that we have everything set up, we train our SGAN for 5,000 epochs. This takes about 5 minutes on a GPU, but could take much longer if you do not have a GPU.
-```Python
-f1_p = train(X_res,y_res,
-             X_test,y_test,
-             generator,discriminator,
-             combined,
-             num_classes=2,
-             epochs=5000, 
-             batch_size=128)
+    return decoded_sentence
 ```
-Finally, we plot the F1 score of our semi supervised fraud classifier over time:
+\#1 Encode the input as state vectors.
+
+\#2 Generate empty target sequence of length 1.
+
+\#3 Populate the first character of target sequence with the start character.
+
+\#4 There was no stop sign and the decoded sequence is empty so far.
+
+\#5 Loop until we receive a stop sign.
+
+\#6 Get output and internal states of the decoder.
+
+\#7 Get the predicted token (the token with the highest probability) .
+
+\#8 Get the character belonging to the token number.
+
+\#9 Append character to output.
+
+\#10 Exit condition: either hit max length or find stop character.
+
+\#11 Update the target sequence (of length 1).
+
+\#12 Update states.
+
+Now we can translate English to French! At least for some phrases it works quite well. Given that we did not supply our model with any rules about French words or grammar this is quite impressive. Translation systems like Googles of course use much bigger datasets and models, but in principle it is the same.
+
+To translate a text, we first create an placeholder array full of zeros.
 ```Python 
-fig = plt.figure(figsize=(10,7))
-plt.plot(f1_p)
-plt.xlabel('10 Epochs')
-plt.ylabel('F1 Score Validation')
+my_text = 'Thanks!'
+placeholder = np.zeros((1,len(my_text)+10,num_encoder_tokens))
 ```
 
-![SGAN Progress](./assets/sgan_credit_card.png)
+We then one hot encode all characters in the text by setting the element at the index of the characters token number to 1.
+```Python
+for i, char in enumerate(my_text):
+    print(i,char, input_token_index[char])
+    placeholder[0,i,input_token_index[char]] = 1
+```
+This prints out the characters toke number alongside the character and its position in the text.
+```
+0 T 38
+1 h 51
+2 a 44
+3 n 57
+4 k 54
+5 s 62
+6 ! 1
+```
+Now we can feed this placeholder into our decoder:
+```Python
+decode_sequence(placeholder)
+```
+And get the translation back:
+```
+'Merci !\n'
+```
 
-As you can see, the model learns pretty quickly at first, but then 'collapses' with its F1 score going to zero. This is a textbook example of a collapsing GAN. As mentioned above, GANs are unstable. If the delicate balance between the generator and discriminator breaks, performance quickly deteriorates. It is an active area of reasearch to make GANs more stable. So far, many practitioners just try many runs with different hyperparameters and random seeds and hope to get lucky. Another popular method is to just to save the model every couple of epochs. The model seems to be a pretty decent fraud detector at around epoch 150 despite being trained on less than 1000 transactions.
+Sequence to sequence models are useful not only for translating between languages. They can be trained to on just about anything that takes a sequence as input and also outputs a sequence. Remember our forecasting task from the last chapter? The winning solution to the forecasting problem was a seq2seq model. Text summarization is another useful application. Seq2seq models can also be trained to output a series of actions, such as a sequence of trades that would minimize the impact of a large order.
 
-# Exercises
-- Create an SGAN to train MNIST an image classifier. How few images can you use to achieve over 90% classification accuracy.
+# Exercises 
+- Add an extra layer to the encoder of the translation model.
+- Add attention to the encoder of the translation model. It is best to use attention as the last layer.
+- Visit the 'Daily News for Stock Market Prediction' at https://www.kaggle.com/aaron7sun/stocknews. The task is to use daily news as an input to predict stock prices. There are a number of Kernels already with several attempts. Use what you have learned in this chapter to predict some stock prices!
 
-- Using LSTMs you can build an autoencoder for stock price movements. Using a dataset such as the DJIA stock prices, build an autoencoder that encodes stock movements. Then visualize what happens to the outputs as you move through the latent space. You can find the dataset here: https://www.kaggle.com/szrlee/stock-time-series-20050101-to-20171231
+# Summary 
+In this chapter you have learned the most important NLP techniques. From bag of words to TF-IDF to advanced seq2seq models with attention. These techniques are useful across the industry, from retail banking to hedge fund investing. And while the problem your institution is trying to solve might require a bit of tweaking, the general approaches are quite transferable.
 
-# Summary
-In this chapter you have learned about the two most important types of generative models: Autoencoders and GANs. You have learned about latent spaces and the use they have for financial analysis. You also got a first impression on how machine learning can solve game-theoretic optimization problems. In the next chapter we will deep dive into exactly that type of optimization as we cover reinforcement learning. 
-
-
+In the next chapter we will look at a technique that has gained much attention since DeepMind beat a human Go champion: Reinforcement learning. This technique is especially useful when working in financial markets and is in many ways a natural extension of what many quantitative investment firms are already doing. So stay tuned and see you on the other side.

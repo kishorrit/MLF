@@ -1,674 +1,925 @@
-# Chapter 9 Fighting Bias
+# Chapter 8 Debugging & Deployment
+After the last seven chapters, you now have a large toolbox of machine learning algorithms you could use for your problem. But what if it does not work? Machine learning models fail in the worst way: They fail silently. In traditional software, a mistake usually leads to a crash in the program. While crashes are annoying for the user, they are helpful for the programmer. At least it is clear that the code failed and when it failed. Often, there even is a crash report that describes what went wrong. Sometimes, machine learning code crashes too, for example if the data we feed in has the wrong format or shape. These issues can usually be debugged by carefully tracking which shape the data had at what point. More often however, models that fail just output poor predictions. They give no signal that they have failed and you might not be aware that they failed at all. At other times, they might not train well, won't converge or won't achieve a low loss. This chapter is all about how you debug these silent fails.
 
-https://fairmlclass.github.io/
+The first step is to acknowledge that even good machine learning engineers fail frequently. There are many reasons why ML projects fail, and most have nothing to do with the skills of the engineers. But engineers can be on the watch for factors that often cause project failure. If spotted early, time and money can be saved. Even more, in high stakes environments, such as trading, aware engineers can pull the plug when they notice their model is failing. This should not be seen as a failure, but as a success to avoid problems.
 
-We like to think that machines are more rational than us. Heartless silicon applying cold logic to optimize some outcome. Thus, when automated decision making entered the economy, many hoped that computers would reduce prejudice and discrimination. But computers are made and trained by humans. Their data stems from an unjust world. And if we are not careful, they will amplify our biases.
+# Debugging data
+The first chapter of this book describes that models are a function of their training data. Bad data leads to bad models. Garbage in, garbage out. If your project is failing, your data is the most likely culprit. But even if you have a working model, the real world data coming in might not be up for the task. In this section we will learn how to find out if you have good data, what to do if you have been given not enough data, and how to test your data.
 
-In the financial industry, anti-discrimination is not only a matter of moral. Take for instance the Equal Credit Opportunity Act (ECOA) which came into force in 1974. It explicitly forbids creditors to discriminate applicants based on race, sex, marital status and a number of other attributes. It also requires creditors to inform applicants about the reasons for denial. 
+## How to find out if your data is up to the task
 
-The algorithms discussed in this books are discrimination machines. They will find the features on which best to discriminate to achieve a given objective. However, discrimination is **domain specific**. It is okay to target ads for books from a certain country to people who are also from that country. It is not okay to deny a loan to people from a certain country. In the financial domain, there are much stricter rules for discrimination than in book sales, because decisions in the financial domain have a much more severe impact on peoples lives. Equally, discrimination is **feature specific**. It is okay to discriminate loan applicants on their history of repaying loans, but not on their country of origin.
+There is two aspects to knowing if your data is up to the task of training a good model: Does the data predict what you want to predict and do you have enough data. 
 
-Equally, the algorithms discussed in this book are feature extraction algorithms. Even if regulated features are omitted, they might infer them from proxy features and then discriminate based on them anyway. Zip codes for instance can be used to predict race reasonably well in many cities in the United States. Omitting regulated features is not enough.
+To find out if your model does contain predicting information, also called a signal, you can ask if a human could make a prediction given this data. This works well for data for which you have humans making predictions already. After all, the only reason we know intelligence is possible is because we observe it in humans. Humans are good at understanding written text, but if a human does not understand a text, chances are that your model won't make much sense of it either. A common pitfall to this test is that humans have context your model does not have. A human trader does not only consume financial data but might also have experienced the product of a company or seen the CEO on TV. This context flows into the traders decision, but is often forgotten when a model is built. Humans are also good at focusing on important data. A human trader will not consume all financial data there is, because most of it is irrelevant. Adding more inputs to your model won't make it better. It often makes it worse as the model overfits and gets distracted by the noise. On the other hand, humans are irrational, follow peer pressure and have a hard time making decisions in abstract and unfamiliar environments. Humans would struggle to find an optimal traffic light policy for instance, since the data that traffic lights operate on is not intuitive to us.
 
-This chapter discusses where bias in machine comes from, its legal implications, and how it can be reduced.
+This brings us to the second sanity check: A human might not be able to make predictions, but there might be a causal (economic) rationale. There is a causal link between a company's profits and its share price, the traffic on a road and traffic jams, customer complaints and leaving customers and so on. And while humans might not have an intuitive gasp on these links, we can discover them by reasoning. There are some tasks, for which a causal link is required. For a long time, many quantitative trading firms insisted on their data having a causal link to the predicted outcomes of models for instance. Nowadays, the industry seems to have moved a bit away from that as it gets more confident in testing its algorithms. 
 
-# Sources of unfairness in ML
+If humans can not make a prediction and there is no causal rationale for why your data is predictive, you might want to reconsider if your project is feasible. 
 
-As discussed many times in this book, models are a function of the data they are trained on. Generally, more data leads to smaller errors. By definition, there is less data on minority groups, simply because there are fewer people in the group. This **disparate sample size** can lead to worse model performance for the minority group. This increased error is often a **systematic error**. The model might have overfit to majority group data, so that the relationships it found do not hold on the minority group data. Since there is little minority group data, this is not punished as much. Imagine you are training a credit scoring model, and the vast majority of your data comes from people living in lower manhattan and a small minority lives in rural areas. Manhattan housing is much more expensive, so the model might learn that you need a very high income to buy an apartment. Rural housing is much cheaper, but because the model is largely trained on manhattan data, it might deny loan applications to rural applicants because they also tend to have lower incomes than their manhattan peers.
+Once you have determined that your data contains enough signal, you need to ask yourself if you have enough data to train a model to extract the signal. There is no clear answer to how much is enough. Roughly, the amount needed depends on the complexity of the model you hope to create. There are a couple rules of thumb to follow however:
 
-Next to sample size issues, our data can be biased by itself. 'Raw Data' does not exist. Data does not appear naturally but is measured by humans using human made measurement protocols. These protocols can be biased in many ways. They can have **sampling biases**, like in the manhattan housing example. They can have **measurement biases**. Your measurement might not measure what it is intended to measure or discriminate against one group. One example are Eurocentric knowledge tests that ask about the tales of the brothers Grimm, but not about Indian fairy tales. And finally, there can be **pre-existing social biases**. These are visible in word vectors for instance. In Word2Vec, the vector mapping from father to doctor in latent space maps from mother to nurse. The vector from man to computer programmer maps from woman to homemaker. This is because sexisim is encoded in the written language of a sexist society. Until today, doctors are usually men and nurses are usually women. Tech-companies diversity statistics reveal that far more men are computer programmers. These biases get encoded in models, 
+- For classification, you should have around 30 independent samples per class.
+- You should have 10 times as many samples as there are features, especially for structured data problems.
+- Your dataset should get bigger as the number of parameters in your model gets bigger.
 
-Intro
-http://mrtz.org/nips17/#/11
+Keep in mind these rules are only rules of thumb and might be very different for your specific application. If you can make use of transfer learning, you can drastically reduce the number of samples you need. This is why most computer vision applications use transfer learning. 
 
-# Legal perspectives
-There are two doctrines in anti discrimination law, disparate treatment and disparate impact. **Disparate treatment** can be formal, that is if regulated features are explicitly used for discrimination, which is obviously not legal. But it can also be a problem if it is not formal but intentional. Intentionally discriminating against zip codes with the hope of discriminating against race is also not legal. Disparate treatment problems have less to do with the algorithm and more with the organization running it. **Disparate impact** can be a problem if an algorithm is deployed that has a different impact on different groups, even without the organization knowing about it. Let's walk through a lending scenario in which disparate impact could be a problem: First, the plaintiff must establish that there is a disparate impact. This is usually done with the **four fifths rule**: If the selection rate of a group is less then 80% of the group with the highest selection rate of, it is regarded as evidence of adverse impact. If a lender has 150 loan applicants from group A, of which 100, or 67% are accepted and 50 applicants from group B of which 25 are accepted, the difference in selection is 0.5/0.67 = 0.746, which qualifies as evidence for discrimination against group B. To this, the defendant can counter by showing that the decision procedure is justified as a necessity. Finally, the the plaintiff has the opportunity to show that the goal of the procedure could also be achieved with a different procedure that shows a smaller disparity.
+If you have any reasonable amount of data, say a few hundred samples, you can start building your model. Perhaps start with a simple model which you can deploy while you collect more data.
 
-The disparate treatment doctrine tries to achieve procedural fairness and equal opportunity. The disparate impact doctrine aims for distributive justice and minimized inequality in outcomes. There is an intrinsic tension between the two doctrines, illustrated by the *Ricci v. DeStefano* case from 2009. In this case, nineteen white and one Hispanic firefighters sued their employer, the New Haven Fire Department. The firefighters had all passed their test for promotion. Yet their black colleagues did not score high enough for promotion. Fearing an disparate impact lawsuit, the city invalidated the test results and did not promote the firefighters. Because the evidence for disparate impact was not strong enough, the supreme court eventually ruled that the firefighters should have been promoted.
+## What to do if you don't have enough data
+Sometimes, you find yourself in a situation where you simply do not have enough data. Sometimes, this happens after you already begun your project. For example, the legal team might have changed its mind and decided that you can not use the data even though they green lit it earlier. In this case, you have multiple options:
 
-Given the complex legal and technical situation around fairness in machine learning, we will next dive into how we can define and quantify fairness, before using this insight to create more fair models.
+Most of the time, you can **augment your data**. You have seen some data augmentation in chapter 3. Of course, you can augment all kinds of data. For example, you could slightly change some database entries. 
 
-# Observational fairness
+Taking augmentation a step further, you might be able to **generate your data**, for example in simulation. This is effectively how most reinforcement learning research gathers data. But it also works in other cases. The data we used for fraud detection in chapter two was obtained from simulation. Simulation requires you to be able to write down the rules of your environment in a program. Powerful learning algorithms tend to figure out these, often over simplistic, rules, so they might not generalize to the real world as well. Yet, simulated data can be a powerful addition to real data.
 
-Thresholds and equal opportunity
-https://research.google.com/bigpicture/attacking-discrimination-in-ml/
+Often, you can **find external data**. Just because you have not tracked a certain datapoint, it does not mean that nobody else has. There is an astonishing amount of data available on the internet. Even if the data was not originally collected for your purpose, you can often retool data by either relabeling it or by using it for **transfer learning**. You might be able to train a model on a large dataset for a different task and then use that model as a basis for your task. Equally, you can find a model someone else has trained for a different task, and repurpose it.
 
-Equality is often seen as a purely qualitative issue, and as such, often dismissed buy quantitative minded modelers. As this section shows, equality can be seen from a quantitative perspective, too. 
-Consider a classifier $c$ with input $X$, some sensitive input $A$, a target $Y$ and output C. Usually we note the classifier output as $\hat{Y}$, but for readability we follow CS 294 and name it $C$.
+Finally, you might be able to create a **simple model**, that does not capture the relationship in the data completely but is enough to ship a product. Random forests and other tree based methods often require much less data than neural networks. 
 
-Say our classifier is used to decide who gets a loan. When would we consider this classifier to be fair? In order to answer this question, picture two demographics, Group A and B, of loan applicants. Given a credit score, our classifier has to find a cutoff point. Below you can see the distribution of applicants. In orange are applicants who would not have repaid the loan and did not get accepted, true negatives (TN). In blue are applicants who would have repaid the loan but did not get accepted, false negatives (FN). In yellow are applicants who did get the loan but did not pay it back, false positives (FN). In grey are applicants who did receive the loan and paid it back, true positives (TP). The data for this example is synthetic, you can find the excel file used for these calculations in the GitHub repository of this book.
+Remember, that for data, quality trumps quantity in the majority of cases. Getting a small, high quality dataset in and training a weak model is often your best shot to find problems with data early. You can always scale up data collection later. A mistake many practitioners make is that they spend huge amounts of time and money on getting a big dataset, only to find that they have the wrong kind of data.
 
-For this exercise we assume that a successful applicant and pays yields a profit of \$300 while a defaulting successful applicant costs \$700. The cutoff point below has been chosen to maximize profits:
+## Unit testing data
+If you build a model, you make assumptions about your data. For example, you assume that the data you feed into your time series model is actually a time series with dates that follow each other in order. You need to test your data to make sure this assumption is true. Especially live data that you receive once your model is already in production. Bad data might lead to poor model performance, which can be dangerous especially in a high stakes environment.
 
-![Max Profit](./assets/max_profit.png)
+Additionally, you need to test if your data is clean from things like personal information. As described in the section on privacy below, personal information is a liability you want to get rid of, unless you have good reasons and consent to use it.
 
-As you can see, there are several issues with this choice of cutoff point. group B applicants need to have a better score to get a loan than group A applicants, indicating disparate treatment. At the same time, about 51% of group A applicants get a loan but only 37% of group B applicants, indicating disparate impact. A **group unaware threshold** would give both groups the same minimum score:
+Since monitoring data quality is important when trading based on many data sources, Two Sigma, a hedge-fund, has created and open sourced a library for data monitoring. It is called marbles, see https://github.com/twosigma/marbles and builds on Pythons `unittest` library. You can install it with 
 
-![Equal Cutoff](./assets/equal_cutoff.png)
+```
+pip install marbles
+```
 
-Both groups have the same cutoff rate, but group A has been given fewer loans. At the same time, predictions for group A have a lower accuracy than for group B. It seems, that although both groups face the same score threshold, group A is at a disadvantage.
+You can find a Kaggle Kernel demoing marbles here: https://www.kaggle.com/jannesklaas/marbles-test
 
-**Demographic parity** aims to achieve fairness by ensuring that both groups have the same chance of receiving the loan. This method aims to achieve the same selection rate for both groups, which is what impact disparity is measured by. Mathematically this can be expressed as:
-
-$$P(C=1∣A=1)=P(C=1∣A=0)$$
-
-If we apply this rule to our data, we arrive at the following cutoff points:
-![Equal Pick Rate](./assets/equal_pick_rate.png)
-
-While this method can not be blamed for statistical discrimination and disparate impact, it can be blamed for disparate treatment. Group A is given a lower threshold score and more successful group A applicants default on their loans. In fact, group A is not profitable and gets subsidized by group B. Accepting a worse economic outcome to favor a certain group is also called taste based discrimination. It could be said that the higher thresholds for group B are unfair, as they have a lower false positive rate.
-
-**True positive parity**, also called equal opportunity, means that both demographics have the same true positive rate. For people who can pay back the loan, the same chance of getting a loan should exist. Mathematically:
-$$P(C=1∣Y=1,A=1)=P(C=1∣Y=1,A=0)$$
-
-Applied to our data, this policy looks similar to demographic parity, except that the group A cutoff point is even lower:
-![Equal opportunity](./assets/equal_opportunity.png)
-
-Equal opportunity can address many of the problems of demographic parity. Most people believe that everyone should be given the same opportunity. Still, our classifier is less accurate for group A and there is a form of disparate treatment in place.
-
-**Accuracy parity** prescribes that the accuracy of predictions should be the same for both groups. Mathematically this can be expressed as:
-
-$$P(C=Y∣A=1)=P(C=Y∣A=0)$$
-
-The probability that the classifier is correct should be the same for the two possible values of the sensitive variable $A$. When we apply this criteria to our data, we arrive at the following output:
-
-![Equal Accuracy](./assets/equal_acc.png)
-
-The downside becomes apparent from the graphic above. In order to satisfy the accuracy constraint, members of Group B are given much easier access to loans. 
-
-Tradeoffs are necessary, no classifier can have precision parity, true positive parity _and_ false positive parity, unless the classifier is perfect, $C=Y$ or both demographics have the same base rates:
-$$P(Y=1|A=1)=P(Y=1|A=0)$$
-
-There are many more ways to express fairness in different ways. The key takeaway however is that none of them perfectly satisfies all fairness criteria. For any two populations with unequal base rates, unequal chances of repaying their loan, establishing statistical parity requires introducing a treatment disparity. This fact has led to much debate and the best practice to express and eliminate discrimination has not been agreed on, yet. Yet, even if the perfect mathematical expression of fairness was found, it would not immediately lead to perfectly fair systems. Any machine learning algorithm is part of a bigger system. Inputs $X$ are often not clearly defined as different algorithm in the same system might use different inputs. Demographic groups $A$ are often not clearly defined or inferred. Even the output $C$ of the classifier can often not be clearly distinguished, as many algorithms together might perform the classification task while each algorithm is predicting a different output, like a credit score and a profitability estimate. **Good technology is not a substitute for good policy**. Blindly following an algorithm without an opportunity for individual consideration or appeal will always lead to unfairness. But while mathematical fairness criteria can not solve all fairness issues, it is surely worth trying to make machine learning algorithms more fair. This is what the next section is about.
-
-# Training to be fair 
-Training models to be fair
-https://blog.godatadriven.com/fairness-in-ml
-
-Data 
-https://archive.ics.uci.edu/ml/datasets/Adult
-
-There are multiple ways to train models to be more fair. A simple approach could be to use the different fairness measures we have listed above as an additional loss. In practice, this approach has turned out to not work very well. The models produced with such 'fairness regularization' turn out to have poor performance on the actual classification task. An alternative approach is to use and adversarial network. In 2016, Louppe, Kagan and Cranmer published 'Learning to Pivot with Adversarial Networks', a paper which shows how to use an adversarial network to train a classifier to ignore a nuisance parameter, such as a sensitive feature.
-
-In this example, we will train a classifier to predict if an adult makes over \$50K in annual income. The challenge is to make our classifier unbiased from influences of race and gender, and only focus on features we can discriminate on such as their occupation and gains they make from capital. To this end we train a classifier and an adversarial network. The adversarial aims to classify the sensitive attributes $a$, gender and race, from the predictions of the classifier.
-
-![pivot](./assets/pivot.png)
-
-The classifier aims to classify by income but also aims to fool the adversarial. The classifiers minimization objective is:
-
-$$\min[L_y - \lambda L_A]$$
-
-Where $L_y$ is a binary cross-entropy loss of the classification and $L_A$ is the adversarial's loss. $\lambda$ is a hyper parameter we can use to amplify or reduce the impact of the adversarial loss.
-
-This implementation of the adverserial fairness method follows an implementation by Stijn Tonk and Henk Griffioen. You can find the code to this chapter on Kaggle under: https://www.kaggle.com/jannesklaas/learning-how-to-be-fair
-
-To train fair, we need not only data X and targets y, but also data about sensitive attributes, A. We take data from the 1994 US census provided by the UCI repository https://archive.ics.uci.edu/ml/datasets/Adult
-
-To make loading the data easier, it has been transformed into a CSV with column headers. Please refer to the online version to see the data as well.
-
-First we load the data. The dataset contains data about people from many races, but for simplicity we will only focus on white and black people for the race attribute.
+The code sample below shows a simple marbles unit test. Imagine you are gathering data about the unemployment rate in Ireland. For your models to work, you need to ensure that you actually get the data from consecutive months, and don't count one month double for instance:
 ```Python 
-path = '../input/adult.csv'
-input_data = pd.read_csv(path, na_values="?")
-input_data = input_data[input_data['race'].isin(['White', 'Black'])]
+import marbles.core #1
+from marbles.mixins import mixins
+
+import pandas as pd #2
+import numpy as np
+from datetime import datetime, timedelta
+
+class TimeSeriesTestCase(marbles.core.TestCase,mixins.MonotonicMixins):
+    def setUp(self):
+        self.df = pd.DataFrame({'dates':[datetime(2018,1,1),
+                                         datetime(2018,2,1),
+                                         datetime(2018,2,1)],
+                                'ireland_unemployment':[6.2,6.1,6.0]})
+        
+    def tearDown(self):
+        self.df = None
+        
+    def test_date_order(self):
+        
+        self.assertMonotonicIncreasing(sequence=self.df.dates,
+                                  note = 'Dates need to increase monotonically')
 ```
 
-We select the sensitive attributes race and gender into our sensitive dataset A. We one hot encode the data so that 'Male' equals one for the gender attribute and 'White' equals one for the race attribute.
+\#1 Marbles features two main components. The `core` module does the actual testing. The `mixins` module provides a number of useful tests for different types of data. This simplifies your test writing and gives you more readable and semantically interpretable tests.
+
+\#2 You can use all libraries you usually use to handle and process data for testing.
+
+\#3 Now it is time to define our test class. A new test class must inherit marbles `TestCase` class. This way, our test class is automatically set up to run as a marbles test. If you want to use a mixin, you also need to inherit the corresponding mixin class. In this example we are working with a series of dates which should be increasing monotonically. The `MonotonicMixins` class provides a range of tools to test for monotonic increasing series automatically. If you are coming from Java programming, the concept of multiple inheritance might strike you as wired, but in Python, classes can easily inherit multiple other classes. This is useful if you want your class to inherit two different capabilities, such as running a test and testing time related concepts.
+
+\#4 The `setUp` function is a standard test function in which we can load the data and prepare for the test. In this case, we just define a pandas dataframe by hand. But you could also load a CSV file, load a web resource or do whatever it takes to get your data.
+
+\#5 In our dataframe, we have the Irish unemployment rate for two months. As you can see, the last month has been counted double. This should not happen and cause an error.
+
+\#6 The `tearDown` method is also a standard test method which allows us to clean up after our test is done. In this case we just free RAM, but you can also delete files or databases just created for testing.
+
+\#7 Methods describing actual tests should start with `test_`. Marbles will automatically run all test methods after set up.
+
+\#8 We assert that the time indicator of our data strictly increases. If our assertion would have required intermediate variables, such as a maximum value, marbles would display it in the error report as well. To make our error more readable we can attach a handy note.
+
+To run a unit test in Jupyter, we need to tell marbles to ignore the first argument.
 ```Python 
-sensitive_attribs = ['race', 'gender']
-A = input_data[sensitive_attribs]
-A = pd.get_dummies(A,drop_first=True)
-A.columns = sensitive_attribs
+if __name__ == '__main__':
+    marbles.core.main(argv=['first-arg-is-ignored'], exit=False)
 ```
 
-Our target is the income attribute. We encode '>50K' as 1 and everything else as zero.
-```python 
-y = (input_data['income'] == '>50K').astype(int)
+
+It is more common to run unit tests directly from the command line. To if you saved the code above in the command line, you could run it with:
+
+```
+python -m marbles marbles_test.py
 ```
 
-To get our training data, we first remove the sensitive and target attributes. We then fill all missing values and one hot encode all data.
+Of course, there are problems in our data. Luckily for us, our test ensure that this error does not get passed on to our model where it would cause a silent failure in the form of a bad prediction. Instead, the test will fail with the following error output. The comments were added to explain the output.
+
+```
+F #1
+======================================================================
+FAIL: test_date_order (__main__.TimeSeriesTestCase) #2
+----------------------------------------------------------------------
+marbles.core.marbles.ContextualAssertionError: Elements in 0   2018-01-01
+1   2018-02-01
+2   2018-02-01 #3
+Name: dates, dtype: datetime64[ns] are not strictly monotonically increasing
+
+Source (<ipython-input-1-ebdbd8f0d69f>): #4
+     19 
+ >   20 self.assertMonotonicIncreasing(sequence=self.df.dates,
+     21                           note = 'Dates need to increase monotonically')
+     22 
+Locals: #5
+
+Note: #6
+	Dates need to increase monotonically
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.007s
+
+FAILED (failures=1) #7
+```
+
+\#1 The top line shows the status of the entire test. In this case, there was only one test method, and it failed. Your test might have many test methods and marbles would display progress by showing how tests fail or pass.
+
+\#2 The next couple of lines describe the failed test method. This line describes that the `test_date_order` method of the `TimeSeriesTestCase` class failed.
+
+\#3 Marbles shows precisely how the test failed. The values of the dates tested are shown, together with the cause for failure.
+
+\#4 In addition to the actual failure, marbles displays a traceback showing the actual code where our test failed.
+
+\#5 A special feature of marbles is the ability to display local variables. This way we can ensure that there was not problem with the setup of the test. It also helps us in getting context to see how exactly the test failed.
+
+\#6 Finally, marbles displays our note which helps the test consumer understand what went wrong.
+
+\#7 As a summary, marbles displays that the test failed with one failure. Sometimes, you can accept data even though it failed some tests, but often you want to dig in and see what is going on.
+
+The point of unit testing data is to make failures loud and prevent data issues to give you bad predictions. A failure with an error message is much better than a failure without one. Often, the failure is cause by your data vendor. Testing all data you get from all vendors allows you to be aware when a vendor makes a mistake.
+
+Unit testing data also help you ensure you have no data that you should not have, such as personal data. Vendors need to clean datasets of all personally identifying information, such as social security numbers, but of course they sometimes forget. Complying with ever stricter data privacy regulation is a big concern for many financial institutions engaging in machine learning. The next section therefore discusses how to preserve privacy while still gaining benefits from machine learning.
+ 
+## Keeping data private
+
+In recent years, consumers have woken up to the fact that their data is being harvested and analyzed in ways they can not control and that is sometimes against their own interest. Naturally, they are not happy about it and regulators have come up with some new data regulations. At the time of writing, the European Union introduced the General Data Protection Regulation (GDPR), but it is likely that other jurisdictions will develop stricter privacy protections, too. This text will not go in depth on how to comply with this law specifically. It will rather outline some principles of recent privacy legislation and some technological solutions to comply with these principles.
+
+First, **delete what you don't need**. For a long time, companies have just stored all data they could get their hands on but this is a bad idea. Storing personal data is a liability for your business. It is owned by someone else and you are on the hook for taking care of it. The next time you hear a statement like 'We have 500,000 records in our database', think of it like 'We have 500,000 liabilities on our books'. It can be a good idea to take on liabilities, but only if there is an economic value that justifies these liabilities. Astonishingly often, you might collect personal data by accident. Say you are tracking device usage, but accidentally include the customer ID in records. You need practices in place that monitor and prevent such accidents.
+
+**Be transparent and obtain consent**. Customers want good products and they understand how their data can make your product better for them. Rather than pursuing an adversarial approach in which you wrap all your practices in a very long agreement and then make users agree to it, it is usually more sensible to clearly tell users what you are doing, how their data is used, and how that improves the product. If you need personal data, you need consent. Being transparent will help you down the line as users trust you more, and can be used to improve your product through feedback.
+
+**Remember that breaches happen to the best**. No matter how good your security is, there is a chance that you get hacked. So you should design your personal data storage under the assumption that the entire database might be dumped on the internet one day. This assumption helps you to create stronger privacy and avoid disaster once you actually get hacked.
+
+**Be mindful about what can be inferred from data**. You might not be tracking personally identifying information in your database, but when combined with another database, your customers can still be individually identified. Say you went for coffee with a friend, paid by credit card and posted a picture of the coffee on instagram. The bank might collect anonymous credit card records, but if someone wen't to crosscheck the credit card records against the instagram pictures, there would be only one customer who bought a coffee and posted a picture of coffee at the same time in the same area. This way, all your credit card transactions were no longer anonymous. Consumers expect companies to be mindful of these effects.
+
+One way to reduce the risk of crosschecking, is to **encrypt and obfuscate data**. Apple for instance collects phone data but adds random noise to the collected data. The noise renders each individual record incorrect, but in aggregate the records still give a picture of user behavior. There are a few caveats to this approach, for example you can only collect so many data-points from a user before the noise chancels out and the individual behavior is revealed. Similarly, recent research has shown that deep learning models can learn on homomorphically encrypted data. Homomorphic encryption is a method of encryption that preserves the underlying algebraic properties of the data. Mathematically this can be expressed as:
+
+$$
+E(m_1) + E(m_2) = E(m_1 + m_2)
+$$
+
+$$
+D(E(m_1 + m_2)) = m_1 + m_2
+$$
+
+Where $E$ is an encryption function, $m$ is some plain text data and $D$ is a decryption function. As you can see, adding the encrypted data is the same as first adding the data and then encrypting it. Adding the data, encrypting it and then decrypting it is the same as just adding the data.
+
+This means you can encrypt the data and still train a model on it. Homomorphic encryption is still in its infancy, but through approaches like this you can ensure that in case of a data breach, no sensitive individual information is leaked.
+
+**Train locally, upload only a few gradients**. One way to avoid uploading user data is to train your model on the user's device. The user accumulates data on the device. You can then download your model on to the device, and perform a single forward and backward pass on the device. To avoid the possibility of inference of user data from the gradients, you only upload a few gradients at random. You can then apply the gradients to your master model. To further increase the overall privacy of the system, you do not download all newly update weights from the master model to the users device, but only a few. This way, you train your model asynchronously without ever accessing any data. If your database gets breached, no user data is lost. This only works if you have a large enough user base.
+
+http://www.comp.nus.edu.sg/~reza/files/Shokri-CCS2015.pdf
+
+## Preparing data for training
+In earlier chapters, we have seen the benefits of normalizing and scaling features. In general, you should scale all numerical features. There are four ways of feature scaling.
+
+**Standardization** ensures all data has a mean of zero and a standard deviation of one. It is computed by subtracting the mean and dividing by the standard deviation of the data.
+
+$$x' = \frac{x-\mu}{\sigma}$$
+
+This is probably the most common way of scaling features. It is especially useful if you suspect your data to contain outliers as it is quite robust. On the flip side, it does not ensure that your features are between zero and one, which is the range in which neural networks learn best.
+
+**Min-Max** rescaling does exactly that. It scales all data between zero and one by first subtracting the minimum value and then dividing by the range of values.
+
+$$x' = \frac{x-\min(x)}{\max(x)-\min(x)}$$
+
+If you know for sure that your data contains no outliers, which is the case in images for instance, Min-Max scaling will give you a nice scaling of values between zero and one.
+
+Similar to Min-Max, **mean normalization** ensures your data has values between minus one and one with a mean of zero by subtracting the mean and then dividing by the range of data:
+
+$$x' = \frac{x-\mu}{\max(x)-\min(x)}$$ 
+
+Mean normalization is done less frequently but depending on your application might be a good approach.
+
+For some applications, it is better to not scale individual features, but vectors of features. In this case, you would apply **unit length scaling** by dividing each element in the vector by the total length of the vector:
+
+$$x' = \frac{x}{||x||}$$ 
+
+The length of the vector usually means the  L2 norm, of the vector, $\lVert x \lVert_2$,speak the square root of the sum of squares. For some applications, the vector length means the l1 norm of the vector, $\lVert x \lVert_1$, which is the sum of vector elements.
+
+However you scale, it is important to only measure the scaling factors, mean and standard deviation, on the test set. These factors include some information about the data. If you measure them over your entire dataset, the algorithm might do better on the test set than it will in production, due to this information advantage.
+
+Equally important, you should check that your production code has proper feature scaling as well. Over time, you should recalculate your feature distribution and adjust your scaling.
+
+## Understanding which inputs led to which predictions
+Why did your model make the prediction it made? For complex models, this question is pretty hard to answer. A global explanation for a very complex model might be very complex itself. LIME popular algorithm for model explanation focuses on local explanations. Rather than trying to answer 'How does this model make predictions?', LIME tries to answer 'Why did the model make _this_ prediction on _this_ data?'. The authors Ribeiro, Singh and Guestrin curated a great GitHub repository around their algorithm with many explanations and tutorials which you can find here:
+https://github.com/marcotcr/lime
+
+You can install lime locally with 
+
+```
+pip install lime
+```
+
+On Kaggle Kernels lime is installed by default.
+
+LIME stands for Local Interpretable Model-Agnostic Explanations. The algorithm works with any classifier, which is why it is model agnostic. To make an explanation, LIME cuts up the data into several sections such as areas of an image or utterances in a text. It then creates a new dataset by removing some of these features. It runs the new dataset through the black box classifier and obtains the classifiers predicted probabilities for different classes. Lime then encodes the data as vectors describing which features were present. It then trains a linear model to predict the outcomes of the black box model with different features removed. As linear models are easy to interpret, LIME will use the linear model to determine the most important features.
+
+Say you have some text classifier like TF-IDF to classify emails like the 20 Newsgroup Dataset. To get explanations from this classifier, you would use the following snippet:
+
 ```Python 
-X = input_data.drop(labels=['income', 'race', 'gender'],axis=1)
-
-X = X.fillna('Unknown')
-
-X = pd.get_dummies(X, drop_first=True)
+from lime.lime_text import LimeTextExplainer #1
+explainer = LimeTextExplainer(class_names=class_names) #2
+exp = explainer.explain_instance(test_example, #3
+                                 classifier.predict_proba, #4
+                                 num_features=6) #5
+                                 
+exp.show_in_notebook() #6
 ```
 
-Finally, we split the data into train and test split. We stratify the data to ensure that the same amount of high earners are in test and training data.
-```Python 
-X_train, X_test, y_train, y_test, A_train, A_test = \
-train_test_split(X, y, A, test_size=0.5, 
-                stratify=y, random_state=7)
+\#1 The LIME package has several classes for different types of data.
+
+\#2 To create a new blank explainer, we need to pass the names of classes of our classifier.
+
+\#3 We provide one text example for which we wish an explanation.
+
+\#4 We provide the prediction function of our classifier. We need to provide a function that provivides probabilities. For Keras, this is just `model.predict`, for SciKit models we need to use the `predict_proba` method.
+
+\#5 Lime shows a maximum number of features. We want to show only the importance of the six most important features in this case.
+
+\#6 Finally, we can render a visualization of our prediction which looks like this:
+
+![LIME Text](./assets/lime_text.png)
+
+The explanation shows the classes the text gets classified as most often with different features. It shows the words that most contribute to the classification in the two most frequent classes. Below you can see the words that contributed to the classification highlighted in the text.
+
+As you can see, our model picked up on parts of the email address of the sender as distinguishing features, as well as the name of the university 'Rice'. It sees 'Caused' to be a strong indicator that the text is about atheism. All these are things we want to know when debugging datasets.
+
+LIME does not perfectly solve the problem of explaining models. It struggles if the interaction of multiple features lead to a certain outcome for instance. But it does well enough to be a useful data debugging tool. Often, models pick up on things they should not be picking up on. To debug a dataset, we need to remove all these 'give-away' features that statistical models like to overfit to. 
+
+You have now seen a wide range of tools to debug your dataset. But even with a perfect dataset, there can be issues training. The next section is about how to debug your model.
+
+# Debugging your model  
+Especially complex deep learning models are prone to error. With millions of parameters, many things can go wrong. Luckily, the field has developed a number of useful tools to improve model performance.
+
+## Hyperparameter search with Hyperas
+Manually tuning the hyperparameters of a neural network can be a tedious task. And while you might have some intuition about what works and what does not, there are no hard rules to apply. This is why practitioners with lots of compute power on hand use automatic hyperparameter search. After all, hyperparameters form a search space just like the models parameters do. The difference is that we can not apply backpropagation to them and can not take derivatives off them. We can still apply all non-gradient based optimization algorithms to them. There are a number of different hyperparameter optimization tools, but for its ease of use we will look at hyperas. Hyperas is a wraper for hyperopt, a popular optimization library, made for working with Keras. You can find hyperas on GitHub: https://github.com/maxpumperla/hyperas
+
+And install it with pip:
 ```
+pip install hyperas
+``` 
 
-To ensure the data works nicely with the neural network, we scale the data using scikit learn's `StandardScaler`:
-```Python 
-scaler = StandardScaler().fit(X_train)
+Depending on your setup, you might need to make a few adjustments to the installation. See hyperas GitHub page for more information.
 
-X_train = pd.DataFrame(scaler.transform(X_train), 
-                       columns=X_train.columns, 
-                       index=X_train.index)
-                       
-X_test = pd.DataFrame(scaler.transform(X_test), 
-                      columns=X_test.columns, 
-                      index=X_test.index)
-```
+Hyperas offers two optimization methods: Random Search and Tree of Parzen Estimators. Within a range of parameters we think are reasonable, random search will sample randomly and train a model with random hyperparameters. It will then pick the best performing model as the final solution. Random search is simple and robust and it can be scaled easily. It makes basically no assumption about the hyperparameters, their relation and the loss surface. On the flip side, it is relatively slow.
 
-We need a metric how fair our model is. We are using the disparate impact selection rule. The `p_rule` method calculates the share of people classified to have over \$50K income from both groups and returns the ratio of selections in the disadvantaged demographic over the ratio of selections in the advantaged group. The goal is for the `p_rule` method to return at least 80% the meet the four fifths rule for both race and gender. This function is only used for monitoring, and not as a loss function. 
+The Tree of Parzen (TPE) algorithm models the relation $P(x|y)$ where $x$ represents the hyperparameters and $y$ the associated performance. This is the exact opposite modeling of gaussian processes which model $P(y|x)$ and are popular with many researchers. Empirically, it turns out that TPE performs better. For the precise details see Bergstra et al. 2011 'Algorithms for Hyper-Parameter Optimization'. TPE is faster than random search but can get stuck in local minima and struggles with some difficult loss surfaces. As a rule of thumb, it makes sense to start with TPE, and if TPE struggles move to random search.
 
-```Python 
-def p_rule(y_pred, a_values, threshold=0.5):
-    y_a_1 = y_pred[a_values == 1] > threshold if threshold else y_pred[a_values == 1] #1
-    y_a_0 = y_pred[a_values == 0] > threshold if threshold else y_pred[a_values == 0] 
-    odds = y_a_1.mean() / y_a_0.mean() #2
-    return np.min([odds, 1/odds]) * 100 
-```
-\#1 First, select who is selected given a selection threshold. Here, we classify everyone whom the model assigns a chance of over 50% to make \$50K as a high earner. 
-
-\#2 Then we calculate the selection ratio of both demographics. We divide the ratio of the one group by the ratio of the other group. By returning the minimum of either the odds or one divided by the odds, we ensure to returns a value below 1.
-
-To make model setup a bit easier, we need to define the number of input features and the number of sensitive features.
-```Python 
-n_features=X_train.shape[1]
-n_sensitive=A_train.shape[1]
-```
-
-Now we set up our classifier. Note how this classifier is a standard classification neural network. It features 3 hidden layers, some dropout and a final output layer with a sigmoid activation since this is a binary classification task. This classifier is written in the Keras functional API. To make sure you understand how the API works, go through this code example and ensure you understand why the steps are taken.
-```Python 
-clf_inputs = Input(shape=(n_features,)) 
-x = Dense(32, activation='relu')(clf_inputs)
-x = Dropout(0.2)(x)
-x = Dense(32, activation='relu')(x)
-x = Dropout(0.2)(x)
-x = Dense(32, activation='relu')(x)
-x = Dropout(0.2)(x)
-outputs = Dense(1, activation='sigmoid', name='y')(x)
-clf_net = Model(inputs=[clf_inputs], outputs=[outputs])
-```
-
-The adversarial network is a classifier with two heads. One to predict the applicants race of from the model output, one to predict the applicants gender.
-```Python 
-adv_inputs = Input(shape=(1,)) 
-x = Dense(32, activation='relu')(adv_inputs)
-x = Dense(32, activation='relu')(x)
-x = Dense(32, activation='relu')(x)
-out_race = Dense(1, activation='sigmoid')(x)
-out_gender = Dense(1, activation='sigmoid')(x)
-adv_net = Model(inputs=[adv_inputs], outputs=[out_race,out_gender])
-```
-
-As with GANs, we have to make the networks trainable and untrainable multiple times. To make this easier, the following function creates a function that makes a network and all its layers trainable or untrainable.
-```Python 
-def make_trainable_fn(net): #1
-    def make_trainable(flag): #2
-        net.trainable = flag #3
-        for layer in net.layers:
-            layer.trainable = flag
-    return make_trainable #4
-```
-\#1 The function accepts a Keras neural network, for which the train switch function will be created.
-
-\#2 Inside the function, a second function is created. This second function accepts a boolean flag (True / False).
-
-\#3 When called, the second function sets the networks trainability to the flag. If False is passed, the network is not trainable. Since the layers of the network can also be used in other networks, we ensure that each individual layer is not trainable, too.
-
-\#4 Finally, we return the function.
-
-Using a function to create another function might seem convoluted at first, but it allows us to create 'switches' for the neural network easily. The snippet below shows how to create switch functions for the classifier and adversarial.
+The following example will show how to use hyperas and hyperopt for an MNIST classifier. The code for this example can be found on Kaggle: https://www.kaggle.com/jannesklaas/hyperas
 
 ```Python 
-trainable_clf_net = make_trainable_fn(clf_net) 
+from hyperopt import Trials, STATUS_OK, tpe #1
+from hyperas import optim #2
+from hyperas.distributions import choice, uniform 
 
-trainable_adv_net = make_trainable_fn(adv_net)
 ```
 
-To make the classifier trainable, we can use the function with the True flag:
+\#1 As hyperas is built on hyperopt, we need to import some pieces directly from hyperopt. The `Trials` class runs the actual trials, `STATUS_OK` helps communicate that a test went well and `tpe` is an implementation of the TPE algorithm.
+
+\#2 Hyperas provides a number of handy functions that make working with hyperopt easier. The `optim` function finds optimal hyperparameters and can be used just like keras `fit` function. `choice` and `uniform` can be used to choose between discrete and continuous hyperparameters respectively.
+
 
 ```Python 
-trainable_clf_net(True)
+def data(): #1
+    import numpy as np #2
+    from keras.utils import np_utils
+    
+    from keras.models import Sequential 
+    from keras.layers import Dense, Activation, Dropout
+    from keras.optimizers import RMSprop
+    
+    path = '../input/mnist.npz' #3
+    with np.load(path) as f:
+        X_train, y_train = f['x_train'], f['y_train']
+        X_test, y_test = f['x_test'], f['y_test']
+
+    X_train = X_train.reshape(60000, 784) #4
+    X_test = X_test.reshape(10000, 784)
+    X_train = X_train.astype('float32')
+    X_test = X_test.astype('float32')
+    X_train /= 255
+    X_test /= 255
+    nb_classes = 10
+    y_train = np_utils.to_categorical(y_train, nb_classes)
+    y_test = np_utils.to_categorical(y_test, nb_classes)
+    
+    return X_train, y_train, X_test, y_test #5
 ```
 
-Now we compile our classifier. As you will see later, it is useful to keep the classifier network as a separate variable from the compiled classifier with which we make predictions.
+\#1 Hyperas expects a function which loads the data, we can not just pass on a dataset from memory.
+
+\#2 To scale the search, hyperas creates a new runtime in which it does model creation and evaluation. This also means that imports we did in a notebook do not always transfer into the runtime. To be sure that all modules are available we need to do all imports in the data function. This is also true for modules which will only be used for the model.
+
+\#3 We now load the data. Since Kaggle kernels do not have access to the internet, we need to load the MNIST data from disk.
+
+\#4 The data function also needs to preprocess the data. We do the standard reshaping and scaling that we also did in when we worked with MNIST earlier.
+
+\#5 Finally, we return the data. This data will be passed into the function that builds and evaluates the model.
+
 ```Python 
-clf = clf_net
-clf.compile(loss='binary_crossentropy', optimizer='adam')
+def model(X_train, y_train, X_test, y_test): #1
+    model = Sequential() #2
+    model.add(Dense(512, input_shape=(784,)))
+    
+    model.add(Activation('relu'))
+    
+    model.add(Dropout({{uniform(0, 0.5)}})) #3
+    
+    model.add(Dense({{choice([256, 512, 1024])}})) #4
+    
+    model.add(Activation({{choice(['relu','tanh'])}})) #5
+    
+    model.add(Dropout({{uniform(0, 0.5)}}))
+    
+    model.add(Dense(10))
+    model.add(Activation('softmax'))
+
+    rms = RMSprop()
+    model.compile(loss='categorical_crossentropy', 
+                  optimizer=rms, 
+                  metrics=['accuracy'])
+
+    model.fit(X_train, y_train, #6
+              batch_size={{choice([64, 128])}},
+              epochs=1,
+              verbose=2,
+              validation_data=(X_test, y_test))
+    score, acc = model.evaluate(X_test, y_test, verbose=0) #7
+    print('Test accuracy:', acc)
+    return {'loss': -acc, 'status': STATUS_OK, 'model': model} #8
 ```
 
-Remember that to train our classifier, we need to run its predictions through the adversary as well, obtain the adversary loss, and apply the negative adversary loss to the classifier. This is best done by packing the classifier and adversary into one network.
+\#1 The `model` function both defines the model and evaluates it. Given a training dataset from the `data` function, it returns a set of quality metrics.
 
-First, we create a new model that maps from the classifier inputs to the classifier and adversary outputs. We define the adversary output to be a nested function of the adversarial network and the classifier network. This way, the predictions of the classifier get immediately passed on to the adversary.
-```Python 
-adv_out = adv_net(clf_net(clf_inputs))
-```
+\#2 When fine tuning with Hyperas, we can define a Keras model just as we usually would. We only have to replace the hyperparameters we want to tune with hyperas functions.
 
-We define the classifier output to be the output of the classifier network, just as we would for classification.
-```Python 
-clf_out = clf_net(clf_inputs)
-```
+\#3 To tune dropout for instance, we replace the dropout hyperparameter with `{{uniform(0, 0.5)}}`. Hyperas will automatically sample and evaluate dropout rates between 0 and 0.5, sampled from a uniform distribution.
 
-We define the combined model to map from the classifier input, speak the data about an adult, to the classifier output and adversary output. 
-```Python 
-clf_w_adv = Model(inputs=[clf_inputs], 
-                  outputs=[clf_out]+adv_out)
-```
+\#4 To sample from discrete distributions, for instance the size of a hidden layer, we replace the hyperparameter with `{{choice([256, 512, 1024])}}`. Hyperas will choose from a hidden layer size of 256, 512 and 1024 now.
 
-When training the combined model, we only want to update the weights of the classifier. We will train the adversary separately. We can use our switch functions to make the classifier network trainable and the adversarial network untrainable.
+\#5 We can do the same to choose activation functions.
+
+\#6 To evaluate the model, we need to compile and fit it. In this process, we can also choose between different batch sizes for instance. In this case we only train for one epoch, to keep the time needed for this example short. You could also run a whole trainings process with hyperas.
+
+\#7 To get insight into how well the model is doing, we evaluate it on test data.
+
+\#8 Finally, we return the models score, the model itself and an indicator that everything went okay. Hyperas tries to minimize a loss function. To maximize accuracy, we set the loss to be the negative accuracy. You could also pass the model loss here, depending on what the best optimization method is for your problem.
+
 ```Python
-trainable_clf_net(True)
-trainable_adv_net(False)
-
+best_run, best_model = optim.minimize(model=model,
+                                      data=data,
+                                      algo=tpe.suggest,
+                                      max_evals=5,
+                                      trials=Trials(),
+                                      notebook_name='__notebook_source__')
 ```
 
-Remember the hyperparameter $\lambda$ from the minimization objective above. We need to set this parameter manually for both sensitive attributes. As it turns out, the networks train best if lambda for race is set much higher than lambda for gender.
+Finally, we run the optimization. We pass the model method and the data method, we specify how many trials we want to run and which class should govern the trials. Hyperopt also offers a distributed trials class in which workers communicate via MongoDB. When working in a Jupyter notebook we need to provide the name of the notebook we are working in. Kaggle notebooks all have the file name `'__notebook_source__'`, independent of the name you gave them.
+
+After your run, hyperas returns the best performing model as well as the hyperparameters of the best model. If you print out `best_run` you should see output similar to this:
+```
+{'Activation': 1,
+ 'Dense': 1,
+ 'Dropout': 0.3462695171578595,
+ 'Dropout_1': 0.10640021656377913,
+ 'batch_size': 0}
+```
+For `choice` selections, hyperas shows the index. In this case, the activation function `tanh` was chosen.
+
+We ran the hyperparemeter search only for a few trials. Usually you would run a few hundred or thousand trials. Automated hyperparameter search can be a great tool to improve model performance if you have enough compute power available. However, it won't get a model that does not work at all to work. Be sure to have a somewhat working aproach first before investing into hyperparameter search.
 
 
-With the lambda values in hand, we can create the weighted loss:
+## Efficient learning rate search 
+
+One of the most important hyperparameters is the learning rate. Finding a good learning rate is hard. Too small and your model might train so slow that you believe it is not training at all. Too large and it will overshoot and not reduce the loss as well. For finding a learning rate, standard hyperparameter search techniques are not the best choice. For the learning rate, it is better to perform a line search, and visualize the loss for different learning rates. This will give you an understanding of how the loss function behaves. 
+
+When doing a line search, it is better to increase the learning rate exponentially. You are more likely to care about the region of smaller learning rates than about very large learning rates. In our example, we perform 20 evaluations, and double the learning rate in every evaluation.
+
+```Python 
+init_lr = 1e-6 #1
+losses = [] 
+lrs = []
+for i in range(20): #2
+    model = Sequential()
+    model.add(Dense(512, input_shape=(784,)))
+    model.add(Activation('relu')) 
+    model.add(Dropout(0.2))
+    model.add(Dense(512))
+    model.add(Activation('relu'))
+    model.add(Dropout(0.2))
+    model.add(Dense(10))
+    model.add(Activation('softmax'))
+
+    opt = Adam(lr=init_lr*2**i) #3
+    model.compile(loss='categorical_crossentropy',
+                  optimizer=opt,
+                  metrics=['acc'])
+
+
+    hist = model.fit(X_train, Y_train, batch_size = 128, epochs=1) #4
+
+    loss = hist.history['loss'][0] #5
+    losses.append(loss)
+    lrs.append(init_lr*2**i)
+```
+
+\#1 We specify a low, but still reasonable initial learning rate from which we start our search.
+
+\#2 We then perform training 20 times with different learning rates. We need to set up the model from scratch each time.
+
+\#3 We calculate our new learning rate. In our case we double the learning rate in each evaluation step. You could also use a smaller increase if you want a more fine grained picture.
+
+\#4 We then fit the model with our new learning rate.
+
+\#5 Finally we keep track of the loss.
+
+If your dataset is very large, you can perform this learning rate search on a subset of the data. The interesting part comes from the visualization of learning rates:
+
+```Python 
+fig, ax = plt.subplots(figsize = (10,7))
+plt.plot(lrs,losses)
+ax.set_xscale('log')
+```
+
+![Learning Rate Find](./assets/lr_search.png)
+
+As you can see, the loss is optimal between 1e-3 and 1e-2. We can also see that the loss surface is relatively flat in this area. This gives us insight that we should use a learning rate around 1e-3. To avoid overshooting, we select a learning rate somewhat lower than the optimum found by line search. 
+
+## Learning rate scheduling
+Why stop at using one learning rate? In the beginning, your model might be far away from the optimal solution, so you want to move as fast as possible. As you approach the minimum loss however you want to move slower to avoid overshooting. A popular method is to anneal the learning rate so that it represents a cosine function. To this end, we need to the fine a learning rate scheduling function, that given a time step t in epochs returns a learning rate. The learning rate becomes a function of t:
+
+$$
+\alpha(t) = \frac{\alpha_0}{2}\big (\cos \big( 
+  \frac{\pi \mod(t-1,l)}{l}
+  \big)\big)
+$$
+
+Where $l$ is the cycle length and $\alpha_0$ is the initial learning rate. We modify this function to ensure that t does not become larger than the cycle length.
+
+```Python 
+def cosine_anneal_schedule(t):
+    lr_init = 1e-2 #1
+    anneal_len = 5 
+    if t >= anneal_len: t = anneal_len -1 #2
+    cos_inner = np.pi * (t % (anneal_len))  #3
+    cos_inner /= anneal_len
+    cos_out = np.cos(cos_inner) + 1
+    return float(lr_init / 2 * cos_out)
+```
+
+\#1 In our function, we need to set up a starting point from which we anneal. This can be a relatively large learning rate. We also need to specify over how many epochs we want to anneal.
+
+\#2 A cosine function does not monotonically decrease, it goes back up after a cycle. We will use this property later, for now we will just make sure that the learning rate does not go back up.
+
+\#3 Next, we calculate the new learning rate using the formula above. This is the new learning rate.
+
+
+To get a better understanding of what the learning rate scheduling function does, we can plot the learning rate it would set over 10 epochs:
+```Python 
+srs = [cosine_anneal_schedule(t) for t in range(10)]
+plt.plot(srs)
+```
+
+![Cosine Anneal](./assets/cosine_anneal.png)
+
+We can use this function to schedule learning rates with Keras `LearningRateScheduler` callback:
+```Python 
+from keras.callbacks import LearningRateScheduler
+cb = LearningRateScheduler(cosine_anneal_schedule)
+```
+
+We now have a callback that Keras will call at the end of each epoch to get a new learning rate. We pass this callback to the `fit` method and voila, our model trains with a decreasing learning rate:
 ```Python
-loss_weights = [1.]+[-lambda_param for lambda_param in lambdas]
-```
-The expression above leads to loss weights of `[1.,-130,-30]`. This means the classification errpr has a weight of 1, the race prediction error of the adversary a weight of -130 and the gender prediction error of the adversary a weight of -30. Since the losses of the adversarial's prediction have negative weights, gradient descent will optimize the parameters of the classifier to _increase_ these losses. 
-
-Finally, we can compile the combined network. 
-``` Python 
-clf_w_adv.compile(loss='binary_crossentropy'), 
-                  loss_weights=loss_weights,
-                  optimizer='adam')
+model.fit(x_train,y_train,batch_size=128,epochs=5,callbacks=[cb])
 ```
 
-With the classifier and combined classifier-adverserial model in place, the only thing missing is a compiled adversarial model. First we define the adversarial model to map from the classifier inputs to the outputs of the nested adversarial-classifier model. 
+A version of learning rate annealing is to add restarts. At the end of a annealing cycle, we move the learning rate back up. This is a method to avoid overfitting. With a small learning rate, our model might find a very narrow minimum. If the data we want to use our model on is slightly different from the training data, the loss surface might change a bit and our model could be out of the narrow minimum for this new loss surface. If we set the learning rate back up, our model will get out of narrow minima. Broad minima however are stable enough for the model to stay in them.
+
+![Shallow Broad Minima](./assets/shallow_broad_minima.png)
+
+The cosine function goes back up by itself, so we only have to remove the line to stop it from doing so.
 ```Python 
-adv = Model(inputs=[clf_inputs], outputs=adv_net(clf_net(clf_inputs)))
+def cosine_anneal_schedule(t):
+    lr_init = 1e-2 
+    anneal_len = 10 
+    cos_inner = np.pi * (t % (anneal_len))  
+    cos_inner /= anneal_len
+    cos_out = np.cos(cos_inner) + 1
+    return float(lr_init / 2 * cos_out)
 ```
+The new learning rate schedule now looks like this:
+![LR Restarts](./assets/lr_restarts.png)
 
-When training the adversarial model, we want to optimize the weights of the adversarial network and not of the classifier network, so we use our switch functions to make the adversarial trainable and the classifier not.
+
+## Monitoring training with tensorboard
+An important part of debugging a model is knowing when things go wrong before you have invested significant amounts of time training the model. TensorBoard is a tensorflow extension that allows you to easily monitor your model in a browser. Next to providing an interface from which you can watch your models progress, TensorBoard also offers some options useful for debugging. For example, you can observe the distributions of the models weights and and gradients during training.
+
+Note: TensorBoard does not run on Kaggle. To try out TensorBoard, install Keras and tensorflow on your own machine.
+
+To use TensorBoard with Keras, we set up a new callback. TensorBoard has many options, so lets walk through them step by step:
 ```Python 
-trainable_clf_net(False) 
-trainable_adv_net(True)
+from keras.callbacks import TensorBoard
+
+tb = TensorBoard(log_dir='./logs/test2', #1
+                 histogram_freq=1, #2
+                 batch_size=32, #3
+                 write_graph=True, #4
+                 write_grads=True, 
+                 write_images=True, 
+                 embeddings_freq=0, #5
+                 embeddings_layer_names=None, 
+                 embeddings_metadata=None)
 ```
 
-Finally, we compile the adversarial model like a regular keras model.
+\#1 First, we need to specify where Keras should save the data which TensorBoard later visualizes. Generally, it is a good idea to save all logs of your different runs in one `'logs'` folder and giving every run its subfolder, like `'test2'` in this case. This way, you can easily compare different runs within TensorBoard but also keep different runs separate.
+
+\#2 By default, TensorBoard would just show you the loss and accuracy of your model. In this case we are interested in histograms showing weights and distributions. We save the data for the histograms every epoch.
+
+\#3 To generate data, TensorBoard runs batches through the model. We need to specify a batch size for this process.
+
+\#4 We need to tell TensorBoard what to save. TensorBoard can visualize the model's computational graph, its gradients and images showing weights. The more we save, the slower the training of course.
+
+\#5 TensorBoard also can visualize trained embeddings nicely. Our model does not have embeddings, so we are not interested in saving them.
+
+Once we have the callback set up, we can pass it to the training process. We will train the MNIST model once again. We multiply the inputs with 255, making training much harder.
+
 ```Python 
-adv.compile(loss='binary_crossentropy', optimizer='adam')
+hist = model.fit(x_train*255,y_train,
+                 batch_size=128,
+                 epochs=5,
+                 callbacks=[tb],
+                 validation_data=(x_test*255,y_test))
 ```
 
-With all pieces in hand, we can pre-train the classifier. This means we train the classifier without any special fairness considerations. 
+To start TensorBoard, open your console and type in:
+```
+tensorboard --logdir=/full_path_to_your_logs
+```
+
+Where `full_path_to_your_logs` is the path you saved your logs in, e.g. `logs` in our case. TensorBoard runs on port 6006 by default, so in your browser go to http://localhost:6006 to see TensorBoard.
+
+Navigate to the histograms section, your view should look something like this:
+
+![Tensorboard histograms](./assets/tensorboard_hist.png)
+
+You can see the distribution of gradients and weights in the first layer. As you can see, the gradients are uniformly distributed and extremely close to zero. The weights hardly change at all over the different epochs. We are dealing with a **vanishing gradient problem**. We will cover this problem in depth later.
+
+Armed with the real time insight that this problem is happening, we can react faster.
+
+If you really want to dig into your model, TensorBoard also offers a visual debugger. In this debugger you can step through the execution of your tensorflow model and examine every single value inside it. This is especially useful if you are working on complex models, like GANs, and are trying to understand why some complex thing goes wrong.
+
+To use the tensorflow debugger, you have to set your models runtime to a special debugger runtime. In specifying the debugger runtime, you also need to specify on which port you want the debugger to run, in this case port 2018.
+
+Note: The tensorflow debugger does not work well with models trained in Jupyter notebooks. Save your model training code to a python .py script and run that script.
 
 ```Python 
-trainable_clf_net(True)
-clf.fit(X_train.values, y_train.values, epochs=10)
+import tensorflow as tf
+from tensorflow.python import debug as tf_debug
+import keras
+
+keras.backend.set_session(
+    tf_debug.TensorBoardDebugWrapperSession(tf.Session(), "localhost:2018"))
 ```
 
-After we have trained the model, we can make predictions on the validaton set to evaluate the models fairness and accuracy.
+Once Keras works with the debugger runtime you can debug your model. For the debugger to work, you need to name your keras model `model`. You do not need to train the model with a TensorBoard callback.
+
+Now you start TensorBoard and activate the debugger by specifying the debugger port:
+
+```
+tensorboard --logdir=/full_path_to_your_logs --debugger_port 2018
+```
+
+You open TensorBoard as usual in your browser on port 6006. TensorBoard now has a new section called debugger:
+
+![TB Debugger](./assets/tb_debugger.png)
+
+By clicking STEP you execute the next step in the training process. With CONTINUE you can train your model for one or more epochs. By navigating the tree on the left side, you can view the components of your model. You can visualize individual elements of your model, to see how different actions affect them. Using the debugger effectively requires a bit of practice, but if you are working with complex models, it is a great tool.
+
+## Exploding and vanishing gradients
+The vanishing gradient problem describes the issue that sometimes gradients in a deep neural network become very very small so that training is slow. Exploding gradients are the opposite problem: Gradients become so large that the network does not converge. 
+
+Of the two, the vanishing gradient problem is more persistent. Vanishing gradients are caused by the fact that in deep networks, gradients of earlier layers depend on gradients of layers closer to the output. If the output gradients are small, the gradients behind them are even smaller. Thus, the deeper the network, the more issues with vanishing gradients.
+
+One key cause of small gradients are this sigmoid and the tanh activation functions. If you look at the sigmoid function below, you see that it is very flat towards large values:
+
+![Sigmoid vanishing](./assets/sigmoid_vanishing.png)
+
+The small gradients of the sigmoid function are the reason why the ReLu activation function has become popular for training deep neural networks. Its gradient is equal to one for all positive input values. However it is zero for all negative input values.
+
+A second cause of vanishing gradients are saddle points in the loss function. Although no minimum was reached, the loss function is very flat in some areas, producing small gradients. 
+
+To combat the vanishing gradient problem, you should use the ReLu activation. If you see your model is training only slowly, consider increasing the learning rate to move out of a saddle point faster. Finally, you might just want to let the model train longer if it suffers from small gradients.
+
+The exploding gradient problem is usually caused by large absolute weight values. As back-propagation multiplies the later layers gradients with the layers weights, large weights amplify gradients. To counteract the exploding gradient problem, you can use weight regularization, which incentives smaller weights. Using a method called 'gradient clipping', you can ensure that gradients do not become larger than a certain value. In Keras, you can clip both the norm and the absolute value of gradients: 
+
 ```Python 
-y_pred = clf.predict(X_test)
+from keras.optimizers import SGD
+
+clip_val_sgd = SGD(lr=0.01, clipvalue=0.5)
+clip_norm_sgd = SGD(lr=0.01, clipnorm=1.)
 ```
 
-Now we first calculate the models accuracy and p rule for both gender and race. In all calculations we use a cutoff point of 0.5.
+Convolutional layers and LSTMs are less susceptible to both vanishing and exploding gradients. ReLu and batchnorm generally stabilize the network. Both problems might be caused by non-regularized inputs, so you should check your data, too. Batch normalization also counteracts exploding gradients. If exploding gradients are a problem, you can add a batchnorm layers to your model with:
+
 ```Python 
-acc = accuracy_score(y_test,(y_pred>0.5))* 100
-print('Clf acc: {:.2f}'.format(acc))
-
-for sens in A_test.columns:
-    pr = p_rule(y_pred,A_test[sens])
-    print('{}: {:.2f}%'.format(sens,pr))
+from keras.layers import BatchNormalization
+model.add(BatchNormalization())
 ```
 
-```
-out: 
-Clf acc: 85.44
-race: 41.71%
-gender: 29.41%
-```
+Batchnorm also reduces the risk of vanishing gradients and has enabled the construction of much deeper networks recently.
 
-As you can see, the classifier achieves a respectable accuracy in predicting incomes. However, it is deeply unfair. It gives women only 29.4% of the chance to make over \$50K than it does men. It equally discriminates strongly on race. If we used this classifier to judge loan applications for instance, we would be vulnerable to discrimination lawsuits.
+You now have seen a wide range of tools to debug your models. As a final step, we will learn some methods to run models in production and speed up machine learning.
 
-Note: Neither gender or race were included in the features of the classifier. Yet, the classifier discriminates strongly on them. If the features can be inferred, dropping sensitive columns is not enough.
+# Deployment 
 
+Deployment into production is often seen as separate from the creation of models. At many companies, data scientists create models in isolated development environments on training, validation and testing data which was collected to create models. Once the model does well on the test set, it gets passed on to deployment engineers, who know little about how and why the model works the way it does. This is a mistake. After all, you are developing models to use them, not for the fun of developing them.
 
-To get out of this mess, we will pre train the adversarial network before then training both networks to make fair predictions. Once again, we use our switch functions to make the classifier untrainable and the adversarial trainable.
+Models tend to perform worse over time for several reasons. The world changes so the data you trained on might no longer represent the real world. Your model might rely on the outputs of some other systems which are subject to change. There might be unintended side effects and weaknesses of your model which only show with extended usage. Your model might influence the world which it tries to model. **Model decay** describes how models have a live span, after which performance deteriorates. 
+
+Datascientists should have the full life cycle of their models in mind. They need to be aware of how their model works in production in the long run.
+
+But models in production are not only a liability. In fact, the production environment is the perfect environment to optimize your model. Your datasets are only an approximation or the real world. Live data gives a much fresher and more accurate view on the world. By using online learning or active learning methods you can drastically reduce the need for training data. This section describes some best practices for getting your models to work in the real world. The exact method of serving your model can vary depending on your application. See the next section on performance for more details on choosing a deployment method.
+
+## Launch fast
+The process of developing models depends on real world data as well as insight in how the performance of the model influences business outcomes. The earlier you can gather data and observe how model behavior influences outcomes the better. Do not hesitate to launch your product with a simple heuristic. Take the case of fraud detection for instance. Not only do you need to gather transaction data together with information about occurring frauds. You also want to know how quick fraudsters are at finding ways around your detection. You want to know how customers whose transactions have been falsely flagged as fraud react. All this information influences your model design and your model evaluation metrics. If you can come up with a simple heuristic, deploy the heuristic and then work on the machine learning approach.
+
+When developing a machine learning model, try simple models first. A surprising number of tasks can be modeled with simple, linear models. Not only do you obtain results faster, you can also quickly identify features your model likes to overfit to. Debugging your dataset before working on a complex model can save you many headaches.
+
+A second advantage of getting a simple approach out of the door quickly is that you can prepare your infrastructure. Your infrastructure team is likely different people from the modeling team. If the infrastructure team does not have to wait for the modeling team but can start optimizing the infrastructure immediately, you gain a time advantage. 
+
+## Understand and monitor metrics 
+To ensure that optimizing metrics like mean squared error or cross entropy loss actually lead to better outcome, you need to be mindful of how your model metric relate to higher order metrics. Imagine you have some consumer facing app in which you recommend different investment products to retail investors. 
+
+![Higher order effects](./assets/higher_order_effects.png)
+
+You might predict if the user is interested in a given product, measured by the user reading the product description. However, the metric you want to optimize in your application is not your model accuracy, but the click through rate of users going to the description screen. On a higher order, your business is not designed to maximize the click through rate, but revenue. If your users only click on low revenue products, your click through rate does not help you. Finally, your businesses revenue might be optimized to the detriment of society. In this case, regulators will step in. Higher order effects are influenced by your model. The higher the order of the effect, the harder it is to attribute to a single model. Higher order effects have large impacts however. Effectively, **higher order effects serve as meta metrics to lower order effects**. To judge how well your application is doing, you align its metrics (e.g. click through rates) with the metrics relevant for the higher order effect (e.g. revenue). Equally, your model metrics need to be aligned with your application metrics. 
+
+This alignment is often an emergent feature. Product managers eager to maximize their own metrics pick the model that maximizes their metrics, regardless of what metrics the modelers were optimizing. Product managers that bring home a lot of revenue get promoted. Businesses that are good for society receive subsidies and favorable policy. By making the alignment explicit, you can design a better monitoring process. For instance if you have two models, you can A/B test them to see which one improves the application metrics.
+
+Often, you will find that to align with a higher order metric, you need to combine several metrics such as accuracy and speed of predictions. In this case, you should craft a formula that combines the metrics into one single number. A single number will allow you to doubtlessly choose between two models and helps your engineers to create better models. For instance, you could set a maximum latency of 200 milliseconds and your metric would be: 'Accuracy if latency is below 200ms, otherwise zero'. If you do not wish to set one maximum latency value you could choose 'Accuracy divided by latency in milliseconds'. The exact design of this formula depends on your application. As you observe how your model influences its higher order metric, you can adapt your model metric. The metric should be simple and easy to quantify.
+
+Next to regularly testing your models impact on higher order metrics, you should regularly test your models own metrics like accuracy. To this end, you need a constant stream of ground truth labels together with your data. In some cases, such as detecting fraud, ground truth data is easily collected, although it might come in with some latency. Customers might need a few weeks to find out they have been overcharged. In other cases, you might not have ground truth labels. Often, you can hand label data for which you have not ground truth labels coming in. Through good UI design, the process of checking model predictions can be fast. Testers only have to decide if your models prediction was correct or not, something they can do through button presses in a web or mobile app. If you have a good review system in place, data scientists who work on the model should regularly check the models outputs. This way, patterns in failures ('Our model does poorly on dark images') can be detected quickly and the model can be improved.
+
+## Understand where your data comes from 
+More often than not, your data gets collected by some other system that you as the model developer have no control over. Your data might be collected by a data vendor or by a different department in your firm. It might be collected for different purposes than your model. The collectors of the data might not even know you are using the data for your model. If say the collection method of the data changes, the distribution of your data might change too. This could break your model. Equally, the real world might just change, and with it the data distribution. To avoid changes in the data breaking your model, first be aware what data you are using and assign an owner to each feature. The job of the feature owner is to investigate where the data is coming from and alerting the team if changes in the data are coming. The feature owner should also write down the assumptions underlying the data. In the best case, you test these assumptions for all new data streaming in. If the data does not pass the tests, investigate and eventually modify your model.
+
+Equally, your model outputs might get used as inputs of other models. Help consumers of your data reach you by clearly identifying yourself as the owner of the model. Alert users of your model of changes to your model. Before deploying a model, compare the new models predictions to the old models predictions. Treat models as software and try to identify 'breaking changes', that would significantly alter your models behavior. Many times you might not know who is accessing your models predictions. Try to avoid this by clear communication and setting access controls if necessary.
+
+Just like software has dependencies, libraries that need to be installed for the software to work, machine learning models have data dependencies. Data dependencies are not as well understood as software dependencies. By investigating your models dependencies, you can reduce the risk of your model breaking with some data change.
+
+# Performance tips
+
+In many financial applications, speed is of essence. Machine learning, especially deep learning has a reputation for being slow. But recently there have been many advances in hardware and software that enable fast machine learning applications.
+
+## Use the right hardware for your problem
+Much progress in deep learning has been driven by the use of graphics processing units (GPUs). GPUs enable highly parallel computing at the expense of operation frequency. Recently, multiple manufacturers started working on specialized deep learning hardware. Most of the times GPUs are a good choice for deep learning models or other parallelizable algorithms such as XGboost gradient boosted trees. However, not all applications benefit equally. In natural language processing for instance, batch sizes often need to be small, so the parellization of operations does not work as well since not that many samples are processed at the same time. Additionally, some words appear much more often than others, giving large benefits to caching frequent words. Thus, many NLP tasks run faster on CPU than GPU. If you can work with large batches however, a GPU or even specialized hardware is preferable.
+
+## Make use of distributed training with TF Estimators
+Keras is not only a standalone library that can use TensorFlow, it is also an integrated part of TensorFlow. TensorFlow features multiple high level APIs to create and train models. As of in version 1.8, the estimators API features distributed training on multiple machines, while the Keras API does not feature them yet. Estimators also have a number of other speed up tricks, so they are usually faster than Keras models.
+
+You can find information on how to set up your cluster for distributed TensorFlow here: https://www.tensorflow.org/deploy/distributed
+
+By changing the import statements you can easily use Keras as part of TensorFlow and don't have to change your main code.
 ```Python 
-trainable_clf_net(False)
-trainable_adv_net(True)
+import tensorflow as tf
+from tensorflow.python import keras
+
+from tensorflow.python.keras.models import Sequential
+from tensorflow.python.keras.layers import Dense,Activation
 ```
-As the distributions for race and gender in the data might be skewed, we use weighted classes to adjust for this.
+
+In this section we will create a model to learn the MNIST problem and then train it using the estimator API. First we load and prepare the dataset as usual. For more efficient dataset loading see the next section.
+```Python 
+(x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
+x_train.shape = (60000, 28 * 28)
+x_train = x_train / 255
+y_train = keras.utils.to_categorical(y_train)
+``` 
+
+We can create a keras model as usual.
+
+```Python 
+model = Sequential()
+model.add(Dense(786, input_dim = 28*28))
+model.add(Activation('relu'))
+model.add(Dense(256))
+model.add(Activation('relu'))
+model.add(Dense(160))
+model.add(Activation('relu'))
+model.add(Dense(10))
+model.add(Activation('softmax'))
+
+model.compile(optimizer=keras.optimizers.SGD(lr=0.0001, momentum=0.9),
+              loss='categorical_crossentropy',
+              metric='accuracy')
+```
+
+The TensorFlow version of Keras offers a one line conversion to a TF Estimator.
+```Python 
+estimator = keras.estimator.model_to_estimator(keras_model=model)
+```
+
+To set up training, we need to know the name assigned to the model input. We quickly check this with:
 ```Python
-class_weight_adv = compute_class_weights(A_train)
+model.input_names
+```
+```
+['dense_1_input']
 ```
 
-We then train the adversary to predict race and gender from the training data through the predictions of the classifier. 
-```Python 
-adv.fit(X_train.values, 
-        np.hsplit(A_train.values, A_train.shape[1]), 
-        class_weight=class_weight_adv, epochs=10)
-```
-Numpy's `hsplit` function splits the 2D matrix A_train into two vectors that are then used to train the two model heads.
-
-With classifier and adversarial pre trained, we will now train the classifier to fool the adversarial and the adversarial to get better at spotting the classifiers discrimination. Before we start, we need to do some setup.
-
-We want to train for 250 epochs, with a batch size of 128. There are two sensitive attributes.
-```Python 
-n_iter=250
-batch_size=128
-n_sensitive = A_train.shape[1]
-```
-
-The combined network of classifier and adversarial also needs some class weights. The weights for the income predictions (less / more than \$50K) are both 1. For the adverserial heads of the combined model we use the adversrial's class weights computed above.
-```Python 
-class_weight_clf_w_adv = [{0:1., 1:1.}]+class_weight_adv
-```
-
-To keep track of metrics, we set up one dataframe for validation metrics (accuracy and area under curve), as well as for fairness metrics. The fairness metrics are the p rule values for race and gender.
-```Python 
-val_metrics = pd.DataFrame()
-fairness_metrics = pd.DataFrame()
-```
-
-Inside the main training loop, three steps are performed. Training the adverserial, training the classifier to be fair and printing out validation metrics. For better explanations, all three are printed separately here. In the code you will find them in the same loop, where `idx` is the current iteration:
-```Python 
-for idx in range(n_iter):
-```
-
-The first step is to train the adversarial. To this end, we make the classifier untrainable, the adversarial trainable and then train the adversarial just as we did before.
-```Python 
-trainable_clf_net(False)
-trainable_adv_net(True)
-adv.fit(X_train.values, 
-        np.hsplit(A_train.values, A_train.shape[1]), 
-        batch_size=batch_size, 
-        class_weight=class_weight_adv, 
-        epochs=1, verbose=0)
-```
-
-Training the classifier to be a good classifier but also to fool the adversarial and be fair involves three steps. First, we make the adverserial untrainable and the classifier trainable.
-```Python 
-trainable_clf_net(True)
-trainable_adv_net(False)
-```
-
-We then sample a batch from X, y and A.
-```Python 
-indices = np.random.permutation(len(X_train))[:batch_size]
-X_batch = X_train.values[indices]
-y_batch = y_train.values[indices]
-A_batch = A_train.values[indices]
-```
-
-Finally, we train the combined adversarial and classifier. Since the adversarial network is set to not trainable, only the classifier network will be trained. However, the loss from the adversarial predictions of race and gender get back-propagated through the entire network, so that the classifier learns to fool the adversarial.
-```Python 
-clf_w_adv.train_on_batch(X_batch, 
-                        [y_batch]+\
-                        np.hsplit(A_batch, n_sensitive),
-                        class_weight=class_weight_clf_w_adv)
-```
-
-Finally, we keep track of progress by first making predictions on the test set.
-```Python   
-y_pred = pd.Series(clf.predict(X_test).ravel(), index=y_test.index)
-```
-
-We then calculate area under cure (ROC AUC) and accuracy of the predictions and save them in the `val_metrics` dataframe.
-```Python 
-roc_auc = roc_auc_score(y_test, y_pred)
-acc = accuracy_score(y_test, (y_pred>0.5))*100
-
-val_metrics.loc[idx, 'ROC AUC'] = roc_auc
-val_metrics.loc[idx, 'Accuracy'] = acc
-```
-
-Next up, we calculate the p rule for both race and gender, and save those values in the fairness metrics.
-```Python 
-for sensitive_attr in A_test.columns:
-    fairness_metrics.loc[idx, sensitive_attr] =\
-    p_rule(y_pred,A_test[sensitive_attr])
-```
-
-If we plot fairness and validation metrics, we arrive at the following plot:
-![Pivot train progress](./assets/pivot_train_progress.png)
-
-As you can see, the fairness scores of the classifier steadily increase with training. After about 150 epochs, the classifier satisfies the four fifths rule. After about 150 epochs, p values are well over 90%. This increase in fairness comes at only a small decrease in accuracy and area under curve. The classifier trained in this manner is clearly a more fair classifier with similar performance, and thus preferred a classifier trained without fairness criteria.
-
-The pivot approach to fair ML has many advantages. Yet, it can not rule out unfairness entirely. What, for example if there was a group the classifier discriminates against that we did not think of yet. What, if it discriminates on treatment, instead of impact. To make sure our models are not biased, we need more technical and social tools, namely interpretability, causality and diverse development teams. The next section discusses how to train machine learning models which learn causal relationships, instead of just statistical associations.
-
-# Causal learning 
-This book is by and large a book about statistical learning. Given data $X$ and targets $Y$, we aim to estimate $p(y|x)$, the distribution of target values given certain data points. Statistical learning allows is to create great models with useful applications, but it does not allow us to claim that $X$ being $x$ _caused_ $Y$ to be $y$. 
-
-This is critical if we intent to manipulate $X$. For instance, if we want to know if giving an insurance to someone leads to them behaving recklessly, we are not satisfied with the statistical relationship that people with an insurance behave more reckless than those without. There could be a self selection bias of the reckless people getting insurance while the others do not. 
-
-Following Judea Perl, a famous computer scientist who invented notation for causal models called do calculus, we are interested in $p(y|do(p))$. The probability of someone behaving reckless after we manipulated $P$ to be $p$. In a causal notation, $X$ usually stands for observed features and $P$ stands for policy features we can manipulate. The notation can be a bit confusing as small $p$ now both expresses a probability and a policy. Yet, it is important to distinguish between observed and influenced features. So, if you see $do(p)$, $p$ is a feature which is influenced, and if you see $p(..)$, $p$ is a probability function.
-
-$p(y|x)$ expresses the statistical relationship that insurance holders are more reckless on average. This is what supervised models learn.
-
-$p(y|do(p))$ expresses the causal relationship that people who get an insurance become more reckless because they are insured. This is what this section is about.
-
-Causal models are a great tool for fair learning. If we only build our models in a causal way, we avoid most statistical discrimination of statistical models. Do females statistically earn less than males? Yes. Do females earn less _because_ they are females and females are somehow deterring high salaries? No. Instead, the earnings difference is caused by other factors, such as different jobs being offered to males and females, discrimination in the work place, cultural stereotypes and so on. 
-
-That does not mean we have to throw statistical models out of the window. They are great for the many cases where causality is not as important and where we do not intent to set the values of $X$. If we are creating a natural language model for instance, we are not interested in if the occurrence of a word caused the sentence to be about a certain topic. Knowing that the topic and the word are related is enough to make predictions about the text content.
-
-The golden route to obtain information about $do(p)$ is to actually go and manipulate the policy $P$ in a randomized control trial. Many websites for instance measure the impact of different ads by showing different ads to different customers, a process called A/B testing. Equally, a trader might choose different routes to market to figure out which one is the best. But it is not always possible or ethical to do an A/B test. A bank for example can not deny a loan with the explanation 'sorry, but you are the control group'.
-
-Yet, often causal inference can be made without the need for an A/B test. Using do calculus, we can infer the effect of our policy on our outcome. 
-
-Take the insurance wondering if giving people insurance makes them reckless, the applicants moral hazard, for example. Given features $X$ and a policy $P$, we want to predict the outcome distribution $p(y|do(p),x)$. That is, given observed information about the applicant, e.g. age or history of risky behavior, we want to predict if the probability of the applicant behaving reckless $p(y)$ given that we manipulate the policy $P$ of granting insurance. The observed features often end up influencing both policy and response. An applicant with a high risk appetite might for example not be given insurance, but might also be more likely to behave reckless.
-
-Additionally, we have to deal with unobserved, confounding variables $e$ which often influence both policy and response. A prominent media article titled 'Free-style skiing is safe and you should not get insurance' for example would reduce the number of people taking insurance as well as the number of reckless skiers. 
-
-To distinguish the influence on policy and response, we need access to an instrument $Z$. An instrument is a variable that influences the policy, but nothing else. The re-insurance cost for example could prompt the insurance company to give out fewer insurances, while it will not influence how people behave otherwise. 
-
-![Causal Flowchart](./assets/causal_flowchart.png)
-
-The field of econometrics has already built a method to work with these kinds of situations called instrumental variables two stage least squares (IV2SLS or just 2SLS). In a nutshell, 2SLS first fits a linear regression model between the instrument $z$ and the policy $p$, in econometrics called the endogenous or treatment variable. From this liner regression it then estimates an 'adjusted treatment variable' $\hat p$, which is the treatment variable as it can be explained by the instrument. The idea is that this adjustment removes the influence of all other factors on the treatment. A second linear regression then creates a linear model mapping from the features $x$ and the adjusted treatment variable $\hat p$ to the outcome, $y$. In the image below you can see an overview of how 2SLS works.
-
-![IV2SLS](./assets/IV2SLS.png)
-
-2SLS is probably what the insurance company in our case would use, since it is an established method We won't go into details here, but just give a brief overview of how to use 2SLS in Python. The `linearmodels` package in Python features an easy way to run 2SLS. You can find the package on GitHub: https://github.com/bashtage/linearmodels
-
-Install the package with `pip install linearmodels`. If you have data `X`,`y`,`P`,`Z`, you can run a 2SLS regression as follows:
+Estimators get trained with an input function. The input function allows us to specify a whole pipeline which will be executed efficiently. In this case we only want an input function that yields our training set:
 
 ```Python 
-from linearmodels.iv import IV2SLS
-iv = IV2SLS(dependent=y,
-            exog=X,
-            endog=P],
-            instruments=Z).fit(cov_type='unadjusted')
+train_input_fn = tf.estimator.inputs.numpy_input_fn(
+    x={'dense_1_input': x_train},
+    y=y_train,
+    num_epochs=1,
+    shuffle=False)
+``` 
+
+Finally, we train the estimator on the input. And that is it, now you can utilize distributed TensorFlow with estimators.
+```Python
+estimator.train(input_fn=train_input_fn, steps=2000)
 ```
 
-But what if the relationships between features, treatment and outcome are complex and non-linear? We would have perform a process similar to 2SLS, but with a non-linear model such as a neural network instead of linear regression.
+## Use optimized layers such as `CuDNNLSTM`
+You will often find that someone created a special layer optimized to perform certain asks on certain hardware. Keras `CuDNNLSTM` layer for example only runs on GPUs supporting CUDA, a programming language specifically for GPUs. While you lock in your model to specialized hardware, you can often gain significantly in performance. If you have the resources, it might even make sense to write your own specialized layer in CUDA. If you want to change hardware later, you usually can export weights and import them to a different layer.
 
-Ignoring the confounding variables for a minute, The function $g$ determines the recklessness of behavior $y$ given an insurance policy $p$ and a set of applicants features $x$.
-$$y = g(p,x)$$ 
-
-The function $f$ determines the policy $p$ given the applicants features $x$ as well as the instrument $z$.
-
-$$p = f(x,z)$$
-
-Given these two functions, the following identity holds, if the confounding variable has a mean of zero over all features:
-
-$$
-\mathbb{E}[y|x,z] = \mathbb{E}[g(p,x)|x,z] = 
-\int{g(p,x)}dF(p|x,z)
-$$
-
-This means that if we can reliably estimate the function $g$ and distribution $F$, we can make causal statements about the effects of policy $p$. If we have data about the actual outcome $y$, features $x$, policy $p$ and instrument $z$, we can optimize the following:
-
-$$
-\min_{g \in G} \sum_{t=1}^n 
-\Big{(}y_t - \int g(p,x_t)dF(p|x,z)\Big{)}^2
-$$
-
-The function above is the squared error between the predicted outcome using the prediction function $g$ and the actual outcome $y$.
-
-Notice the similarity to 2SLS. In 2SLS, we estimated $F$ and $g$ with two separate linear regressions. For more complex functions we can also estimate them with two separate neural networks. Hartfort et al. (2017) present just such an approach with 'Deep IV: A Flexible Approach for Counterfactual Prediction', the overview of which you can see below.
-
-![DeepIV](./assets/DeepIV.png)
-
-The idea of DeepIV is to first train a neural network to express a distribution $F(z,x)$ which describes the distribution of policies given certain features $x$ and instrument values $z$. A second neural network predicting the response $y$ from the estimated policy distribution and features. DeepIV's advantage is that it can learn complex, non linear relationships from complex data, such as text.
-
-The authors published a custom Keras model to handle the sampling and learning from a distribution part, which you can find on GitHub: https://github.com/jhartford/DeepIV
-
-While their code is too long to be discussed in depth here, it is interesting to think about what the source of our causal claim is, both in DeepIV and IV2SLS. In our insurance case, we assumed that having or not having an insurance would influence behavior, not the other way around. We never showed or tested the truth behind this direction of causality. In our case, assuming that insurance influences behavior is justified, since the insurance contract is signed before the behavior is observed. But the direction of causality is not always as straightforward. There is no way to establish the direction of causality other than logical reasoning or experiments. In absence of experiments, we have to assume and logically reason, for example through the sequentiality of events. 
-
-Another important assumption we make is that the instrument is actually an independent instrument. If it is not independent, our estimation of the policy breaks down.
-
-With these two limitations in mind, causal inference is a great tool and an active area of research from which we can hope to see great results in the future. In the best case, your discrimination sensitive models would only contain causal variables. In practice this is usually not possible. But keeping the difference between statistical correlation, as expressed by standard statistical models and causation in mind can help you avoid statistical biases and wrong associations. 
-
-A final, technical, method to reduce unfairness is to peek inside the model to ensure it is fair. We already looked at interpretability in the last chapter, mostly to debug data and spot overfitting. Now, we will give it another look, this time to justify the models predictions.
-
-# Interpreting models to ensure fairness
-In chapter 8 we already discussed model interpretability as a debugging method. We used LIME to spot features the model is overfitting to. In this section, we will use a slightly more sophisticated method called SHAP (SHapley Additive exPlanation). SHAP combines several different explanation approaches into one neat method. This method lets us generate explanations for individual predictions as well as for entire datasets to understand the model better.
-
-You can find SHAP on GitHub: https://github.com/slundberg/shap and install it locally with `pip install shap`. Kaggle Kernels have SHAP pre-installed. The example code given here is from the SHAP example notbooks, you can find a slightly extended version of the notebook on Kaggle: 
-https://www.kaggle.com/jannesklaas/explaining-income-classification-with-keras 
-
-SHAP combines seven model interpretation methods (LIME, Shapley sampling values, DeepLift, Quantitative Input Influence, Layer-wise relevance propagation, Shapley regression values and a tree interpreter) into two modules: A model agnostic `KernelExplainer` and a `TreeExplainer` specifically for tree based methods such as `XGBoost`.
-
-The mathematics of how and when the interpreters are used are not terribly relevant for using SHAP. In a nutshell, given a function $f$, expressed through a neural network for instance, and a datapoint $x$, SHAP compares $f(x)$ to $f(z)$ where $E[f(z)]$ is the 'expected normal output' generated for a larger sample. SHAP then creates smaller models, similar to LIME, to see which features explain the difference between $f(x)$ and $E[f(z)]$.
-
-In our loan example this corresponds to having an applicant $x$ and a distribution of many applicants $z$ and trying to explain why the chance of getting a loan for applicant $x$ is different than the expected chance chance for the other applicants $z$.
-
-SHAP does not only compare $f(x)$ and $f(z)$, but also compares $f(x)$ to $E[f(z)|z_{1,2,...} = x_{1,2,...}]$, meaning it compares the importance of other features of certain features are held constant. This allows it to better estimate the interactions between features. 
-
-Explaining a single prediction can be important. Your customers might ask you, why you denied them a loan, and if you have no good explanation, you might find yourself in a tough situation. In this example, we are once again working with the income prediction dataset. Explaining why our model made a single decision works in three steps.
-
-First, we need to define the explainer, provide it with a prediction method and values $z$ to estimate a 'normal outcome'. Here we are using a wrapper `f` for keras prediction function which makes working with SHAP easier. We provide 100 rows of the dataset as values for $z$.
-```Python 
-explainer = shap.KernelExplainer(f, X.iloc[:100,:])
+## Optimize your pipeline
+With the right hardware and optimized software in place, your model often ceases to be the bottleneck. You should check your GPU utilization by entering the following command in your terminal:
 ```
-Next, we need to calculate the SHAP values indicating the importance of different features for a single example. We let SHAP create 500 pertubations of each sample from $z$, so that SHAP has a total of 50,000 examples to compare the one example to.
-```Python 
-shap_values = explainer.shap_values(X.iloc[350,:], nsamples=500)
+nvidia-smi -l 2
 ```
-Finally, we can plot the influence of the features with SHAP's own plotting tool. This time we provide a row from `X_display`, not `X`. `X_display` contains the unscaled values and is only used for annonation of the plot to make it easier to read.
-```Python 
-shap.force_plot(shap_values, X_display.iloc[350,:])
-```
+If GPU utilization is not around 80% to 100%, you can gain significantly by optimizing your pipeline. There are several steps you can take to optimize your pipeline:
 
-![Shap good](./assets/shap_good.png)
+**Create a pipeline running parallel to the model**. Otherwise, your GPU will be idle while the data is loading. Keras does this by default. If you have a generator, and want to have a larger queue of data to be held ready for preprocessing, change the `max_queue_size` parameter of the `fit_generator` method. If you set the `workers` argument of the `fit_generator` method to zero, the generator will run on the main thread, which slows things down.
 
-If you look at the plot above, the predictions of the model seem by and large reasonable. The model gives the applicant a high chance on a high income because he has a masters degree, is an executive manager with a high level of education who works 65 hours a week. The applicant could have an even higher expected income score was it not for a capital loss. Widely, the model seems to see the fact that the applicant is married as a big factor of a high income. The model sees the marriage as more important than the long hours or job title.
-
-That our model has some problems becomes clear once we calculate and plot the SHAP values of another applicant:
-```Python 
-shap_values = explainer.shap_values(X.iloc[167,:], nsamples=500)
-shap.force_plot(shap_values, X_display.iloc[167,:])
-```
-
-![SHAP bad](./assets/shap_bad.png)
-The applicant also has a good education, works 48 hours a week in technology, but the model gives her a much lower chance of having a high income because she is a female, asian-pacific islander who is especially never married and in no other family relationship. A loan rejection on these grounds is a lawsuit waiting to happen.
-
-Our two individual cases might have been unfortunate glitches by the model. It might have overfit to some strange combination which gives undue importance to marriage. To investigate if our model is biased, we should investiage many more predictions. Fortunately, the SHAP library has a number of tools to do so.
-
-We can use the SHAP value calculations for multiple rows:
-```Python 
-shap_values = explainer.shap_values(X.iloc[100:330,:], nsamples=500)
-```
-
-And plot a force plot for all of these values as well:
-```Python 
-shap.force_plot(shap_values, X_display.iloc[100:330,:])
-```
-
-![Shap Dataset](./assets/shap_dataset.png)
-
-The plot above shows 230 rows of the dataset, grouped by similarity with the forces of each feature that matter to them. If you move the mouse of the graph, you can read the features and their values. By exploring this graph, you can get an idea for what kind of people the model classifies as high or low earners. On the very left for example you see mostly people with low education who work as cleaners. The big red block between 40 and 60 are mostly highly educated people who work a lot. To further examine the impact of marriage status you can change what SHAP displays on the Y axis.
-
-![SHAP marriage outcome](./assets/shap_marriage_outcome.png)
-As you can see in this chart, marriage status either strongly positively or negatively impacts people from different groups. If you move your mouse over the chart, you can see that the positive influences all stem from civic marriages.
-
-Using a summary plot, we can see which features matter the most to our model:
-```Python 
-shap.summary_plot(shap_values, X.iloc[100:330,:])
-```
-![SHAP summary plot](./assets/shap_importance.png)
-
-As you can see, education is the most important influence in our model. It also has the widest spread of influence. A low education is really dragging predictions down while a strong education is really moving predictions up.
-
-Marital status is the second most important predictor. Interestingly, capital losses are important to the model but capital gains are not.
-
-To dig deeper into the effects of marriage, we have one more tool at our disposal: A dependence plot can show the SHAP values of an individual feature together with a feature for which SHAP suspects high interaction. With the snippet below we can inspect the effect of marriage on our models predictions.
+**Preprocess data in parallel**. Even if you have a generator working independent of the model training, it might not keep up with the model. So it is better to run multiple generators in parallel. In Keras you can do this with by setting `use_multiprocessing` to true and setting the number of workers to anything larger than one, preferably to the number of CPUs available.
 
 ```Python 
-shap.dependence_plot("marital.status", 
-                     shap_values, 
-                     X.iloc[100:330,:], 
-                     display_features=X_display.iloc[100:330,:])
+model.fit_generator(generator, 
+                    steps_per_epoch = 40, 
+                    workers=4, 
+                    use_multiprocessing=False)
 ```
-![SHAP Marriage dependence](./assets/shap_marriage_scatter.png)
+You need to make sure your generator is thread safe. You can make any generator thread safe with the following code snippet:
 
-As you can see, 'Married-civ-spouse' the census code for a civilian marriage with no partner in the armed forces stands out with a positive influence on model outcomes while every other type of arrangement has slightly negative scores, especially never married. 
+```Python 
+import threading
 
-Statistically, rich people tend to stay married for longer. Younger people are more likely to have never married. Our model correctly correlated that marriage goes hand in hand with high income, but not because marriage _causes_ high income. The model is correct in making the correlation, but it would be false to make decisions based on the model. By selecting, we effectively manipulate the features on which we select. We are no longer in interested in just $p(y|x)$ but in $p(y|do(p))$
+class thread_safe_iter: #1
+    def __init__(self, it):
+        self.it = it
+        self.lock = threading.Lock()
 
-# Unfairness as complex system failure
-In this chapter you have been equipped with an arsenal of technical tools to make machine learning models more fair. But a model is not operating alone in vacuum. Models are embedded in complex socio-technical systems. There are humans developing and monitoring the model, sourcing the data and creating the rules for what to do with the model output. There are other machines in place, producing data, or using outputs from the model. Different players might try to game the system. 
+    def __iter__(self):
+        return self
 
-Unfairness is equally complex. We already discussed the two general definitions of unfairness, disparate impact and disparate treatment. Disparate treatment can occur against any combination of features (age, gender, race, nationality, income, etc.), often in complex and non-linear ways. This section examines Cook's 1998 'How complex systems fail' under the lense how complex machine learning driven systems fail to be fair. Cook lists 18 points, some all of which are discussed here:
+    def next(self): #2
+        with self.lock:
+            return self.it.next()
 
-### Complex systems are intrinsically hazardous systems
-Systems are usually complex because they are hazardous and many safeguards have been created. The financial system is a hazardous system, if it goes off the rails it can break the economy or ruin peoples lives. Thus, many regulations have been created and many players in the market work to make the system safer. Since the financial system is so hazardous, it is important to make sure it is safe against unfairness, too. Luckily, there are heavy guards in place to keep the system fair. Naturally, these guards can break and they do so constantly in many small ways.
+def thread_safe_generator(f): #3
+    def g(*a, **kw):
+        return thread_safe_iter(f(*a, **kw))
+    return g
 
-### Catastrophes requires multiple failures
-In a complex system, no single point of failure can cause catastrophes since there are many guards in place. Failure usually results in multiple points of failure. In the financial crises, banks created risky products but regulators also let them. For widespread discrimination to happen, not only the model makes unfair predictions, but employees must blindly follow the model and criticism must be suppressed.  On the flip side, just fixing your model will not magically keep all unfairness away. The procedures and culture inside and outside the firm can also cause discrimination, even with a fair model.
+@thread_safe_generator #4
+def gen():
+  ...
+```
 
-### Complex systems run in degraded mode 
-In most accident reports, there is a section in which a prior 'proto-accidents' where the same accident nearly happened but did not. The model might have made erratic predictions before, but a human operator stepped in for example. It is important to know, that in a complex system, failures that nearly lead to catastrophe always occur. The complexity of the system makes it prone to error but the heavy guards against catastrophe keep catastrophe from happening. Once these guards fail, catastrophe is right around the corner. Even if your system seems to run smoothly, check for proto-accidents and strange behavior before it is too late. 
+\#1 The `thread_safe_iter` class makes any iterator thread safe by locking threads when the iterator has to produce the next yield.
 
-### Human operators both cause and prevent accidents 
-Once things have gone wrong, blame is often put at the human operators who 'must have known' that their behavior would 'inevitably' lead to accident. On the other hand, it is usually humans who step in last minute to prevent accidents from happening. Counterintuitively, it is rarely one human and one action that causes the accident, but the behavior of many humans over many actions. For models to be fair, the entire team has to work to keep it fair.
+\#2 When `next()` is called on the iterator, the iterators thread is locked. Locking means that no other function, say another variable, can access variables from the thread while it is locked. Once the thread is locked, it yields the next element.
 
-### Accident free operation requires experience with failure 
-In fairness, the single biggest problem is often that the designers of a system do not experience if the system discriminates agains them. It is thus important to get the insights of a diverse group of people into the development process. Since your system constantly fails, you should capture the experiences of these small failures before bigger accidents happen.
+\#3 The `thread_safe_generator` is a Python decorator that turns any iterator it decorates into a thread safe iterator. It takes the function, passes it to the thread safe iterator and then returns the thread safe version of the function.
 
-# A checklist for developing fair models 
-With the information above, we can create a short checklist of creating fair models. Each issue comes with several sub-issues.
+You can also use the `tf.data` API together with an estimator which does most of the work for you. 
 
-### What is the goal of the model developers?
-- Is fairness an explicit goal?
-- Is the model evaluation metric chosen to reflect fairness of the model?
-- How do model developers get promoted and rewarded?
-- How does model influence business results?
-- Would the model discriminate against the developer's demographic?
-- How diverse is the development team?
-- Who is responsible if things go wrong?
+**Combine files into large files**. Reading a file takes time. If you have to read thousands of small files, this can significantly slow you down. TensorFlow offers its own data format called TF Record. You can also just fuse an entire batch into a single numpy array and save that array instead of every example.
 
-### Is the data biased?
-- How was the data collected?
-- Are there statistical misrepresentations in the sample?
-- Are sample sizes for minorities adequate?
-- Are sensitive variables included?
-- Can sensitive variables be inferred from the data?
-- Are there interactions between features, which might only affect subgroups?
+**Train with the tf.data.Dataset API**. If you are using the TensorFlow version of Keras, you can use the `Dataset` API, which optimizes data loading and processing for you. The `Dataset` API is the recommended way to load data into TensorFlow. It offers a wide range of ways to load data, for instance from a CSV file with `tf.data.TextLineDataset` or from TFRecord files with `tf.data.TFRecordDataset`. For a more comprehensive guide to the `Dataset` API, see https://www.tensorflow.org/get_started/datasets_quickstart
 
-### Are errors biased?
-- What are error rates for different sub groups?
-- What is the error rate of a simple, rule based alternative?
-- How do errors of the model lead to different outcomes?
+In this example, we will use the dataset API with numpy arrays which we already loaded into RAM, such as the MNIST database.
 
-### How is feedback incorporated?
-- Is there an appeals / reporting process?
-- Can mistakes be attributed back to a model?
-- Do model developers get insight into what happens with their model's predictions?
-- Can the model be audited?
-- Is the model open source?
-- Do people know which features are used to make predictions about them?
+First, we create two plain datasets for data and targets:
+```Python 
+dxtrain = tf.data.Dataset.from_tensor_slices(x_test)
+dytrain = tf.data.Dataset.from_tensor_slices(y_train)
+```
 
-### Can the model be interpreted?
-- Is a model interpretation for e.g. individual results, in place?
-- Can the interpretation be understood by those it matters to?
-- Can findings from the interpretation lead to changes in the model?
+The `map` function allows us to perform operations on data before passing it to the model. In this case we apply one-hot encoding to our targets. But this could be any function. By setting the `num_parallel_calls` argument, we can specify how many processes we want to run in parallel:
+```Python 
+def apply_one_hot(z):
+    return tf.one_hot(z,10)
 
-### What happens to models after deployment?
-- Is there a central repository to keep track of all models deployed?
-- Are input assumptions checked continuously? 
-- Are accuracy and fairness metrics monitored continuously? 
+dytrain = dytrain.map(apply_one_hot,num_parallel_calls=4)
+```
+
+We zip the data and targets into one dataset. We instruct TensorFlow to shuffle the data when loading, keeping 200 instances in memory from which to draw samples. Finally, we make the dataset yield batches of batch size 32.
+```Python 
+train_data = tf.data.Dataset.zip((dxtrain,dytrain)).shuffle(200).batch(32)
+```
+
+We can now fit a Keras model on this dataset just as we would fit it to a generator.
+```Python 
+model.fit(dataset, epochs=10, steps_per_epoch=60000 // 32)
+```
+
+In case you have truly large datasets, the more you can parallelize, the better. Parallelization comes with overhead costs however, and not every problem actually features huge datasets. In these cases, refrain from trying to do too much in parallel and focus on slimming down your network, using CPUs and keeping all your data in RAM if possible.
+
+## Speed up your code with Cython 
+
+Python is a popular language because developing code in Python is easy and fast. However, Python can be slow, which is why many production applications are written in C or C++. Cython is Python with C datatypes, which significantly speeds up execution. You can write pretty much normal Python code, and Cython converts it to fast running C code. You can read the full Cython documentation here: http://cython.readthedocs.io/
+This section is a short introduction to Cython, if performance is important to your application you should consider diving deeper.
+
+Say you have a Python function which prints out the Fibonacci series up to a specified point. This code snippet is taken straight from the Python documentation:
+```Python 
+from __future__ import print_function
+def fib(n):
+    a, b = 0, 1
+    while b < n:
+        print(b, end=' ')
+        a, b = b, a + b
+    print()
+
+```
+Note that we have to import the `print_function` to make sure that `print()` works in the Python 3 style. To use this snippet with Cython, save it as `cython_fib_8_7.pyx`.
+
+Now create a new file called `8_7_cython_setup.py`:
+```Python 
+from distutils.core import setup #1
+from Cython.Build import cythonize #2
+
+setup( #3
+    ext_modules=cythonize("cython_fib_8_7.pyx"),
+)
+```
+
+\#1 The `setup` function is a Python function to create modules, such as the ones you install with `pip`.
+
+\#2 `cythonize` is a function to turn a `pyx` python file into Cython C code.
+
+\#3 We create a new model by calling setup and passing on our cythonized code.
+
+To run this, we now run the following command in terminal:
+```
+python 8_7_cython_setup.py build_ext --inplace
+```
+
+This will create a C file as well as a build file and a compiled module. We can import this module now:
+
+```Python 
+import cython_fib_8_7
+cython_fib_8_7.fib(1000)
+```
+
+This will print out the Fibonacci numbers up to 1000. Cython also comes with a handy debugger that shows where Cython has to fall back on Python code which slows things down. Type the following command in your terminal:
+```
+cython -a cython_fib_8_7.pyx
+```
+This will create an HTML file which looks something like this when opened in a browser:
+
+![Cython Profile](./assets/cython_profile.png)
+
+As you can see, Cython has to fall back on Python all the time in our script because we did not specify the types of variables. By letting Cython know what data type a variable has we can speed up code significantly. To define a variable with a type we use `cdef`: 
+
+```Python 
+from __future__ import print_function
+def fib(int n):
+    cdef int a = 0
+    cdef int b = 1
+    while b < n:
+        print(b, end=' ')
+        a, b = b, a + b
+    print()
+```
+
+This snippet is already better. Further optimization is certainly possible, by e.g. first calculating the numbers before printing them, to reduce the reliance on Python print statements. Overall, Cython is a great way to keep the development speed and ease of Python and gain execution speed.
+
+## Cache frequent requests
+An under-appreciated way to make models run faster is to cache frequent requests in a database. You can go so far to cache millions of predictions in a database and then look them up. This has the advantage that you can make your model as large as you like and expand a lot of compute power to make predictions. By using a map-reduce database, looking up requests in a very large pool of possible requests and predictions is entirely possible. Of course this requires requests to be somewhat discrete. If you have continuous features you can round them if precision is not as important.
 
 # Exercises
-- Think about the organization you work for. How is fairness incorporated in your organization? What works well and what could be improved?
-- Revisit any of the models developed before in this book. Are they fair? How would you test it?
-- Fairness is only one of the many complex issues large models can have. Can you think of an issue in your area of work that could be tackled with the tools discussed in this chapter?
+- Try to build any model that features exploding gradients in training. Hint: Do not normalize inputs and play with the initialization of layers.
+- Go to any example in this book, try to optimize performance by improving the data pipeline.
 
 # Summary 
-In this chapter, you have learned about fairness in machine learning under different aspects. First, we discussed legal definitions of fairness, and quantitative ways to measure these definitions. We then discussed technical methods to train models to meet fairness criteria. We also discussed causal models. We learned about SHAP as a powerful tool to interpret models and find unfairness in the model. Finally, we learned how fairness is a complex systems issue and how lessons from complex systems management can be applied to make models fair.
+In this chapter, you have learned a number of practical tips to debug and improve your model. From testing your data with marbles, to inspecting the computational graph in TensorBoard to speeding up Python with Cython, you now have a number of tools in your toolbox that help you with model development.
 
-There is no guarantee that following all steps outlines here makes your model fair. But these tools vastly increase your chances of creating a fair model. Remember that models in finance operate in high stakes environments, and need to meed many regulatory demands. If you fail to do so, damage could be severe.
-
-This chapter marks the end of this guide to machine learning in finance. Thank you for reading all the way through. Machine learning is a fast moving field with many exciting developments still to come. This guide hopes to give you an up to date, practical view on the matter, and to equip you with the tools you need in practice. Hopefully, you enjoyed this book and learned something new. If you did, please leave a good review on the platform of your choice or even your own blog.
+In the next and final chapter, we will look at a special, persistent and dangerous problem with machine learning models: Bias. Statistical models tend to fit to and amplify human biases. Financial institutions have to follow strict regulations to prevent them from being racially or gender biased. In the next chapter we will see how we can detect and remove biases from our models, to make them fair and compliant.

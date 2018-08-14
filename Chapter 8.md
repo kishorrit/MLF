@@ -1,925 +1,1158 @@
-# Chapter 8 Debugging & Deployment
-After the last seven chapters, you now have a large toolbox of machine learning algorithms you could use for your problem. But what if it does not work? Machine learning models fail in the worst way: They fail silently. In traditional software, a mistake usually leads to a crash in the program. While crashes are annoying for the user, they are helpful for the programmer. At least it is clear that the code failed and when it failed. Often, there even is a crash report that describes what went wrong. Sometimes, machine learning code crashes too, for example if the data we feed in has the wrong format or shape. These issues can usually be debugged by carefully tracking which shape the data had at what point. More often however, models that fail just output poor predictions. They give no signal that they have failed and you might not be aware that they failed at all. At other times, they might not train well, won't converge or won't achieve a low loss. This chapter is all about how you debug these silent fails.
+# Chapter 7
 
-The first step is to acknowledge that even good machine learning engineers fail frequently. There are many reasons why ML projects fail, and most have nothing to do with the skills of the engineers. But engineers can be on the watch for factors that often cause project failure. If spotted early, time and money can be saved. Even more, in high stakes environments, such as trading, aware engineers can pull the plug when they notice their model is failing. This should not be seen as a failure, but as a success to avoid problems.
+Humans do not learn with million of labeled examples. Instead, we often learn from positive or negative experiences that we associate with our actions. Children that touch the hot stove once never touch it again. Learning from experiences and associated rewards or punishments is the core idea behind reinforcement learning (RL). RL allows us to learn sophisticated decision making rules with no data at all. This approach powered several high profile breakthroughs in AI, such as AlphaGo, which beat the world Go champion in 2016.
 
-# Debugging data
-The first chapter of this book describes that models are a function of their training data. Bad data leads to bad models. Garbage in, garbage out. If your project is failing, your data is the most likely culprit. But even if you have a working model, the real world data coming in might not be up for the task. In this section we will learn how to find out if you have good data, what to do if you have been given not enough data, and how to test your data.
+In finance, reinforcement learning is making inroads as well. In its 2017 report "Machine learning in investment management", MAN AHL outlined a reinforcement system for order routing in the FX and futures market. Order routing is a classic problem in quantitative finance. When placing an order, funds can usually choose from different brokers and place their orders at different times. The goal is to fill the order as cheaply as possible. This also means minimizing the market impact, as large orders can lift prices of stocks. Traditional algorithms with colorful names as 'Sniper or 'Guerilla' rely on statistics from historical data and clever engineering. The RL based routing system learned an optimal routing policy by itself. The advantage is that this system can adapt to changing markets and outperforms traditional methods in data rich markets as the FX market. 
 
-## How to find out if your data is up to the task
+But RL can do more. Researchers at OpenAI have used RL to predict when agents will collaborate or fight. Researchers at Deepmind have used RL to yield new insights into the workings of the frontal cortex in the brain and the role of the dopamine hormone.
 
-There is two aspects to knowing if your data is up to the task of training a good model: Does the data predict what you want to predict and do you have enough data. 
+This chapter will start with an intuitive introduction to RL using a simple 'catch the fruit game'. We will then dive into the underlying theory and more advanced RL applications.
 
-To find out if your model does contain predicting information, also called a signal, you can ask if a human could make a prediction given this data. This works well for data for which you have humans making predictions already. After all, the only reason we know intelligence is possible is because we observe it in humans. Humans are good at understanding written text, but if a human does not understand a text, chances are that your model won't make much sense of it either. A common pitfall to this test is that humans have context your model does not have. A human trader does not only consume financial data but might also have experienced the product of a company or seen the CEO on TV. This context flows into the traders decision, but is often forgotten when a model is built. Humans are also good at focusing on important data. A human trader will not consume all financial data there is, because most of it is irrelevant. Adding more inputs to your model won't make it better. It often makes it worse as the model overfits and gets distracted by the noise. On the other hand, humans are irrational, follow peer pressure and have a hard time making decisions in abstract and unfamiliar environments. Humans would struggle to find an optimal traffic light policy for instance, since the data that traffic lights operate on is not intuitive to us.
+The examples in this chapter rely on visualizations that are not easily rendered in Kaggle Kernels. The example algorithms are also not optimized for GPU usage to simplify them. It is therefore best to run these examples on your local machine. The algorithms run relatively fast so you won't have to wait too long for them to run.
 
-This brings us to the second sanity check: A human might not be able to make predictions, but there might be a causal (economic) rationale. There is a causal link between a company's profits and its share price, the traffic on a road and traffic jams, customer complaints and leaving customers and so on. And while humans might not have an intuitive gasp on these links, we can discover them by reasoning. There are some tasks, for which a causal link is required. For a long time, many quantitative trading firms insisted on their data having a causal link to the predicted outcomes of models for instance. Nowadays, the industry seems to have moved a bit away from that as it gets more confident in testing its algorithms. 
+# Catch! - A quick guide to reinforcement learning 
 
-If humans can not make a prediction and there is no causal rationale for why your data is predictive, you might want to reconsider if your project is feasible. 
+Catch is a very simple arcade game, which you might have played as a child. Fruits fall from the top of the screen, and the player has to catch them with a basket. For every fruit caught, the player scores a point. For every fruit lost, the player loses a point.
 
-Once you have determined that your data contains enough signal, you need to ask yourself if you have enough data to train a model to extract the signal. There is no clear answer to how much is enough. Roughly, the amount needed depends on the complexity of the model you hope to create. There are a couple rules of thumb to follow however:
+The goal here is to let the computer play Catch by itself. We will use a simplified version to make the task easier:
 
-- For classification, you should have around 30 independent samples per class.
-- You should have 10 times as many samples as there are features, especially for structured data problems.
-- Your dataset should get bigger as the number of parameters in your model gets bigger.
+![Catch Screenshot](./assets/catch_screenshot.png)
 
-Keep in mind these rules are only rules of thumb and might be very different for your specific application. If you can make use of transfer learning, you can drastically reduce the number of samples you need. This is why most computer vision applications use transfer learning. 
+While playing Catch, the player decides between three possible actions. They can move the basket to the left, to the right, or stay put.
 
-If you have any reasonable amount of data, say a few hundred samples, you can start building your model. Perhaps start with a simple model which you can deploy while you collect more data.
+The basis for this decision is the current state of the game. In other words: the positions of the falling fruit and of the basket.
 
-## What to do if you don't have enough data
-Sometimes, you find yourself in a situation where you simply do not have enough data. Sometimes, this happens after you already begun your project. For example, the legal team might have changed its mind and decided that you can not use the data even though they green lit it earlier. In this case, you have multiple options:
+Our goal is to create a model, which, given the content of the game screen, chooses the action which leads to the highest score possible.
 
-Most of the time, you can **augment your data**. You have seen some data augmentation in chapter 3. Of course, you can augment all kinds of data. For example, you could slightly change some database entries. 
+This task can be seen as a simple classification problem. We could ask expert human players to play the game many times and record their actions. Then, we could train a model to choose the ‘correct’ action that mirrors the expert players.
 
-Taking augmentation a step further, you might be able to **generate your data**, for example in simulation. This is effectively how most reinforcement learning research gathers data. But it also works in other cases. The data we used for fraud detection in chapter two was obtained from simulation. Simulation requires you to be able to write down the rules of your environment in a program. Powerful learning algorithms tend to figure out these, often over simplistic, rules, so they might not generalize to the real world as well. Yet, simulated data can be a powerful addition to real data.
+But this is not how humans learn. Humans can learn a game like Catch by themselves, without guidance. This is very useful. Imagine if you had to hire a bunch of experts to perform a task thousands of times every time you wanted to learn something as simple as Catch It would be expensive and slow.
 
-Often, you can **find external data**. Just because you have not tracked a certain datapoint, it does not mean that nobody else has. There is an astonishing amount of data available on the internet. Even if the data was not originally collected for your purpose, you can often retool data by either relabeling it or by using it for **transfer learning**. You might be able to train a model on a large dataset for a different task and then use that model as a basis for your task. Equally, you can find a model someone else has trained for a different task, and repurpose it.
+In reinforcement learning, the model trains from experience, rather than labeled data.
 
-Finally, you might be able to create a **simple model**, that does not capture the relationship in the data completely but is enough to ship a product. Random forests and other tree based methods often require much less data than neural networks. 
+Instead of providing the model with ‘correct’ actions, we provide it with rewards and punishments. The model receives information about the current state of the environment (e.g. the computer game screen). It then outputs an action, like a joystick movement. The environment reacts to this action and provides the next state, alongside with any rewards.
 
-Remember, that for data, quality trumps quantity in the majority of cases. Getting a small, high quality dataset in and training a weak model is often your best shot to find problems with data early. You can always scale up data collection later. A mistake many practitioners make is that they spend huge amounts of time and money on getting a big dataset, only to find that they have the wrong kind of data.
+![RL SCHEME](./assets/RL_Scheme.png)
 
-## Unit testing data
-If you build a model, you make assumptions about your data. For example, you assume that the data you feed into your time series model is actually a time series with dates that follow each other in order. You need to test your data to make sure this assumption is true. Especially live data that you receive once your model is already in production. Bad data might lead to poor model performance, which can be dangerous especially in a high stakes environment.
+The model then learns to find actions that lead to maximum rewards.
 
-Additionally, you need to test if your data is clean from things like personal information. As described in the section on privacy below, personal information is a liability you want to get rid of, unless you have good reasons and consent to use it.
+There are many ways this can work in practice. Here, we are going to look at Q-Learning. Q-Learning made a splash when it was used to train a computer to play Atari games. Today, it is still a relevant concept. Most modern RL algorithms are some adaptation of Q-Learning.
 
-Since monitoring data quality is important when trading based on many data sources, Two Sigma, a hedge-fund, has created and open sourced a library for data monitoring. It is called marbles, see https://github.com/twosigma/marbles and builds on Pythons `unittest` library. You can install it with 
+A good way to understand Q-learning is to compare playing Catch with playing chess.
 
-```
-pip install marbles
-```
+In both games you are given a state, $s$. With chess, this is the positions of the figures on the board. In Catch, this is the location of the fruit and the basket.
 
-You can find a Kaggle Kernel demoing marbles here: https://www.kaggle.com/jannesklaas/marbles-test
+The player then has to take an action, $a$. In chess, this is moving a figure. In Catch, this is to move the basket left or right, or remain in the current position.
 
-The code sample below shows a simple marbles unit test. Imagine you are gathering data about the unemployment rate in Ireland. For your models to work, you need to ensure that you actually get the data from consecutive months, and don't count one month double for instance:
+As a result, there will be some reward $r$, and a new state $s'$.
+
+The problem with both Catch and chess is that the rewards do not appear immediately after the action.
+
+In Catch, you only earn rewards when the fruits hit the basket or fall on the floor, and in chess you only earn a reward when you win or lose the game. This means that rewards are sparsely distributed. Most of the time, $r$ will be zero.
+
+When there is a reward, it is not always a result of the action taken immediately before. Some action taken long before might have caused the victory. Figuring out which action is responsible for the reward is often referred to as the credit assignment problem.
+
+Because rewards are delayed, good chess players do not choose their plays only by the immediate reward. Instead, they choose by the expected future reward.
+
+For example, they do not only think about whether they can eliminate an opponent’s figure in the next move. They also consider how taking a certain action now will help them in the long run.
+
+In Q-learning, we choose our action based on the highest expected future reward. We use a “Q-function” to calculate this. This is a math function that takes two arguments: the current state of the game, and a given action.
+
+We can write this as: $Q(state, action)$
+
+While in state $s$, we estimate the future reward for each possible action $a$. We assume that after we have taken action $a$ and moved to the next state $s'$, everything works out perfectly.
+
+The expected future reward $Q(s,a)$ for a given a state $s$ and action $a$ is calculated as the immediate reward $r$, plus the expected future reward thereafter $Q(s',a')$. We assume the next action $a'$ is optimal.
+
+Because there is uncertainty about the future, we discount $Q(s’,a’)$ by the factor gamma $\gamma$. We therefore arrive at an expected reward of:
+
+$$Q(s,a) = r + \gamma * \max Q(s’,a’)$$
+
+Note: We discount future rewards in RL for the same reason we discount future returns in finance. They are uncertain. Our choice of $\gamma$ reflects how much we value future returns.
+
+Good chess players are very good at estimating future rewards in their head. In other words, their Q-function $Q(s,a)$ is very precise.
+
+Most chess practice revolves around developing a better Q-function. Players peruse many old games to learn how specific moves played out in the past, and how likely a given action is to lead to victory.
+
+But how can a machine estimate a good Q-function? This is where neural networks come into play.
+
+## Q-Learning turns RL into supervised learning
+When playing a game, we generate lots of “experiences”. These experiences consist of:
+- The initial state, $s$
+- The action taken, $a$
+- The reward earned, $r$
+- And the state that followed, $s’$
+
+These experiences are our training data. We can frame the problem of estimating $Q(s,a)$ as a regression problem. To solve this, we can use a neural network.
+
+Given an input vector consisting of $s$ and $a$, the neural net is supposed to predict the value of $Q(s,a)$ equal to the target: $r + γ * max Q(s’,a’)$. If we are good at predicting $Q(s,a)$ for different states $s$ and actions $a$, we have a good approximation of the Q-function. 
+
+Note: We estimate $Q(s’,a’)$ through the same neural net as $Q(s,a)$. This leads to some instability as our targets now change as the networks learn. Just as with GANs.
+
+Given a batch of experiences $<s, a, r, s’>$, the training process then looks as follows:
+
+1. For each possible action $a’$ (left, right, stay), predict the expected future reward $Q(s’,a’)$ using the neural net.
+
+2. Choose the highest value of the three predictions as max $Q(s’,a’)$.
+
+3. Calculate $r + γ * max Q(s’,a’)$. This is the target value for the neural net.
+
+4. Train the neural net using a loss function. This is a function that calculates how near or far the predicted value is from the target value. Here, we will use $0.5 * (predicted_Q(s,a) — target)^2$ as the loss function.
+
+During gameplay, all the experiences are stored in a replay memory. This acts like a simple buffer in which we store $< s, a, r, s’ >$ pairs. The experience replay class also handles preparing the data for training. Check out the code below:
+
 ```Python 
-import marbles.core #1
-from marbles.mixins import mixins
+class ExperienceReplay(object): #1
+    def __init__(self, max_memory=100, discount=.9):
+        #2
+        self.max_memory = max_memory
+        self.memory = []
+        self.discount = discount
 
-import pandas as pd #2
-import numpy as np
-from datetime import datetime, timedelta
+    def remember(self, states, game_over): #3
+        self.memory.append([states, game_over])
+        if len(self.memory) > self.max_memory:
+            del self.memory[0]
 
-class TimeSeriesTestCase(marbles.core.TestCase,mixins.MonotonicMixins):
-    def setUp(self):
-        self.df = pd.DataFrame({'dates':[datetime(2018,1,1),
-                                         datetime(2018,2,1),
-                                         datetime(2018,2,1)],
-                                'ireland_unemployment':[6.2,6.1,6.0]})
+    def get_batch(self, model, batch_size=10): #4
+        #5
+        len_memory = len(self.memory)
+        num_actions = model.output_shape[-1]
+        env_dim = self.memory[0][0][0].shape[1]
         
-    def tearDown(self):
-        self.df = None
+        #6
+        inputs = np.zeros((min(len_memory, batch_size), env_dim))
+        targets = np.zeros((inputs.shape[0], num_actions))
         
-    def test_date_order(self):
-        
-        self.assertMonotonicIncreasing(sequence=self.df.dates,
-                                  note = 'Dates need to increase monotonically')
+        #7
+        for i, idx in enumerate(np.random.randint(0, len_memory,
+                                                  size=inputs.shape[0])):
+            #8
+            state_t, action_t, reward_t, state_tp1 = self.memory[idx][0]
+            game_over = self.memory[idx][1]
+
+            #9
+            inputs[i:i+1] = state_t
+            
+            #10
+            targets[i] = model.predict(state_t)[0]
+            
+            #11
+            Q_sa = np.max(model.predict(state_tp1)[0])
+            
+            #12
+            if game_over:  
+                targets[i, action_t] = reward_t
+            else:
+                targets[i, action_t] = reward_t + self.discount * Q_sa
+        return inputs, targets
 ```
+\#1 We implement the experience replay buffer as a Python class. A replay buffer object is responsible for storing experiences and generating training data. It therefore has to implement some of the most important pieces of the Q-Learning algorithm.
 
-\#1 Marbles features two main components. The `core` module does the actual testing. The `mixins` module provides a number of useful tests for different types of data. This simplifies your test writing and gives you more readable and semantically interpretable tests.
-
-\#2 You can use all libraries you usually use to handle and process data for testing.
-
-\#3 Now it is time to define our test class. A new test class must inherit marbles `TestCase` class. This way, our test class is automatically set up to run as a marbles test. If you want to use a mixin, you also need to inherit the corresponding mixin class. In this example we are working with a series of dates which should be increasing monotonically. The `MonotonicMixins` class provides a range of tools to test for monotonic increasing series automatically. If you are coming from Java programming, the concept of multiple inheritance might strike you as wired, but in Python, classes can easily inherit multiple other classes. This is useful if you want your class to inherit two different capabilities, such as running a test and testing time related concepts.
-
-\#4 The `setUp` function is a standard test function in which we can load the data and prepare for the test. In this case, we just define a pandas dataframe by hand. But you could also load a CSV file, load a web resource or do whatever it takes to get your data.
-
-\#5 In our dataframe, we have the Irish unemployment rate for two months. As you can see, the last month has been counted double. This should not happen and cause an error.
-
-\#6 The `tearDown` method is also a standard test method which allows us to clean up after our test is done. In this case we just free RAM, but you can also delete files or databases just created for testing.
-
-\#7 Methods describing actual tests should start with `test_`. Marbles will automatically run all test methods after set up.
-
-\#8 We assert that the time indicator of our data strictly increases. If our assertion would have required intermediate variables, such as a maximum value, marbles would display it in the error report as well. To make our error more readable we can attach a handy note.
-
-To run a unit test in Jupyter, we need to tell marbles to ignore the first argument.
-```Python 
-if __name__ == '__main__':
-    marbles.core.main(argv=['first-arg-is-ignored'], exit=False)
+\#2 To initialize a replay object we need to let it know how large its buffer should be and what the discount rate $\gamma$ is. The replay memory itself is a list of lists following the scheme 
 ```
-
-
-It is more common to run unit tests directly from the command line. To if you saved the code above in the command line, you could run it with:
-
+[...
+[experience, game_over]
+[experience, game_over]
+...]
 ```
-python -m marbles marbles_test.py
-```
+where `experience` is a tuple holding the experience information and `game_over` is a binary boolean value indicating if the game was over after this step. 
 
-Of course, there are problems in our data. Luckily for us, our test ensure that this error does not get passed on to our model where it would cause a silent failure in the form of a bad prediction. Instead, the test will fail with the following error output. The comments were added to explain the output.
+\#3 When we want to remember a new experience, we add it to our list of experiences. Since we can not store infinite experiences, we delete the oldest experience if our buffer exceeds its maxumum length.
 
-```
-F #1
-======================================================================
-FAIL: test_date_order (__main__.TimeSeriesTestCase) #2
-----------------------------------------------------------------------
-marbles.core.marbles.ContextualAssertionError: Elements in 0   2018-01-01
-1   2018-02-01
-2   2018-02-01 #3
-Name: dates, dtype: datetime64[ns] are not strictly monotonically increasing
+\#4 With the `get_batch` function we can obtain a single batch of training data. To calculate $Q(s’,a’)$, we need a neural network as well, so we need to pass a Keras model to use the function.
 
-Source (<ipython-input-1-ebdbd8f0d69f>): #4
-     19 
- >   20 self.assertMonotonicIncreasing(sequence=self.df.dates,
-     21                           note = 'Dates need to increase monotonically')
-     22 
-Locals: #5
+\#5 Before we start generating a batch, we need to know how many experiences we have stored in our replay buffer, how many possible actions there are and how many dimensions a game state has. 
 
-Note: #6
-	Dates need to increase monotonically
+\#6 Next we need to set up placeholder arrays for the inputs and targets we want to train the neural network on.
 
+\#7 Finally, we loop over the experience replay in random order untill we have either sampled all stored experiences or filled the batch.
 
-----------------------------------------------------------------------
-Ran 1 test in 0.007s
+\#8 We load the experience data as well as the `game_over` indicator from the replay buffer.
 
-FAILED (failures=1) #7
-```
+\#9 We add the state $s$ to the input matrix. Later the model will train to map from this state to the expected reward.
 
-\#1 The top line shows the status of the entire test. In this case, there was only one test method, and it failed. Your test might have many test methods and marbles would display progress by showing how tests fail or pass.
+\#10 Next, we fill the expected reward for all actions with the expected reward calculated by the current model. This ensures that our model only trains on the action that was actually taken since the loss for all other actions is zero.
 
-\#2 The next couple of lines describe the failed test method. This line describes that the `test_date_order` method of the `TimeSeriesTestCase` class failed.
+\#11 Next we calculate $Q(s', a')$. We simply assume that for the next state $s'$ or `state_tp1` in code, the neural network will estimate the expected reward perfectly. As the network trains, this assumption slowly becomes true.
 
-\#3 Marbles shows precisely how the test failed. The values of the dates tested are shown, together with the cause for failure.
+\#12 If the game ended after state $S$, the expected reward from the action $a$ should be the received reward $r$. If it did not end, then the expected reward should be the received reward as well as the discounted expected future reward.
 
-\#4 In addition to the actual failure, marbles displays a traceback showing the actual code where our test failed.
+## Defining the Q-Learning model
+Now it is time to define the model that will learn a Q-function for Catch. It turns out that already a relatively simple model can learn the function well. 
 
-\#5 A special feature of marbles is the ability to display local variables. This way we can ensure that there was not problem with the setup of the test. It also helps us in getting context to see how exactly the test failed.
-
-\#6 Finally, marbles displays our note which helps the test consumer understand what went wrong.
-
-\#7 As a summary, marbles displays that the test failed with one failure. Sometimes, you can accept data even though it failed some tests, but often you want to dig in and see what is going on.
-
-The point of unit testing data is to make failures loud and prevent data issues to give you bad predictions. A failure with an error message is much better than a failure without one. Often, the failure is cause by your data vendor. Testing all data you get from all vendors allows you to be aware when a vendor makes a mistake.
-
-Unit testing data also help you ensure you have no data that you should not have, such as personal data. Vendors need to clean datasets of all personally identifying information, such as social security numbers, but of course they sometimes forget. Complying with ever stricter data privacy regulation is a big concern for many financial institutions engaging in machine learning. The next section therefore discusses how to preserve privacy while still gaining benefits from machine learning.
- 
-## Keeping data private
-
-In recent years, consumers have woken up to the fact that their data is being harvested and analyzed in ways they can not control and that is sometimes against their own interest. Naturally, they are not happy about it and regulators have come up with some new data regulations. At the time of writing, the European Union introduced the General Data Protection Regulation (GDPR), but it is likely that other jurisdictions will develop stricter privacy protections, too. This text will not go in depth on how to comply with this law specifically. It will rather outline some principles of recent privacy legislation and some technological solutions to comply with these principles.
-
-First, **delete what you don't need**. For a long time, companies have just stored all data they could get their hands on but this is a bad idea. Storing personal data is a liability for your business. It is owned by someone else and you are on the hook for taking care of it. The next time you hear a statement like 'We have 500,000 records in our database', think of it like 'We have 500,000 liabilities on our books'. It can be a good idea to take on liabilities, but only if there is an economic value that justifies these liabilities. Astonishingly often, you might collect personal data by accident. Say you are tracking device usage, but accidentally include the customer ID in records. You need practices in place that monitor and prevent such accidents.
-
-**Be transparent and obtain consent**. Customers want good products and they understand how their data can make your product better for them. Rather than pursuing an adversarial approach in which you wrap all your practices in a very long agreement and then make users agree to it, it is usually more sensible to clearly tell users what you are doing, how their data is used, and how that improves the product. If you need personal data, you need consent. Being transparent will help you down the line as users trust you more, and can be used to improve your product through feedback.
-
-**Remember that breaches happen to the best**. No matter how good your security is, there is a chance that you get hacked. So you should design your personal data storage under the assumption that the entire database might be dumped on the internet one day. This assumption helps you to create stronger privacy and avoid disaster once you actually get hacked.
-
-**Be mindful about what can be inferred from data**. You might not be tracking personally identifying information in your database, but when combined with another database, your customers can still be individually identified. Say you went for coffee with a friend, paid by credit card and posted a picture of the coffee on instagram. The bank might collect anonymous credit card records, but if someone wen't to crosscheck the credit card records against the instagram pictures, there would be only one customer who bought a coffee and posted a picture of coffee at the same time in the same area. This way, all your credit card transactions were no longer anonymous. Consumers expect companies to be mindful of these effects.
-
-One way to reduce the risk of crosschecking, is to **encrypt and obfuscate data**. Apple for instance collects phone data but adds random noise to the collected data. The noise renders each individual record incorrect, but in aggregate the records still give a picture of user behavior. There are a few caveats to this approach, for example you can only collect so many data-points from a user before the noise chancels out and the individual behavior is revealed. Similarly, recent research has shown that deep learning models can learn on homomorphically encrypted data. Homomorphic encryption is a method of encryption that preserves the underlying algebraic properties of the data. Mathematically this can be expressed as:
-
-$$
-E(m_1) + E(m_2) = E(m_1 + m_2)
-$$
-
-$$
-D(E(m_1 + m_2)) = m_1 + m_2
-$$
-
-Where $E$ is an encryption function, $m$ is some plain text data and $D$ is a decryption function. As you can see, adding the encrypted data is the same as first adding the data and then encrypting it. Adding the data, encrypting it and then decrypting it is the same as just adding the data.
-
-This means you can encrypt the data and still train a model on it. Homomorphic encryption is still in its infancy, but through approaches like this you can ensure that in case of a data breach, no sensitive individual information is leaked.
-
-**Train locally, upload only a few gradients**. One way to avoid uploading user data is to train your model on the user's device. The user accumulates data on the device. You can then download your model on to the device, and perform a single forward and backward pass on the device. To avoid the possibility of inference of user data from the gradients, you only upload a few gradients at random. You can then apply the gradients to your master model. To further increase the overall privacy of the system, you do not download all newly update weights from the master model to the users device, but only a few. This way, you train your model asynchronously without ever accessing any data. If your database gets breached, no user data is lost. This only works if you have a large enough user base.
-
-http://www.comp.nus.edu.sg/~reza/files/Shokri-CCS2015.pdf
-
-## Preparing data for training
-In earlier chapters, we have seen the benefits of normalizing and scaling features. In general, you should scale all numerical features. There are four ways of feature scaling.
-
-**Standardization** ensures all data has a mean of zero and a standard deviation of one. It is computed by subtracting the mean and dividing by the standard deviation of the data.
-
-$$x' = \frac{x-\mu}{\sigma}$$
-
-This is probably the most common way of scaling features. It is especially useful if you suspect your data to contain outliers as it is quite robust. On the flip side, it does not ensure that your features are between zero and one, which is the range in which neural networks learn best.
-
-**Min-Max** rescaling does exactly that. It scales all data between zero and one by first subtracting the minimum value and then dividing by the range of values.
-
-$$x' = \frac{x-\min(x)}{\max(x)-\min(x)}$$
-
-If you know for sure that your data contains no outliers, which is the case in images for instance, Min-Max scaling will give you a nice scaling of values between zero and one.
-
-Similar to Min-Max, **mean normalization** ensures your data has values between minus one and one with a mean of zero by subtracting the mean and then dividing by the range of data:
-
-$$x' = \frac{x-\mu}{\max(x)-\min(x)}$$ 
-
-Mean normalization is done less frequently but depending on your application might be a good approach.
-
-For some applications, it is better to not scale individual features, but vectors of features. In this case, you would apply **unit length scaling** by dividing each element in the vector by the total length of the vector:
-
-$$x' = \frac{x}{||x||}$$ 
-
-The length of the vector usually means the  L2 norm, of the vector, $\lVert x \lVert_2$,speak the square root of the sum of squares. For some applications, the vector length means the l1 norm of the vector, $\lVert x \lVert_1$, which is the sum of vector elements.
-
-However you scale, it is important to only measure the scaling factors, mean and standard deviation, on the test set. These factors include some information about the data. If you measure them over your entire dataset, the algorithm might do better on the test set than it will in production, due to this information advantage.
-
-Equally important, you should check that your production code has proper feature scaling as well. Over time, you should recalculate your feature distribution and adjust your scaling.
-
-## Understanding which inputs led to which predictions
-Why did your model make the prediction it made? For complex models, this question is pretty hard to answer. A global explanation for a very complex model might be very complex itself. LIME popular algorithm for model explanation focuses on local explanations. Rather than trying to answer 'How does this model make predictions?', LIME tries to answer 'Why did the model make _this_ prediction on _this_ data?'. The authors Ribeiro, Singh and Guestrin curated a great GitHub repository around their algorithm with many explanations and tutorials which you can find here:
-https://github.com/marcotcr/lime
-
-You can install lime locally with 
-
-```
-pip install lime
-```
-
-On Kaggle Kernels lime is installed by default.
-
-LIME stands for Local Interpretable Model-Agnostic Explanations. The algorithm works with any classifier, which is why it is model agnostic. To make an explanation, LIME cuts up the data into several sections such as areas of an image or utterances in a text. It then creates a new dataset by removing some of these features. It runs the new dataset through the black box classifier and obtains the classifiers predicted probabilities for different classes. Lime then encodes the data as vectors describing which features were present. It then trains a linear model to predict the outcomes of the black box model with different features removed. As linear models are easy to interpret, LIME will use the linear model to determine the most important features.
-
-Say you have some text classifier like TF-IDF to classify emails like the 20 Newsgroup Dataset. To get explanations from this classifier, you would use the following snippet:
-
-```Python 
-from lime.lime_text import LimeTextExplainer #1
-explainer = LimeTextExplainer(class_names=class_names) #2
-exp = explainer.explain_instance(test_example, #3
-                                 classifier.predict_proba, #4
-                                 num_features=6) #5
-                                 
-exp.show_in_notebook() #6
-```
-
-\#1 The LIME package has several classes for different types of data.
-
-\#2 To create a new blank explainer, we need to pass the names of classes of our classifier.
-
-\#3 We provide one text example for which we wish an explanation.
-
-\#4 We provide the prediction function of our classifier. We need to provide a function that provivides probabilities. For Keras, this is just `model.predict`, for SciKit models we need to use the `predict_proba` method.
-
-\#5 Lime shows a maximum number of features. We want to show only the importance of the six most important features in this case.
-
-\#6 Finally, we can render a visualization of our prediction which looks like this:
-
-![LIME Text](./assets/lime_text.png)
-
-The explanation shows the classes the text gets classified as most often with different features. It shows the words that most contribute to the classification in the two most frequent classes. Below you can see the words that contributed to the classification highlighted in the text.
-
-As you can see, our model picked up on parts of the email address of the sender as distinguishing features, as well as the name of the university 'Rice'. It sees 'Caused' to be a strong indicator that the text is about atheism. All these are things we want to know when debugging datasets.
-
-LIME does not perfectly solve the problem of explaining models. It struggles if the interaction of multiple features lead to a certain outcome for instance. But it does well enough to be a useful data debugging tool. Often, models pick up on things they should not be picking up on. To debug a dataset, we need to remove all these 'give-away' features that statistical models like to overfit to. 
-
-You have now seen a wide range of tools to debug your dataset. But even with a perfect dataset, there can be issues training. The next section is about how to debug your model.
-
-# Debugging your model  
-Especially complex deep learning models are prone to error. With millions of parameters, many things can go wrong. Luckily, the field has developed a number of useful tools to improve model performance.
-
-## Hyperparameter search with Hyperas
-Manually tuning the hyperparameters of a neural network can be a tedious task. And while you might have some intuition about what works and what does not, there are no hard rules to apply. This is why practitioners with lots of compute power on hand use automatic hyperparameter search. After all, hyperparameters form a search space just like the models parameters do. The difference is that we can not apply backpropagation to them and can not take derivatives off them. We can still apply all non-gradient based optimization algorithms to them. There are a number of different hyperparameter optimization tools, but for its ease of use we will look at hyperas. Hyperas is a wraper for hyperopt, a popular optimization library, made for working with Keras. You can find hyperas on GitHub: https://github.com/maxpumperla/hyperas
-
-And install it with pip:
-```
-pip install hyperas
-``` 
-
-Depending on your setup, you might need to make a few adjustments to the installation. See hyperas GitHub page for more information.
-
-Hyperas offers two optimization methods: Random Search and Tree of Parzen Estimators. Within a range of parameters we think are reasonable, random search will sample randomly and train a model with random hyperparameters. It will then pick the best performing model as the final solution. Random search is simple and robust and it can be scaled easily. It makes basically no assumption about the hyperparameters, their relation and the loss surface. On the flip side, it is relatively slow.
-
-The Tree of Parzen (TPE) algorithm models the relation $P(x|y)$ where $x$ represents the hyperparameters and $y$ the associated performance. This is the exact opposite modeling of gaussian processes which model $P(y|x)$ and are popular with many researchers. Empirically, it turns out that TPE performs better. For the precise details see Bergstra et al. 2011 'Algorithms for Hyper-Parameter Optimization'. TPE is faster than random search but can get stuck in local minima and struggles with some difficult loss surfaces. As a rule of thumb, it makes sense to start with TPE, and if TPE struggles move to random search.
-
-The following example will show how to use hyperas and hyperopt for an MNIST classifier. The code for this example can be found on Kaggle: https://www.kaggle.com/jannesklaas/hyperas
-
-```Python 
-from hyperopt import Trials, STATUS_OK, tpe #1
-from hyperas import optim #2
-from hyperas.distributions import choice, uniform 
-
-```
-
-\#1 As hyperas is built on hyperopt, we need to import some pieces directly from hyperopt. The `Trials` class runs the actual trials, `STATUS_OK` helps communicate that a test went well and `tpe` is an implementation of the TPE algorithm.
-
-\#2 Hyperas provides a number of handy functions that make working with hyperopt easier. The `optim` function finds optimal hyperparameters and can be used just like keras `fit` function. `choice` and `uniform` can be used to choose between discrete and continuous hyperparameters respectively.
-
-
-```Python 
-def data(): #1
-    import numpy as np #2
-    from keras.utils import np_utils
-    
-    from keras.models import Sequential 
-    from keras.layers import Dense, Activation, Dropout
-    from keras.optimizers import RMSprop
-    
-    path = '../input/mnist.npz' #3
-    with np.load(path) as f:
-        X_train, y_train = f['x_train'], f['y_train']
-        X_test, y_test = f['x_test'], f['y_test']
-
-    X_train = X_train.reshape(60000, 784) #4
-    X_test = X_test.reshape(10000, 784)
-    X_train = X_train.astype('float32')
-    X_test = X_test.astype('float32')
-    X_train /= 255
-    X_test /= 255
-    nb_classes = 10
-    y_train = np_utils.to_categorical(y_train, nb_classes)
-    y_test = np_utils.to_categorical(y_test, nb_classes)
-    
-    return X_train, y_train, X_test, y_test #5
-```
-
-\#1 Hyperas expects a function which loads the data, we can not just pass on a dataset from memory.
-
-\#2 To scale the search, hyperas creates a new runtime in which it does model creation and evaluation. This also means that imports we did in a notebook do not always transfer into the runtime. To be sure that all modules are available we need to do all imports in the data function. This is also true for modules which will only be used for the model.
-
-\#3 We now load the data. Since Kaggle kernels do not have access to the internet, we need to load the MNIST data from disk.
-
-\#4 The data function also needs to preprocess the data. We do the standard reshaping and scaling that we also did in when we worked with MNIST earlier.
-
-\#5 Finally, we return the data. This data will be passed into the function that builds and evaluates the model.
-
-```Python 
-def model(X_train, y_train, X_test, y_test): #1
-    model = Sequential() #2
-    model.add(Dense(512, input_shape=(784,)))
-    
-    model.add(Activation('relu'))
-    
-    model.add(Dropout({{uniform(0, 0.5)}})) #3
-    
-    model.add(Dense({{choice([256, 512, 1024])}})) #4
-    
-    model.add(Activation({{choice(['relu','tanh'])}})) #5
-    
-    model.add(Dropout({{uniform(0, 0.5)}}))
-    
-    model.add(Dense(10))
-    model.add(Activation('softmax'))
-
-    rms = RMSprop()
-    model.compile(loss='categorical_crossentropy', 
-                  optimizer=rms, 
-                  metrics=['accuracy'])
-
-    model.fit(X_train, y_train, #6
-              batch_size={{choice([64, 128])}},
-              epochs=1,
-              verbose=2,
-              validation_data=(X_test, y_test))
-    score, acc = model.evaluate(X_test, y_test, verbose=0) #7
-    print('Test accuracy:', acc)
-    return {'loss': -acc, 'status': STATUS_OK, 'model': model} #8
-```
-
-\#1 The `model` function both defines the model and evaluates it. Given a training dataset from the `data` function, it returns a set of quality metrics.
-
-\#2 When fine tuning with Hyperas, we can define a Keras model just as we usually would. We only have to replace the hyperparameters we want to tune with hyperas functions.
-
-\#3 To tune dropout for instance, we replace the dropout hyperparameter with `{{uniform(0, 0.5)}}`. Hyperas will automatically sample and evaluate dropout rates between 0 and 0.5, sampled from a uniform distribution.
-
-\#4 To sample from discrete distributions, for instance the size of a hidden layer, we replace the hyperparameter with `{{choice([256, 512, 1024])}}`. Hyperas will choose from a hidden layer size of 256, 512 and 1024 now.
-
-\#5 We can do the same to choose activation functions.
-
-\#6 To evaluate the model, we need to compile and fit it. In this process, we can also choose between different batch sizes for instance. In this case we only train for one epoch, to keep the time needed for this example short. You could also run a whole trainings process with hyperas.
-
-\#7 To get insight into how well the model is doing, we evaluate it on test data.
-
-\#8 Finally, we return the models score, the model itself and an indicator that everything went okay. Hyperas tries to minimize a loss function. To maximize accuracy, we set the loss to be the negative accuracy. You could also pass the model loss here, depending on what the best optimization method is for your problem.
-
+We need to define the number of possible actions as well as the grid size. There are three possible actions (move left, stay, move right), and the game is being played on a 10 by 10 pixel grid.
 ```Python
-best_run, best_model = optim.minimize(model=model,
-                                      data=data,
-                                      algo=tpe.suggest,
-                                      max_evals=5,
-                                      trials=Trials(),
-                                      notebook_name='__notebook_source__')
+num_actions = 3
+grid_size = 10
 ```
 
-Finally, we run the optimization. We pass the model method and the data method, we specify how many trials we want to run and which class should govern the trials. Hyperopt also offers a distributed trials class in which workers communicate via MongoDB. When working in a Jupyter notebook we need to provide the name of the notebook we are working in. Kaggle notebooks all have the file name `'__notebook_source__'`, independent of the name you gave them.
-
-After your run, hyperas returns the best performing model as well as the hyperparameters of the best model. If you print out `best_run` you should see output similar to this:
-```
-{'Activation': 1,
- 'Dense': 1,
- 'Dropout': 0.3462695171578595,
- 'Dropout_1': 0.10640021656377913,
- 'batch_size': 0}
-```
-For `choice` selections, hyperas shows the index. In this case, the activation function `tanh` was chosen.
-
-We ran the hyperparemeter search only for a few trials. Usually you would run a few hundred or thousand trials. Automated hyperparameter search can be a great tool to improve model performance if you have enough compute power available. However, it won't get a model that does not work at all to work. Be sure to have a somewhat working aproach first before investing into hyperparameter search.
-
-
-## Efficient learning rate search 
-
-One of the most important hyperparameters is the learning rate. Finding a good learning rate is hard. Too small and your model might train so slow that you believe it is not training at all. Too large and it will overshoot and not reduce the loss as well. For finding a learning rate, standard hyperparameter search techniques are not the best choice. For the learning rate, it is better to perform a line search, and visualize the loss for different learning rates. This will give you an understanding of how the loss function behaves. 
-
-When doing a line search, it is better to increase the learning rate exponentially. You are more likely to care about the region of smaller learning rates than about very large learning rates. In our example, we perform 20 evaluations, and double the learning rate in every evaluation.
-
-```Python 
-init_lr = 1e-6 #1
-losses = [] 
-lrs = []
-for i in range(20): #2
-    model = Sequential()
-    model.add(Dense(512, input_shape=(784,)))
-    model.add(Activation('relu')) 
-    model.add(Dropout(0.2))
-    model.add(Dense(512))
-    model.add(Activation('relu'))
-    model.add(Dropout(0.2))
-    model.add(Dense(10))
-    model.add(Activation('softmax'))
-
-    opt = Adam(lr=init_lr*2**i) #3
-    model.compile(loss='categorical_crossentropy',
-                  optimizer=opt,
-                  metrics=['acc'])
-
-
-    hist = model.fit(X_train, Y_train, batch_size = 128, epochs=1) #4
-
-    loss = hist.history['loss'][0] #5
-    losses.append(loss)
-    lrs.append(init_lr*2**i)
-```
-
-\#1 We specify a low, but still reasonable initial learning rate from which we start our search.
-
-\#2 We then perform training 20 times with different learning rates. We need to set up the model from scratch each time.
-
-\#3 We calculate our new learning rate. In our case we double the learning rate in each evaluation step. You could also use a smaller increase if you want a more fine grained picture.
-
-\#4 We then fit the model with our new learning rate.
-
-\#5 Finally we keep track of the loss.
-
-If your dataset is very large, you can perform this learning rate search on a subset of the data. The interesting part comes from the visualization of learning rates:
-
-```Python 
-fig, ax = plt.subplots(figsize = (10,7))
-plt.plot(lrs,losses)
-ax.set_xscale('log')
-```
-
-![Learning Rate Find](./assets/lr_search.png)
-
-As you can see, the loss is optimal between 1e-3 and 1e-2. We can also see that the loss surface is relatively flat in this area. This gives us insight that we should use a learning rate around 1e-3. To avoid overshooting, we select a learning rate somewhat lower than the optimum found by line search. 
-
-## Learning rate scheduling
-Why stop at using one learning rate? In the beginning, your model might be far away from the optimal solution, so you want to move as fast as possible. As you approach the minimum loss however you want to move slower to avoid overshooting. A popular method is to anneal the learning rate so that it represents a cosine function. To this end, we need to the fine a learning rate scheduling function, that given a time step t in epochs returns a learning rate. The learning rate becomes a function of t:
-
-$$
-\alpha(t) = \frac{\alpha_0}{2}\big (\cos \big( 
-  \frac{\pi \mod(t-1,l)}{l}
-  \big)\big)
-$$
-
-Where $l$ is the cycle length and $\alpha_0$ is the initial learning rate. We modify this function to ensure that t does not become larger than the cycle length.
-
-```Python 
-def cosine_anneal_schedule(t):
-    lr_init = 1e-2 #1
-    anneal_len = 5 
-    if t >= anneal_len: t = anneal_len -1 #2
-    cos_inner = np.pi * (t % (anneal_len))  #3
-    cos_inner /= anneal_len
-    cos_out = np.cos(cos_inner) + 1
-    return float(lr_init / 2 * cos_out)
-```
-
-\#1 In our function, we need to set up a starting point from which we anneal. This can be a relatively large learning rate. We also need to specify over how many epochs we want to anneal.
-
-\#2 A cosine function does not monotonically decrease, it goes back up after a cycle. We will use this property later, for now we will just make sure that the learning rate does not go back up.
-
-\#3 Next, we calculate the new learning rate using the formula above. This is the new learning rate.
-
-
-To get a better understanding of what the learning rate scheduling function does, we can plot the learning rate it would set over 10 epochs:
-```Python 
-srs = [cosine_anneal_schedule(t) for t in range(10)]
-plt.plot(srs)
-```
-
-![Cosine Anneal](./assets/cosine_anneal.png)
-
-We can use this function to schedule learning rates with Keras `LearningRateScheduler` callback:
-```Python 
-from keras.callbacks import LearningRateScheduler
-cb = LearningRateScheduler(cosine_anneal_schedule)
-```
-
-We now have a callback that Keras will call at the end of each epoch to get a new learning rate. We pass this callback to the `fit` method and voila, our model trains with a decreasing learning rate:
-```Python
-model.fit(x_train,y_train,batch_size=128,epochs=5,callbacks=[cb])
-```
-
-A version of learning rate annealing is to add restarts. At the end of a annealing cycle, we move the learning rate back up. This is a method to avoid overfitting. With a small learning rate, our model might find a very narrow minimum. If the data we want to use our model on is slightly different from the training data, the loss surface might change a bit and our model could be out of the narrow minimum for this new loss surface. If we set the learning rate back up, our model will get out of narrow minima. Broad minima however are stable enough for the model to stay in them.
-
-![Shallow Broad Minima](./assets/shallow_broad_minima.png)
-
-The cosine function goes back up by itself, so we only have to remove the line to stop it from doing so.
-```Python 
-def cosine_anneal_schedule(t):
-    lr_init = 1e-2 
-    anneal_len = 10 
-    cos_inner = np.pi * (t % (anneal_len))  
-    cos_inner /= anneal_len
-    cos_out = np.cos(cos_inner) + 1
-    return float(lr_init / 2 * cos_out)
-```
-The new learning rate schedule now looks like this:
-![LR Restarts](./assets/lr_restarts.png)
-
-
-## Monitoring training with tensorboard
-An important part of debugging a model is knowing when things go wrong before you have invested significant amounts of time training the model. TensorBoard is a tensorflow extension that allows you to easily monitor your model in a browser. Next to providing an interface from which you can watch your models progress, TensorBoard also offers some options useful for debugging. For example, you can observe the distributions of the models weights and and gradients during training.
-
-Note: TensorBoard does not run on Kaggle. To try out TensorBoard, install Keras and tensorflow on your own machine.
-
-To use TensorBoard with Keras, we set up a new callback. TensorBoard has many options, so lets walk through them step by step:
-```Python 
-from keras.callbacks import TensorBoard
-
-tb = TensorBoard(log_dir='./logs/test2', #1
-                 histogram_freq=1, #2
-                 batch_size=32, #3
-                 write_graph=True, #4
-                 write_grads=True, 
-                 write_images=True, 
-                 embeddings_freq=0, #5
-                 embeddings_layer_names=None, 
-                 embeddings_metadata=None)
-```
-
-\#1 First, we need to specify where Keras should save the data which TensorBoard later visualizes. Generally, it is a good idea to save all logs of your different runs in one `'logs'` folder and giving every run its subfolder, like `'test2'` in this case. This way, you can easily compare different runs within TensorBoard but also keep different runs separate.
-
-\#2 By default, TensorBoard would just show you the loss and accuracy of your model. In this case we are interested in histograms showing weights and distributions. We save the data for the histograms every epoch.
-
-\#3 To generate data, TensorBoard runs batches through the model. We need to specify a batch size for this process.
-
-\#4 We need to tell TensorBoard what to save. TensorBoard can visualize the model's computational graph, its gradients and images showing weights. The more we save, the slower the training of course.
-
-\#5 TensorBoard also can visualize trained embeddings nicely. Our model does not have embeddings, so we are not interested in saving them.
-
-Once we have the callback set up, we can pass it to the training process. We will train the MNIST model once again. We multiply the inputs with 255, making training much harder.
-
-```Python 
-hist = model.fit(x_train*255,y_train,
-                 batch_size=128,
-                 epochs=5,
-                 callbacks=[tb],
-                 validation_data=(x_test*255,y_test))
-```
-
-To start TensorBoard, open your console and type in:
-```
-tensorboard --logdir=/full_path_to_your_logs
-```
-
-Where `full_path_to_your_logs` is the path you saved your logs in, e.g. `logs` in our case. TensorBoard runs on port 6006 by default, so in your browser go to http://localhost:6006 to see TensorBoard.
-
-Navigate to the histograms section, your view should look something like this:
-
-![Tensorboard histograms](./assets/tensorboard_hist.png)
-
-You can see the distribution of gradients and weights in the first layer. As you can see, the gradients are uniformly distributed and extremely close to zero. The weights hardly change at all over the different epochs. We are dealing with a **vanishing gradient problem**. We will cover this problem in depth later.
-
-Armed with the real time insight that this problem is happening, we can react faster.
-
-If you really want to dig into your model, TensorBoard also offers a visual debugger. In this debugger you can step through the execution of your tensorflow model and examine every single value inside it. This is especially useful if you are working on complex models, like GANs, and are trying to understand why some complex thing goes wrong.
-
-To use the tensorflow debugger, you have to set your models runtime to a special debugger runtime. In specifying the debugger runtime, you also need to specify on which port you want the debugger to run, in this case port 2018.
-
-Note: The tensorflow debugger does not work well with models trained in Jupyter notebooks. Save your model training code to a python .py script and run that script.
-
-```Python 
-import tensorflow as tf
-from tensorflow.python import debug as tf_debug
-import keras
-
-keras.backend.set_session(
-    tf_debug.TensorBoardDebugWrapperSession(tf.Session(), "localhost:2018"))
-```
-
-Once Keras works with the debugger runtime you can debug your model. For the debugger to work, you need to name your keras model `model`. You do not need to train the model with a TensorBoard callback.
-
-Now you start TensorBoard and activate the debugger by specifying the debugger port:
-
-```
-tensorboard --logdir=/full_path_to_your_logs --debugger_port 2018
-```
-
-You open TensorBoard as usual in your browser on port 6006. TensorBoard now has a new section called debugger:
-
-![TB Debugger](./assets/tb_debugger.png)
-
-By clicking STEP you execute the next step in the training process. With CONTINUE you can train your model for one or more epochs. By navigating the tree on the left side, you can view the components of your model. You can visualize individual elements of your model, to see how different actions affect them. Using the debugger effectively requires a bit of practice, but if you are working with complex models, it is a great tool.
-
-## Exploding and vanishing gradients
-The vanishing gradient problem describes the issue that sometimes gradients in a deep neural network become very very small so that training is slow. Exploding gradients are the opposite problem: Gradients become so large that the network does not converge. 
-
-Of the two, the vanishing gradient problem is more persistent. Vanishing gradients are caused by the fact that in deep networks, gradients of earlier layers depend on gradients of layers closer to the output. If the output gradients are small, the gradients behind them are even smaller. Thus, the deeper the network, the more issues with vanishing gradients.
-
-One key cause of small gradients are this sigmoid and the tanh activation functions. If you look at the sigmoid function below, you see that it is very flat towards large values:
-
-![Sigmoid vanishing](./assets/sigmoid_vanishing.png)
-
-The small gradients of the sigmoid function are the reason why the ReLu activation function has become popular for training deep neural networks. Its gradient is equal to one for all positive input values. However it is zero for all negative input values.
-
-A second cause of vanishing gradients are saddle points in the loss function. Although no minimum was reached, the loss function is very flat in some areas, producing small gradients. 
-
-To combat the vanishing gradient problem, you should use the ReLu activation. If you see your model is training only slowly, consider increasing the learning rate to move out of a saddle point faster. Finally, you might just want to let the model train longer if it suffers from small gradients.
-
-The exploding gradient problem is usually caused by large absolute weight values. As back-propagation multiplies the later layers gradients with the layers weights, large weights amplify gradients. To counteract the exploding gradient problem, you can use weight regularization, which incentives smaller weights. Using a method called 'gradient clipping', you can ensure that gradients do not become larger than a certain value. In Keras, you can clip both the norm and the absolute value of gradients: 
-
-```Python 
-from keras.optimizers import SGD
-
-clip_val_sgd = SGD(lr=0.01, clipvalue=0.5)
-clip_norm_sgd = SGD(lr=0.01, clipnorm=1.)
-```
-
-Convolutional layers and LSTMs are less susceptible to both vanishing and exploding gradients. ReLu and batchnorm generally stabilize the network. Both problems might be caused by non-regularized inputs, so you should check your data, too. Batch normalization also counteracts exploding gradients. If exploding gradients are a problem, you can add a batchnorm layers to your model with:
-
-```Python 
-from keras.layers import BatchNormalization
-model.add(BatchNormalization())
-```
-
-Batchnorm also reduces the risk of vanishing gradients and has enabled the construction of much deeper networks recently.
-
-You now have seen a wide range of tools to debug your models. As a final step, we will learn some methods to run models in production and speed up machine learning.
-
-# Deployment 
-
-Deployment into production is often seen as separate from the creation of models. At many companies, data scientists create models in isolated development environments on training, validation and testing data which was collected to create models. Once the model does well on the test set, it gets passed on to deployment engineers, who know little about how and why the model works the way it does. This is a mistake. After all, you are developing models to use them, not for the fun of developing them.
-
-Models tend to perform worse over time for several reasons. The world changes so the data you trained on might no longer represent the real world. Your model might rely on the outputs of some other systems which are subject to change. There might be unintended side effects and weaknesses of your model which only show with extended usage. Your model might influence the world which it tries to model. **Model decay** describes how models have a live span, after which performance deteriorates. 
-
-Datascientists should have the full life cycle of their models in mind. They need to be aware of how their model works in production in the long run.
-
-But models in production are not only a liability. In fact, the production environment is the perfect environment to optimize your model. Your datasets are only an approximation or the real world. Live data gives a much fresher and more accurate view on the world. By using online learning or active learning methods you can drastically reduce the need for training data. This section describes some best practices for getting your models to work in the real world. The exact method of serving your model can vary depending on your application. See the next section on performance for more details on choosing a deployment method.
-
-## Launch fast
-The process of developing models depends on real world data as well as insight in how the performance of the model influences business outcomes. The earlier you can gather data and observe how model behavior influences outcomes the better. Do not hesitate to launch your product with a simple heuristic. Take the case of fraud detection for instance. Not only do you need to gather transaction data together with information about occurring frauds. You also want to know how quick fraudsters are at finding ways around your detection. You want to know how customers whose transactions have been falsely flagged as fraud react. All this information influences your model design and your model evaluation metrics. If you can come up with a simple heuristic, deploy the heuristic and then work on the machine learning approach.
-
-When developing a machine learning model, try simple models first. A surprising number of tasks can be modeled with simple, linear models. Not only do you obtain results faster, you can also quickly identify features your model likes to overfit to. Debugging your dataset before working on a complex model can save you many headaches.
-
-A second advantage of getting a simple approach out of the door quickly is that you can prepare your infrastructure. Your infrastructure team is likely different people from the modeling team. If the infrastructure team does not have to wait for the modeling team but can start optimizing the infrastructure immediately, you gain a time advantage. 
-
-## Understand and monitor metrics 
-To ensure that optimizing metrics like mean squared error or cross entropy loss actually lead to better outcome, you need to be mindful of how your model metric relate to higher order metrics. Imagine you have some consumer facing app in which you recommend different investment products to retail investors. 
-
-![Higher order effects](./assets/higher_order_effects.png)
-
-You might predict if the user is interested in a given product, measured by the user reading the product description. However, the metric you want to optimize in your application is not your model accuracy, but the click through rate of users going to the description screen. On a higher order, your business is not designed to maximize the click through rate, but revenue. If your users only click on low revenue products, your click through rate does not help you. Finally, your businesses revenue might be optimized to the detriment of society. In this case, regulators will step in. Higher order effects are influenced by your model. The higher the order of the effect, the harder it is to attribute to a single model. Higher order effects have large impacts however. Effectively, **higher order effects serve as meta metrics to lower order effects**. To judge how well your application is doing, you align its metrics (e.g. click through rates) with the metrics relevant for the higher order effect (e.g. revenue). Equally, your model metrics need to be aligned with your application metrics. 
-
-This alignment is often an emergent feature. Product managers eager to maximize their own metrics pick the model that maximizes their metrics, regardless of what metrics the modelers were optimizing. Product managers that bring home a lot of revenue get promoted. Businesses that are good for society receive subsidies and favorable policy. By making the alignment explicit, you can design a better monitoring process. For instance if you have two models, you can A/B test them to see which one improves the application metrics.
-
-Often, you will find that to align with a higher order metric, you need to combine several metrics such as accuracy and speed of predictions. In this case, you should craft a formula that combines the metrics into one single number. A single number will allow you to doubtlessly choose between two models and helps your engineers to create better models. For instance, you could set a maximum latency of 200 milliseconds and your metric would be: 'Accuracy if latency is below 200ms, otherwise zero'. If you do not wish to set one maximum latency value you could choose 'Accuracy divided by latency in milliseconds'. The exact design of this formula depends on your application. As you observe how your model influences its higher order metric, you can adapt your model metric. The metric should be simple and easy to quantify.
-
-Next to regularly testing your models impact on higher order metrics, you should regularly test your models own metrics like accuracy. To this end, you need a constant stream of ground truth labels together with your data. In some cases, such as detecting fraud, ground truth data is easily collected, although it might come in with some latency. Customers might need a few weeks to find out they have been overcharged. In other cases, you might not have ground truth labels. Often, you can hand label data for which you have not ground truth labels coming in. Through good UI design, the process of checking model predictions can be fast. Testers only have to decide if your models prediction was correct or not, something they can do through button presses in a web or mobile app. If you have a good review system in place, data scientists who work on the model should regularly check the models outputs. This way, patterns in failures ('Our model does poorly on dark images') can be detected quickly and the model can be improved.
-
-## Understand where your data comes from 
-More often than not, your data gets collected by some other system that you as the model developer have no control over. Your data might be collected by a data vendor or by a different department in your firm. It might be collected for different purposes than your model. The collectors of the data might not even know you are using the data for your model. If say the collection method of the data changes, the distribution of your data might change too. This could break your model. Equally, the real world might just change, and with it the data distribution. To avoid changes in the data breaking your model, first be aware what data you are using and assign an owner to each feature. The job of the feature owner is to investigate where the data is coming from and alerting the team if changes in the data are coming. The feature owner should also write down the assumptions underlying the data. In the best case, you test these assumptions for all new data streaming in. If the data does not pass the tests, investigate and eventually modify your model.
-
-Equally, your model outputs might get used as inputs of other models. Help consumers of your data reach you by clearly identifying yourself as the owner of the model. Alert users of your model of changes to your model. Before deploying a model, compare the new models predictions to the old models predictions. Treat models as software and try to identify 'breaking changes', that would significantly alter your models behavior. Many times you might not know who is accessing your models predictions. Try to avoid this by clear communication and setting access controls if necessary.
-
-Just like software has dependencies, libraries that need to be installed for the software to work, machine learning models have data dependencies. Data dependencies are not as well understood as software dependencies. By investigating your models dependencies, you can reduce the risk of your model breaking with some data change.
-
-# Performance tips
-
-In many financial applications, speed is of essence. Machine learning, especially deep learning has a reputation for being slow. But recently there have been many advances in hardware and software that enable fast machine learning applications.
-
-## Use the right hardware for your problem
-Much progress in deep learning has been driven by the use of graphics processing units (GPUs). GPUs enable highly parallel computing at the expense of operation frequency. Recently, multiple manufacturers started working on specialized deep learning hardware. Most of the times GPUs are a good choice for deep learning models or other parallelizable algorithms such as XGboost gradient boosted trees. However, not all applications benefit equally. In natural language processing for instance, batch sizes often need to be small, so the parellization of operations does not work as well since not that many samples are processed at the same time. Additionally, some words appear much more often than others, giving large benefits to caching frequent words. Thus, many NLP tasks run faster on CPU than GPU. If you can work with large batches however, a GPU or even specialized hardware is preferable.
-
-## Make use of distributed training with TF Estimators
-Keras is not only a standalone library that can use TensorFlow, it is also an integrated part of TensorFlow. TensorFlow features multiple high level APIs to create and train models. As of in version 1.8, the estimators API features distributed training on multiple machines, while the Keras API does not feature them yet. Estimators also have a number of other speed up tricks, so they are usually faster than Keras models.
-
-You can find information on how to set up your cluster for distributed TensorFlow here: https://www.tensorflow.org/deploy/distributed
-
-By changing the import statements you can easily use Keras as part of TensorFlow and don't have to change your main code.
-```Python 
-import tensorflow as tf
-from tensorflow.python import keras
-
-from tensorflow.python.keras.models import Sequential
-from tensorflow.python.keras.layers import Dense,Activation
-```
-
-In this section we will create a model to learn the MNIST problem and then train it using the estimator API. First we load and prepare the dataset as usual. For more efficient dataset loading see the next section.
-```Python 
-(x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
-x_train.shape = (60000, 28 * 28)
-x_train = x_train / 255
-y_train = keras.utils.to_categorical(y_train)
-``` 
-
-We can create a keras model as usual.
-
-```Python 
+As this is a regression problem, the final layer has no activation function and the loss is a mean squared error loss. We optimize the network using stochastic gradient descent without momentum or any other bells and whistles.
+``` Python 
 model = Sequential()
-model.add(Dense(786, input_dim = 28*28))
-model.add(Activation('relu'))
-model.add(Dense(256))
-model.add(Activation('relu'))
-model.add(Dense(160))
-model.add(Activation('relu'))
-model.add(Dense(10))
-model.add(Activation('softmax'))
-
-model.compile(optimizer=keras.optimizers.SGD(lr=0.0001, momentum=0.9),
-              loss='categorical_crossentropy',
-              metric='accuracy')
+model.add(Dense(100, input_shape=(grid_size**2,), activation='relu'))
+model.add(Dense(100, activation='relu'))
+model.add(Dense(num_actions))
+model.compile(optimizer='sgd', loss='mse')
 ```
 
-The TensorFlow version of Keras offers a one line conversion to a TF Estimator.
-```Python 
-estimator = keras.estimator.model_to_estimator(keras_model=model)
-```
+## Training to play Catch 
+A final ingredient to Q-Learning is exploration.
 
-To set up training, we need to know the name assigned to the model input. We quickly check this with:
-```Python
-model.input_names
-```
-```
-['dense_1_input']
-```
+Everyday life shows that sometimes you have to do something weird and/or random to find out whether there is something better than your daily trot.
 
-Estimators get trained with an input function. The input function allows us to specify a whole pipeline which will be executed efficiently. In this case we only want an input function that yields our training set:
+The same goes for Q-Learning. Always choosing the best option means you might miss out on some unexplored paths. To avoid this, the learner will sometimes choose a random option, and not necessarily the best.
+
+Now we can define the training method:
 
 ```Python 
-train_input_fn = tf.estimator.inputs.numpy_input_fn(
-    x={'dense_1_input': x_train},
-    y=y_train,
-    num_epochs=1,
-    shuffle=False)
+def train(model,epochs):
+    #1
+    win_cnt = 0
+
+    win_hist = []
+
+    for e in range(epochs): #2
+        loss = 0.
+        env.reset()
+        game_over = False
+        input_t = env.observe()
+        
+        while not game_over: #3
+            #4
+            input_tm1 = input_t
+            
+            if np.random.rand() <= epsilon: #5
+                action = np.random.randint(0, num_actions, size=1)
+            else:
+                q = model.predict(input_tm1) #6
+                action = np.argmax(q[0])
+
+            #7
+            input_t, reward, game_over = env.act(action)
+            if reward == 1:
+                win_cnt += 1        
+
+            #8
+            exp_replay.remember([input_tm1, action, reward, input_t],
+                                game_over)    
+
+            #9
+            inputs, targets = exp_replay.get_batch(model,
+                                                  batch_size=batch_size)
+
+            batch_loss = model.train_on_batch(inputs, targets)
+
+            loss += batch_loss
+            
+        win_hist.append(win_cnt)
+    return win_hist
+``` 
+\#1 We want to keep track of the progress of our Q-Learner, so we count the wins of the model over time.
+
+\#2 We now play for a number of games, specified by the `epoch` argument. At the beginning of a game, we first reset the game, set the `game_over` indicator to `False`, and observe the initial state of the game.
+
+\#3 We will then be playing frame by frame until the game is over.
+
+\#4 At the start of a frame cycle, we save the previously observed input as `input_tm1`, input at time t minus one.
+
+\#5 Now comes the exploration part. We draw a random number between zero and one. If the number is smaller than `epsilon`, we pick a random action. This technique is also called 'epsilon-greedy' as we pick a random action with a probability of epsilon and greedily choose the action promising the highest rewards otherwise.
+
+\#6 If we choose a non random action, we let the neural network predict the expected rewards for all actions. We then pick the action with the highest expected reward.
+
+\#7 We now act with our chosen or random action and observe a new state, a reward and information about whether the game is over. The game gives a reward of one if we win, so we eventually have to increase our win counter.
+
+\#8 We store the new experience in our experience replay buffer.
+
+\#9 We then sample a new training batch from the experience replay and train on that batch.
+
+The graph below shows the rolling mean of successful games. After about 2,000 epochs of training, the neural network should be quite good at playing catch. 
+![Catch Progress](./assets/catch_progress.png)
+Caption: Progress of a Q-Learning neural network playing catch.
+
+You have now successfully created your first reinforcement learning system. In the next section, we will explore the theoretical foundations of reinforcement learning and discover how the same system that learns to play catch can learn to rout orders in the futures market.
+# Markov processes and the bellman equation - A more formal introduction to RL 
+Following the long history of modern deep learning being a continuation of quantitative finance with more GPUs, the theoretical foundation of reinforcement learning lies in Markov models. A Markov model model describes a stochastic process with different states in which the probability of ending up in a specific state is purely dependent on the state one is currently in. Below you can see a simple Markov model describing recommendations given for a stock.
+
+![Markov Model](./assets/markov_model.png)
+
+As you can see, there are three states in this model, BUY, HOLD and SELL. For each two states, there is a transition probability. For example the probability that a state gets a BUY recommendation if it had a HOLD recommendation in the previous round is described by $p(BUY|HOLD)$ which is equal to 0.5. There is a 50% chance that a stock that is currently in HOLD will move to BUY in the next round.
+
+States are associated with rewards. If you own a stock, and that stock has a BUY recommendation, the stock will go up and you will earn a reward of 1 in this case. If the stock has a sell recommendation, you will gain a negative reward, or punishment, of -1.
+
+Note: In some textbooks, the rewards are associated with state transitions and not states themselves. It turns out to be mathematically equivalent, and for the ease of notation we are associating the rewards with states here.
+
+In a Markov model, an agent can follow a policy, usually denoted as $\pi(s,a)$. A policy describes the probability of taking an action $a$ when in a state $s$. Say you are a trader, you own a stock and that stock gets a SELL recommendation. In that case you might choose to sell the stock in 50% of cases, hold the stock in 30% of cases and buy more in 20% of cases. In other word your policy for the state SELL can be described as: 
+
+$$\pi(SELL,sell) = 0.5$$
+$$\pi(SELL,hold) = 0.3$$
+$$\pi(SELL,buy) = 0.2$$
+
+Some traders have a better policy and can make more money of a state than others. Therefore, the value of a state $s$ depends on the policy $\pi$. The value function $V$ describes the value of a state $s$ when policy $\pi$ is followed. It is the expected return from state $s$ when policy $\pi$ is followed.
+
+$$V^\pi(s)=\mathbb{E}_\pi[R_t|s_t = s]$$
+
+The expected return is the reward gained immediately plus the discounted future rewards.
+
+$$R_t = 
+r_{t+1} + \gamma * r_{t+2} + \gamma^2 * r_{t+3} + \gamma^3 * r_{t+3}
+= \sum_{k=0}^{\infty}\gamma^k*r_{t+k+1}
+$$
+
+The other value function frequently used in RL is the function $Q(s,a)$ we have already seen in the previous section. $Q$ describes the expected return of taking action $a$ in a state $s$ if policy $\pi$ is followed.
+
+$$Q^\pi(s,a) = \mathbb{E}[R_t|s_t=s,a_t=a]$$
+
+Note: We use the expected value $\mathbb{E}$ since our environment and our actions are stochastic. We can not say for certain that we will land in a specific state, we can only give a probability.
+
+Intuitively, $Q$ and $V$ describe the same thing. If we find ourselves in a certain state, what should we do? $V$ gives recommendations regarding which state we should seek, $Q$ gives advice on which action we should take. Of course, $V$ implicitly assumes we have to take some action and $Q$ assumes that the result of our actions is landing in some state. In fact, both $Q$ and $V$ are derived from the so called bellman equation, which brings us back to the Markov model from the beginning of this section.
+
+If you assume that the environment you operate in can be described as a Markov model, you would really want to know two things: First, you would want to find out the _state transition probabilities_. If you are in a state $s$, what is the chance $\mathcal{P}_{ss'}^a$ that you end up in state $s'$ if you take action $a$? Mathematically:
+
+$$\mathcal{P}_{ss'}^a = Pr(s_{t+1} = s'|s_t = s, a_t = a)$$
+
+Equally, you would be interested with the expected reward $\mathcal{R}_{ss'}^a$ of being in state $s$, taking action $a$ and ending up in state $s'$:
+
+$$\mathcal{R}_{ss'}^a = 
+\mathbb{E}[r_{t+1}|s_t = s,s_{t+1} = s', a_t = a]
+$$
+
+With this in mind we can now derive the two Bellman equations for $Q$ and $V$. First, we rewrite the equation describing $V$ to contain the actual formula for $R_t$
+
+$$V^\pi = 
+\mathbb{E}_\pi \big[\sum_{k=0}^{\infty}\gamma^k*r_{t+k+1}|s_t = s \big]$$
+
+We can pull the first reward out of the sum:
+
+$$V^\pi(s) = 
+\mathbb{E}_\pi \big[
+r_{t+1} + \gamma * \sum_{k=0}^{\infty}\gamma^k*r_{t+k+2}|s_t = s \big]$$
+
+The first part of our expectation is the expected reward we directly receive from being in state $s$ and following policy $\pi$
+
+$$\mathbb{E}_\pi[r_{t+1}|s_t = s] = 
+\sum_a \pi(s,a) \sum_{s'}\mathcal{P}_{ss'}^a \mathcal{R}_{ss'}^a$$
+
+The equation above shows a nested sum. First, we sum over all actions $a$ weighted by their probability of occurrence under policy $\pi$. For each action we then sum over the distribution of rewards $\mathcal{R}$ from the transition from state $s$ to the next state $s'$ after an action $a$ weighted by the probability of this transition occurring following the transition probability $\mathcal{P}$.
+
+The second part of our expectation can be rewritten as follows:
+
+$$
+\mathbb{E}_\pi
+\bigg[\gamma \sum_{k=0}^{\infty}\gamma^k r_{t+k+2}|s_t = s\bigg] =
+
+\sum_a \pi(s,a) \sum_{s'}\mathcal{P}_{ss'}^a 
+
+\gamma \mathbb{E}_\pi
+\bigg[\sum_{k=0}^{\infty}\gamma^kr_{t+k+2}|s_{t+1} = s'\bigg]
+
+$$
+
+The expected discounted value of the future rewards after state $s$ is the discounted expected future value of all states $s'$ weighted by their probability of occurrence $\mathcal{P}$ and the probability of an action $a$ being taken following the policy $\pi$.
+
+This formula is quite a mouthful, but it already gives us a glimpse at the nature of the value function: It is recursive. If we now replace the expectation in our value function it becomes more clear:
+
+$$
+V^\pi(s) =
+\sum_a \pi(s,a) \sum_{s'}\mathcal{P}_{ss'}^a
+
+\Bigg[
+\mathcal{R}_{ss'}^a + 
+
+\gamma \mathbb{E}_\pi
+\bigg[\sum_{k=0}^{\infty}\gamma^kr_{t+k+2}|s_{t+1} = s'\bigg]
+\Bigg]
+$$
+
+The inner expectation represents the value function for the next step $s'$! That means we can replace the expectation with the value function $V(s')$
+
+$$
+V^\pi(s) =
+\sum_a \pi(s,a) \sum_{s'}\mathcal{P}_{ss'}^a
+
+\bigg[
+\mathcal{R}_{ss'}^a +
+
+\gamma V^\pi(s')
+
+\bigg]
+$$
+
+Following the same logic, we can derive the $Q$ function as:
+
+$$
+Q(s,a) = 
+
+\sum_{s'} \mathcal{P}_{ss'}^a
+
+\bigg[
+\mathcal{R}_{ss'}^a +
+
+\gamma Q^\pi(s',a')
+
+\bigg]
+$$
+
+Congratulations, you have just derived the Bellman equations. Take a second to pause and ponder and make sure you really understand the mechanics behind these equations. The core idea is that the value of a state can be expressed as the value of other states. For a long time, the go to approach to optimizing the Bellman equation was the build a model of the underlying Markov model and its state transition and reward probabilities. 
+
+However, the recursive structure the door for a technique called 'dynamic programming'. The idea behind dynamic programming is to solve easier subproblems to solve the solution of a larger problem. You already saw this in action in the catch example. There, we used a neural network to estimate $Q^\pi(s',a')$, except for states that ended the game. For these games, finding the reward associated with the state is easy: it is the final reward received at the end of the game. It was these states for which the neural network first developed an accurate estimate of the function $Q$. From there it could then go backwards and learn the values of states that were further away from the end of the game. There are more possible applications of this dynamic programming, model free approach to reinforcement learning. 
+
+Before we jump in on different kinds of systems that can be built using this theoretical foundation, we will pay a brief visit to the applications of the Bellman equation in economics. Readers familiar with the work discussed will find reference points they can use to develop a deeper understanding of the Bellman equations. Readers unfamiliar with these works will find inspiration for further reading and applications for techniques discussed in this chapter.
+
+## The Bellman equation in economics
+While the first application of the Bellman equation to economics occurred already in 1954, Robert C. Merton's 1973 article 'An Intertemporal Capital Asset Pricing Model' is perhaps the most well known application. Using the Bellman equation, Merton develops an capital asset pricing model that unlike the classic CAPM model works in continuous time and can account for changes in investment opportunity. 
+
+The recursiveness of the Bellman equation inspired the subfield of recursive economics. Nancy Stokey, Robert Lucas and Edward Prescott wrote an influential 1989 book titled 'Recursive Methods in Economic Dynamics' in which they apply the recursive approach to solve problems in economic theory. This book inspired others to use recursive economics to address a wide range of economic problems from the principal agent problem to optimal economic growth.
+
+Avinash Dixit and Robert Pindyck developed applied the approach successfully to capital budgeting in their 1994 book 'Investment Under Uncertainty' and Patrick Anderson applied it to the valuation of private businesses in his 2009 article 'The Value of Private Businesses in the United States'.
+
+While recursive economics still has many problems, including the large compute power required for it, it is a promising subfield of the dismal science. 
+
+
+# (Asynchronous) Advantage Actor Critic models
+Q-Learning as we saw above is quite useful, but has its drawbacks. For example as we have to estimate a Q value for each action, there has to be a discrete, limited set of actions. But what if the action space is continuous or extremely large? Say, you are using an RL algorithm to build a portfolio of stocks. Even if your universe of stocks consisted only of two stocks, say AMZN and AAPL, there would be an infinite amount of ways to balance them, 10% AMZN & 90% AAPL, 11% AMZM & 89% AAPL and so on. If your universe gets bigger, the amount of ways you can combine stocks explodes. 
+
+You could divide the continuous steps into discrete separations by say, allowing only full percent allocations, but even then you would have a potentially trillion dimensional action space. A workaround to having to select from such an action space is to learn the policy $\pi$ directly. Once you have learned a policy, you can just give it a state and it will give back a distribution of actions. This means that your actions will not be deterministic. A stochastic policy has advantages, especially in a game theoretic setting.
+
+Imagine you are playing rock, paper, scissors and you are following a deterministic policy. If your policy is to pick rock, you will always pick rock and as soon as your opponent figures out that you are always picking rock you will always loose. The Nash equilibrium, the solution of a non-cooperative game, for rock, paper scissors is to pick actions at random. Only a stochastic policy can do that.
+
+To learn a policy, we have to be able to compute a gradient with respect to a policy. And, contrary to most people's expectations, policies are differentiable. In this section we will build up a policy gradient step by step and use it to create an advantage actor critic (A2C) model for continuous control.
+
+The first piece to differentiating policies is to look at the advantage we can have by picking a particular action $a$ rather then just following the policy $\pi$.
+
+$$
+A(s,a) = Q_\pi(s,a) - V^pi(s)
+$$
+
+The advantage of action $a$ in state $s$ is the value of executing $a$ in $s$ minus the value of $s$ under policy $\pi$. We measure how good our policy $\pi$ is with $J(\pi)$, a function expressing the expected value of the starting state $s_0$.
+
+$$J(\pi)=\mathbb{E}_{p^{s_0}}[V(s_0)]$$
+
+Now to compute the gradient of the policy, we have to do two steps which are shown inside the expectation in the policy gradient formula:
+
+$$
+\nabla_\theta J(\pi)=\mathbb{E}_{s\sim p^\pi, a\sim \pi(s)}
+[A(s,a)\cdot \nabla_\theta\pi(a|s)]
+$$
+
+First we have to calculate the advantage of a given action $a$ with $A(s,a)$. Then we have to calculate the derivative of the weights of the neural network $\nabla_\theta$ with respect to increasing the probability $\pi(a|s)$ that $a$ is picked under the policy $\pi$.
+
+For actions with a positive advantage $A(s,a)$, we follow the gradient that would make $a$ more likely. For actions with a negative advantage we go into the exact opposite direction.
+
+The expectation says that we are doing this for all states and all actions. In practice we manually multiply the advantage of actions with their increased likelihood gradients. 
+
+One thing left is how do we compute the advantage? The value of taking an action is the reward earned directly from taking the action as well as the value of the state we find ourselves in after taking the action.
+
+$$Q(s,a) = r + \gamma V(s')$$
+
+So we can substitute $Q(s,a)$ in the advantage calculation:
+
+$$
+A(s,a) = Q(s,a) - V(s) = r + \gamma V(s') - V(s)
+$$
+
+As calculating $V$ turns out to be useful for calculating the policy gradient, researchers have come up with the 'Advantage Actor Critic' architecture. A single neural network with two heads learns both $V$ and $\pi$. As it turns out, sharing weights for learning the two functions turns out to be useful and accelerates training, if both have to extract features from the environment. If you are training an agent that operates on high dimensional image data for instance, the value function and the policy head both need to learn how to interpret the image. Sharing weights would help both master the common task. If you are training on lower dimensional data, it might make more sense to not share weights.
+
+![Advantage Actor Critic Scheme](./assets/actor_critic.png)
+
+If the action space is continuous, $\pi$ is represented by two outputs: the mean $\mu$ and standard deviation $\sigma$. This allows us to sample from a learned distribution just as we did for the autoencoder.
+
+A common variant of the advantage actor critic, or A2C, approach is the asynchronous advantage actor critic, or A3C. An A3C works exactly like an A2C, except that on training time, multiple agents are simulated in parallel. This means that more independent data can be gathered. independent data is important as too correlated examples can make a model overfit to specific situations and forget other situations. Since A3Cs and A2Cs work by the same principles and the implementation of parallel game play introduces some complexity that obfuscates the actual algorithm, we will just stick with an A2C in the examples below.
+
+## Learning to balance
+
+In this section, we will train an A2C model to swing up and balance a pendulum.
+![Pendulum Gym](./assets/pendulum_gym.png)
+
+The pendulum is controlled by a rotational force that can be applied in either direction. In the image above you can see the arrow that shows the force being applied. Control is continuous, the agent can apply more or less force. Force can be applied in both directions as a positive and negative force. 
+
+This relatively simple control task is a useful example of continuous control that can be easily extended to a stock trading task later. In addition, the task can be visualized so that we can get an intuitive gasp on how the algorithm learns and its pitfalls.
+
+Note: When implementing a new algorithm, try it out on a task you can visualize. Failures are often subtle and easier to spot visually than through data.
+
+The pendulum environment is part of the OpenAI gym, a suite of games made to train reinforcement learning algorithms. You can install it via the command line using
+```
+pip install gym
+```
+See http://gym.openai.com/ for more information.
+
+Before we start we have to make some imports:
+
+```Python 
+import gym #1
+
+import numpy as np #2
+
+from scipy.stats import norm #3
+from keras.layers import Dense, Input, Lambda
+from keras.models import Model
+from keras.optimizers import Adam
+from keras import backend as K
+
+from collections import deque #4
+import random
 ``` 
 
-Finally, we train the estimator on the input. And that is it, now you can utilize distributed TensorFlow with estimators.
+\#1 OpenAI's `gym` is a toolkit for developing reinforcement learning algorithms. It provides a number of game environments, from classic control tasks like pendulum to Atari games to robotics simulations.
+
+\#2 The `gym` is interfaced by `numpy` arrays. States, actions and environments are all presented in a `numpy` compatible format.
+
+\#3 Our neural network will be relatively small and based around the functional API. Since we once again learn a distribution we need to make use of `scipy`'s norm function which helps us take the norm of a vector.
+
+\#4 The python data structure `deque` is a highly efficient data structure that conveniently manages a maximum length for us. No more manually removing experiences! We can randomly sample from a `deque` using pythons `random` module.
+
+Now it is time to build the agent. The following methods all form the `A2CAgent` class.
+
+```Python 
+def __init__(self, state_size, action_size):
+    
+    self.state_size = state_size #1
+    self.action_size = action_size
+    self.value_size = 1
+    
+    self.exp_replay = deque(maxlen=2000) #2
+
+
+    self.actor_lr = 0.0001 #3
+    self.critic_lr = 0.001
+    self.discount_factor = .9
+
+    self.actor, self.critic = self.build_model() #4
+
+    
+    self.optimize_actor = self.actor_optimizer() #5
+    self.optimize_critic = self.critic_optimizer() 
+```
+
+\#1 First we need to define some game related variables. The state space size and the action space size are given by the game. Pendulum states consist of three variables dependent on the angle of the pendulum, . Namely a state consists of the sine of theta, the cosine of theta and the angular velocity. The value of a state is just a single scalar.
+
+\#2 Next we set up our experience replay buffer, which can save at maximum 2000 states. Larger RL experiments have much larger replay buffers (often around 5 million experiences), but for this task 2000 will do.
+
+\#3 As we are training a neural network, we need to set some hyper-parameters. Even if actor and critic share weights, it turned out that the actor learning rate should usually be lower than the critic learning rate. This is because the policy gradient we train the actor on is more volatile. We also need to set the discount rate $\gamma$. Remember that the discount rate in reinforcement learning is applied differently than it is usually in finance. In finance, we discount by dividing future values by one plus the discount factor. In reinforcement learning we multiply with the discount rate. Therefore, a higher discount factor $\gamma$ means that future values are less discounted. 
+
+\#4 To actually build the model we define a separate method which we will discuss below.
+
+\#5 The optimizers for actor and critic are custom optimizers. To define these we also create a separate function. The optimizers themselves are functions that can be called at training time.
+
+
 ```Python
-estimator.train(input_fn=train_input_fn, steps=2000)
+def build_model(self):
+  
+    state = Input(batch_shape=(None, self.state_size)) #1
+    
+    actor_input = Dense(30, #2 
+                        activation='relu',
+                        kernel_initializer='he_uniform')(state)
+                        
+    mu_0 = Dense(self.action_size, #3
+                 activation='tanh',
+                 kernel_initializer='he_uniform')(actor_input)
+                 
+    mu = Lambda(lambda x: x * 2)(mu_0) #4
+    
+    sigma_0 = Dense(self.action_size, #5
+                    activation='softplus',
+                    kernel_initializer='he_uniform')(actor_input)
+
+    
+    sigma = Lambda(lambda x: x + 0.0001)(sigma_0) #6
+
+    critic_input = Dense(30, #7
+                         activation='relu',
+                         kernel_initializer='he_uniform')(state)
+    
+    #8
+    state_value = Dense(1, kernel_initializer='he_uniform')(critic_input)
+
+    
+    actor = Model(inputs=state, outputs=(mu, sigma)) #9
+    critic = Model(inputs=state, outputs=state_value) #10
+
+    
+    actor._make_predict_function() #11
+    critic._make_predict_function() 
+
+    #12
+    actor.summary()
+    critic.summary()
+    
+    #13
+    return actor, critic
+```
+\#1 As we are using the functional API, we have to define an input layer which we can use to feed the state to actor and critic.
+
+\#2 The actor has a hidden first layer as in input to the actor value function. It has 30 hidden units and a `'relu'` activation function. It is initializes by a `'he_uniform'` initializer. This initializer is only slightly different from the default `'glorot_uniform'` initializer. He-Uniform draws from a uniform distribution with the limits $\pm \sqrt{6 / i}$ where $i$ is the input dimension. The default glorot uniform samples from a uniform distribution with the limits  $\pm \sqrt{6 / (i+o)}$, with $o$ being the output dimensionality. The difference between the two is rather small, but, as it turns out the He uniform initializer work better for learning the value function and policy.
+
+\#3 The action space of pendulum ranges from -2 to 2. We use a regular 'tanh' activation which ranges from -1 to one first and correct the scaling later.
+
+\#4 To correct the scaling of the action space we now multiply the outputs of the `'tanh'` function by two. Using the `Lambda` layer we can define such a function manually in the computational graph. 
+
+\#5 The standard deviation should not be negative. The `'softplus'` activation works in principle just like `'relu'`, but with a soft edge:
+
+![Relu vs Softplus](./assets/rectifier_and_softplus_functions.png)
+
+\#6 To make sure the standard deviation is not zero, we add a tiny constant to it. Again we use the `Lambda` layer for this task. This also ensures that the gradients get calculated correctly as the model is aware of the constant added.
+
+\#7 The critic also has a hidden layer to calculate its value function.
+
+\#8 The value of a state is just a single scalar that can have any value. The value head thus only has one output and a linear, speak no, activation function.
+
+\#9 We define the actor to map from a state to a policy expressed by the mean $\mu$ and standard deviation $\sigma$.
+
+\#10 We define the critic to map from a state to a value of that state.
+
+\#11 While it is not strictly required for the A2C, if we want to use our agents for an asynchronous, A3C, approach we need to make the predict function threading safe. Keras loads the model on a GPU the first time you call `predict()`. If that happens from multiple threads, things can break. `_make_predict_function()` makes sure the model is already loaded on a GPU or CPU and is ready to predict, even from multiple threads.
+
+\#12 For debugging purposes we print the summaries of our models.
+
+\#13 Finally, we return the models. 
+
+
+Now, we have to create the optimizer for the actor. The actor uses a custom optimizer that optimizes it along the policy gradient. Before we define the optimizer however, we need to look at the last piece of the policy gradient.
+Remember how the policy gradient was dependent on the gradient of the weights $\nabla_\theta\pi(a|s)$ that would make action $a$ more likely? Keras can caluclate this derivative for us, but we need to provide Keras with the value of our policy $\pi$. To this end we need to define a probability density function. $\pi$ is a normal distribution with mean $\mu$ and standard deviation $\sigma$, so the probability density function $f$ is:
+$$
+f(x;\mu,\sigma^2)=
+\frac{1}{\sqrt{2\pi\sigma^2}}  * e^{\frac{-(a-\mu)^2}{2\sigma}}$$
+
+In this term $\pi$ stands for the constant, 3.14..., not for the policy. 
+Later we only need to take the logarithm of this probability density function. Why the logarithm? Taking the logarithm results in a smoother gradient. Maximizing the log of a probability means maximizing the probability, so we can just use the 'log trick' as it is called to improve learning.
+
+The value of the policy $\pi$ is the advantage of each action $a$ times the log probability of this action occuring as expressed by the probability density function $f$.
+
+```Python
+def actor_optimizer(self):
+    action = K.placeholder(shape=(None, 1)) #1
+    advantages = K.placeholder(shape=(None, 1))
+
+    mu, sigma_sq = self.actor.output #2
+
+    #3
+    pdf = 1. / K.sqrt(2. * np.pi * sigma_sq) * \
+                      K.exp(-K.square(action - mu) / (2. * sigma_sq))
+          
+    log_pdf = K.log(pdf + K.epsilon())#4
+    
+    exp_v = log_pdf * advantages #5
+
+    entropy = K.sum(0.5 * (K.log(2. * np.pi * sigma_sq) + 1.)) #6
+    exp_v = K.sum(exp_v + 0.01 * entropy) #7
+    actor_loss = -exp_v #8
+
+    optimizer = Adam(lr=self.actor_lr) #9
+    
+    #10
+    updates = optimizer.get_updates(self.actor.trainable_weights, 
+                                    [], 
+                                    actor_loss)
+
+    #11
+    train = K.function([self.actor.input, action, advantages], 
+                        [], 
+                        updates=updates)
+                        
+    #12
+    return train
 ```
 
-## Use optimized layers such as `CuDNNLSTM`
-You will often find that someone created a special layer optimized to perform certain asks on certain hardware. Keras `CuDNNLSTM` layer for example only runs on GPUs supporting CUDA, a programming language specifically for GPUs. While you lock in your model to specialized hardware, you can often gain significantly in performance. If you have the resources, it might even make sense to write your own specialized layer in CUDA. If you want to change hardware later, you usually can export weights and import them to a different layer.
+\#1 First, we need to set up some placeholders for the action taken and the advantage of that action. We will fill in these placeholders when we call the optimizer.
 
-## Optimize your pipeline
-With the right hardware and optimized software in place, your model often ceases to be the bottleneck. You should check your GPU utilization by entering the following command in your terminal:
+\#2 We get the outputs of the actor model. These are tensors which we can plug into our optimizer. Optimization of these tensors will be backpropagated and optimizes the whole model.
+
+\#3 Now we set up the probability density function. This step can look a bit intimidating but if you look closely it is the same probability density function we defined above.
+
+\#4 Now we apply the log trick. To ensure that we don't accidentially take the logarithm of zero, we add a tiny constant `epsilon`.
+
+\#5 The value of our policy is now the probability of an action $a$ times the probability of this action occurring.
+
+\#6 To reward the model for a probabilistic policy, we add an entropy term. The entropy is calculated with the term below: 
+
+$$\sum 0.5 (\log(2 \pi \sigma^2) +1)$$
+
+Where again $\pi$ is a constant 3.14... and $\sigma$ is the standard deviation.
+While the proof that this term expresses the entropy of a normal distribution is outside of the scope of this chapter, you can see that the entropy goes up if the standard deviation goes up.
+
+\#7 We add the entropy term to the value of the policy. By using `K.sum()` we sum the value over the batch.
+
+\#8 We want to maximize the value of the policy, but by default Keras performs gradient descent that minimizes losses. An easy trick is to turn the value negative and then minimize the negative value.
+
+\#9 To perform gradient descent, we use the `Adam` optimizer.
+
+\#10 We can retrieve an update tensor from the optimizer. The `get_updates()` takes three arguments, `parameters`, `constraints` and `loss`. We provide the parameters of the model, speak its weights. Since we don't have any constraints we just pass an empty list as a constraints. For a loss we pass the actor loss.
+
+\#11 Armed with the updates tensor we can now create a function which takes as input the actor model input, speak the state, as well as the two placeholders, the action and the advantages. It returns nothing, this the empty list, but applies the update tensor to the model involved. This function is callable as we will see later.
+
+\#12 We return the function. Since we call `actor_optimizer()` in the init function of our class, the optimizer function we just created becomes `self.optimize_actor`
+
+For the critic, we also need to create a custom optimizer. The loss for the critic is the mean squared error between the predicted value and the reward plus the predicted value of the next state.
+```Python
+def critic_optimizer(self):
+    discounted_reward = K.placeholder(shape=(None, 1)) #1
+
+    value = self.critic.output #2
+
+    loss = K.mean(K.square(discounted_reward - value)) #3
+
+    optimizer = Adam(lr=self.critic_lr) #4
+    
+    updates = optimizer.get_updates(self.critic.trainable_weights, 
+                                    [], 
+                                    loss)
+    
+    #6
+    train = K.function([self.critic.input, discounted_reward], 
+                       [], 
+                       updates=updates)
+                      
+    return train
 ```
-nvidia-smi -l 2
+
+\#1 Again we set up a placeholder for the variable we need. The `discounted_reward` contains the discounted future value of state $s'$ as well as the reward immediately earned. 
+
+\#2 The critic loss is the mean squared error between the critics output and the discounted reward. We first obtain the output tensor...
+
+\#3...before calculating the mean squared error between the output and discounted reward.
+
+\#4 Again we use an adam optimizer from which we obtain an update tensor, just as we did above.
+
+\#5 Finally, we roll the update into a single function just as we did above. This function will become `self.optimize_critic`
+
+
+For our agent to take actions, we need to define a method that produces actions from a state:
+```Python
+def get_action(self, state):
+    state = np.reshape(state, [1, self.state_size]) #1  
+    mu, sigma_sq = self.actor.predict(state) #2
+    epsilon = np.random.randn(self.action_size) #3
+    action = mu + np.sqrt(sigma_sq) * epsilon #4
+    action = np.clip(action, -2, 2) #5
+    return action
 ```
-If GPU utilization is not around 80% to 100%, you can gain significantly by optimizing your pipeline. There are several steps you can take to optimize your pipeline:
+\#1 First, we reshape the state to make sure it has the shape the model expects.
 
-**Create a pipeline running parallel to the model**. Otherwise, your GPU will be idle while the data is loading. Keras does this by default. If you have a generator, and want to have a larger queue of data to be held ready for preprocessing, change the `max_queue_size` parameter of the `fit_generator` method. If you set the `workers` argument of the `fit_generator` method to zero, the generator will run on the main thread, which slows things down.
+\#2 We predict the means and variance $\sigma^2$ for this action from the model.
 
-**Preprocess data in parallel**. Even if you have a generator working independent of the model training, it might not keep up with the model. So it is better to run multiple generators in parallel. In Keras you can do this with by setting `use_multiprocessing` to true and setting the number of workers to anything larger than one, preferably to the number of CPUs available.
+\#3 Like we did for the autoencoder, we first sample a random normal distribution with mean zero and standard deviation 1, before...
+
+\#4 ...adding the mean and multiplying by the standard deviation. Now we have our action, sampled from the policy.
+
+\#5 To make sure we are within bounds of the action space, we clip the action at -2, 2, so it won't be outside of those boundaries.
+
+At last, we need to train the model. The `train_model` function train the model after receiving one new experience.
+```Python
+def train_model(self, state, action, reward, next_state, done):
+    #1
+    self.exp_replay.append((state, action, reward, next_state, done))
+    
+    #2
+    (state, action, reward, next_state, done) = random.sample(self.exp_replay,
+                                                              1)[0]
+    #3
+    target = np.zeros((1, self.value_size))
+    advantages = np.zeros((1, self.action_size))
+
+    #4
+    value = self.critic.predict(state)[0]
+    next_value = self.critic.predict(next_state)[0]
+
+    #5
+    if done:
+        advantages[0] = reward - value
+        target[0][0] = reward
+    else:
+        advantages[0] = reward + self.discount_factor * (next_value) - value
+        target[0][0] = reward + self.discount_factor * next_value
+
+    #6
+    self.optimize_actor([state, action, advantages])
+    self.optimize_critic([state, target])
+```
+
+\#1 First the new experience is added to the experience replay. 
+
+\#2 Then, we immediately sample an experience from the experience replay. This way we break the correlation between samples the model trains on.
+
+\#3 We set up placeholders for the advantages and targets. We will fill them at step 5
+
+\#4 We predict the values for state $s$ and $s'$
+
+\#5 If the game ended after the current state $s$. The advantage is the reward we earned minus the value we assigned to the state and the target for the value function is just the reward we earned. If the game did not end after this state, the advantage is the reward earned plus the discounted value of the next state minus the value of this state. The target in that case is the reward earned plus the discounted value of the next state. 
+
+\#6 Knowing the advantage, the action taken and the value target, we can optimize both actor and critic with the optimizers we created earlier.
+
+And that is it, our `A2CAgent` class is done. Now it is time to use it. We define a `run_experiment` function. This function plays the game for a number of episodes. It is most useful to first train a new agent without rendering as training takes around 600 to 700 games until the agent does well. With your trained agent you can then watch the game play.
+
+```Python
+def run_experiment(render=False, agent=None, epochs = 3000):
+    env = gym.make('Pendulum-v0') #1
+    
+    state_size = env.observation_space.shape[0] #2
+    action_size = env.action_space.shape[0]
+
+    if agent = None: #3
+        agent = A2CAgent(state_size, action_size)
+
+    scores = [] #4
+
+    for e in range(epochs):  #5
+        done = False #6
+        score = 0
+        state = env.reset()
+        state = np.reshape(state, [1, state_size])
+
+        while not done: #7
+            if render: #8
+                env.render()
+
+            action = agent.get_action(state) #9
+            next_state, reward, done, info = env.step(action) #10
+            reward /= 10 #11
+            next_state = np.reshape(next_state, [1, state_size]) #12
+            agent.train_model(state, action, reward, next_state, done) #13
+
+            score += reward #14
+            state = next_state #15
+
+            if done: #16
+                scores.append(score) 
+                print("episode:", e, "  score:", score)
+                
+                #17
+                if np.mean(scores[-min(10, len(scores)):]) > -20:
+                    print('Solved Pendulum-v0 after {} iterations'.format(len(scores)))
+                    return agent, scores
+```
+
+\#1 First, we set up a new gym environment. This environment contains the pendulum game. We can pass actions to it and observe states and rewards.
+
+\#2 We obtain the action and state space from the game.
+
+\#3 If no agent was passed to the function, we create a new one.
+
+\#4 We set up an empty array to keep track of the scores over time.
+
+\#5 Now we play the game for a number of rounds specified by `epochs`
+
+\#6 At the beginning of a game, we set the 'game over indicator' to false, the score to zero and reset the game. By resetting the game we obtain the initial starting state.
+
+\#7 Now we play the game until it is over.
+
+\#8 If you passed `render = True` to the function, the game will be rendered on screen. Note that this won't work on a remote notebook like in Kaggle or Jupyter.
+
+\#9 We get an action from the agent...
+
+\#10 ...and act in the environment. When acting in the environement, we observe a new state, a reward and if the game was over. The `gym` also passes an info dictionary which we can ignore.
+
+\#11 The rewards from the game are all negative with a higher reward closer to zero being better. The rewards can be quite large though, so we reduce them. To extreme rewards can lead to too large gradients while training. That would hinder training.
+
+\#12 Before training with the model, we reshape the state, just to be sure.
+
+\#13 Now we train the agent on a new experience. As you have seen above, the agent will store the experience in its replay buffer and draw a random old experience to train from. 
+
+\#14 We increase the over reward to track the reward earned during one game.
+
+\#15 We set the new state to be the current state to prepare for the next frame of the game.
+
+\#16 If the game is over, we track and print out the game score. 
+
+\#17 The agent usually does pretty well after 700 epochs. We declare the game solved if the average reward over the last 20 games was better than -20. If that is the case, we exit the function and return the trained agent together with its scores.
+
+## Learning to trade 
+Reinforcement learning algorithms are largely developed in games and simulations where a failing algorithm won't cause any damage. However, once developed, an algorithm can be adapted to other, more serious tasks. Do demonstrate this, we will now create an A2C agent that learns how to balance a portfolio of stocks in a large universe of stocks. Please do not trade based on this algorithm, it is only a simplified and slightly naive implementation to demonstrate the concept.
+
+To train a new reinforcement learning algorithm, we first need to create a training environment. In this environment, the agent trades on real life stock data. The environment can be interfaced just like an OpenAI gym environment. Following the gym conventions for interfacing reduces complexity of development. Given a 100 day look back of the percentile returns of stocks in the universe, the agent has to return an allocation in form of a 100 dimensional vector. The allocation vector describes the share of assets the agent wants to allocate on one stock. A negative allocation means the agent is short trading the stock. For simplicities sake, transaction costs and slippage are not added to the environment. It would not be too difficult to add them however. The full implementation of the environment and agent can be found at:
+https://www.kaggle.com/jannesklaas/a2c-stock-trading
+
+The environment looks like this:
 
 ```Python 
-model.fit_generator(generator, 
-                    steps_per_epoch = 40, 
-                    workers=4, 
-                    use_multiprocessing=False)
-```
-You need to make sure your generator is thread safe. You can make any generator thread safe with the following code snippet:
+class TradeEnv():    
+    def reset(self):
+        self.data = self.gen_universe() #1
+        self.pos = 0 #2
+        self.game_length = self.data.shape[0] #3
+        self.returns = [] #4
 
+        return self.data[0,:-1,:] #5
+    
+    def step(self,allocation): #6
+        ret = np.sum(allocation * self.data[self.pos,-1,:]) #7
+        self.returns.append(ret) #8
+        mean = 0 #9
+        std = 1
+        if len(self.returns) >= 20: #10
+            mean = np.mean(self.returns[-20:])
+            std = np.std(self.returns[-20:]) + 0.0001
+            
+        sharpe = mean / std #11
+        
+        if (self.pos +1) >= self.game_length: #12
+            return None, sharpe, True, {}  
+        else: #13
+            self.pos +=1
+            return self.data[self.pos,:-1,:], sharpe, False, {}
+        
+    def gen_universe(self): #14
+        stocks = os.listdir(DATA_PATH) 
+        stocks = np.random.permutation(stocks)
+        frames = [] 
+        idx = 0
+        while len(frames) < 100: #15
+            try: 
+                stock = stocks[idx]
+                frame = pd.read_csv(os.path.join(DATA_PATH,stock),
+                                    index_col='Date')
+                frame = frame.loc['2005-01-01':].Close
+                frames.append(frame)
+            except: # 19
+                e = sys.exc_info()[0]
+            idx += 1 
+
+        df = pd.concat(frames,axis=1,ignore_index=False) #16
+        df = df.pct_change()
+        df = df.fillna(0)
+        batch = df.values
+        episodes = [] #17
+        for i in range(batch.shape[0] - 101):
+            eps = batch[i:i+101]
+            episodes.append(eps)
+        data = np.stack(episodes)
+        assert len(data.shape) == 3 
+        assert data.shape[-1] == 100
+        return data
+``` 
+
+
+
+\#1 We load data for our universe.
+
+\#2 Since we are stepping through the data where each day is a step, we need to keep track of our position in time.
+
+\#3 We need to know when the game ends, so we need to know how much data we have.
+
+\#4 To keep track of returns over time, we set up an empty array.
+
+\#5 The initial state is the data for the first episode, until the last element which is the return of the next day, for all 100 stocks in the universe.
+
+\#6 At each step, the agent needs to provide an allocation to the environment. The reward the agent receives is the sharpe ratio, the ration between mean and standard deviation of returns, over the last 20 days. You could modify the reward function to e.g. include transaction costs or slippage. See the section on reward shaping later in this chapter.
+
+\#7 The return on the next day is the last element of the episode data.
+
+\#8 To calculate the sharpe ratio, we need to keep track of past returns.
+
+\#9 If we do not have 20 returns yet, mean and standard deviation of returns will be zero and one respectively. 
+
+\#10 If we do have enough data, we calculate the mean and standard deviation of the last 20 elements in our return tracker. We add a tiny constant to the standard deviation to avoid division by zero.
+
+\#11 We can now calculate the sharpe ratio which will the reward for the agent.
+
+\#12 If the game is over, the environment will return no next state, the reward and an indicator that the game is over as well as an empty info dictionary, to stick to the OpenAI gym convention.
+
+\#13 If the game is not over, the environment will return the next state, reward, an indicator that the game is not over, and an empty info dictionary.
+
+\#14 This function loads the daily returns of a universe of 100 random stocks. 
+
+\#15 The selector moves in random order over the files containing stock prices. Some of them are corrupted so that loading them will result in an error. The loader keeps trying until it has 100 pandas data-frames containing stock prices assembled. Only closing prices starting in 2005 will be considered.
+
+\#16 In the next step, all data-frames are concentrated. The percentile change in stock price is calculated. All missing values are filled with zero, speak no change. Finally, we extract the values from the data as a numpy array.
+
+\#17 The last thing to do is to transform the data into time series. The first 100 steps are the basis for the agents decision. The 101st element is the next days return, on which the agent will be evaluated. 
+
+
+We only have to make minor edits in the `A2CAgent` agent class. Namely, we only have to modify the model so that it can take in the time series of returns. To this end, we add 2 `LSTM` layers which actor and critic share.
+```Python
+def build_model(self):
+        state = Input(batch_shape=(None, #1
+                                   self.state_seq_length, 
+                                   self.state_size))
+        
+        x = LSTM(120,return_sequences=True)(state) #2
+        x = LSTM(100)(x)
+        
+        actor_input = Dense(100, activation='relu', #3
+                            kernel_initializer='he_uniform')(x)
+
+        mu = Dense(self.action_size, activation='tanh', #4
+                     kernel_initializer='he_uniform')(actor_input)
+                     
+        sigma_0 = Dense(self.action_size, activation='softplus',
+                        kernel_initializer='he_uniform')(actor_input)
+
+        sigma = Lambda(lambda x: x + 0.0001)(sigma_0)
+
+        critic_input = Dense(30, activation='relu',
+                             kernel_initializer='he_uniform')(x)
+        
+        state_value = Dense(1, activation='linear',
+                            kernel_initializer='he_uniform')(critic_input)
+
+        actor = Model(inputs=state, outputs=(mu, sigma))
+        critic = Model(inputs=state, outputs=state_value)
+
+        actor._make_predict_function()
+        critic._make_predict_function()
+
+        actor.summary()
+        critic.summary()
+
+        return actor, critic
+```
+
+\#1 The state now has a time dimension.
+
+\#2 The two `LSTM` layers are shared across actor and critic.
+
+\#3 Since the action space is larger, we also have to increase the size of the actors hidden layer.
+
+\#4 Outputs should lie between -1 and 1 ,100% short and 100% long, so we can save ourselves the step of multiplying the mean by two.
+
+And that is it! This algorithm can now learn to balance a portfolio just as it could learn to balance before.
+
+# Evolutionary strategies and genetic algorithms
+
+Recently, a decades old optimization algorithm for reinforcement learning algorithms has come back into fashion. Evolutionary strategies (ES) are much simpler than Q-Learning or A2C.
+
+Instead of training one model through backpropagation, we create a population of models by adding random noise to the weights of the original model. We then let each model run in the environment and evaluate its performance. The new model is the performance weighted average of all the models.
+
+![Evoltionary Strategy](./assets/evolutionary_strategy.png)
+
+
+To get a better grip on how this works, consider the following brief example. We want to find a vector that minimizes the mean squared error to a solution vector. The learner is not given the solution, but only the total error as a reward signal. 
 ```Python 
-import threading
-
-class thread_safe_iter: #1
-    def __init__(self, it):
-        self.it = it
-        self.lock = threading.Lock()
-
-    def __iter__(self):
-        return self
-
-    def next(self): #2
-        with self.lock:
-            return self.it.next()
-
-def thread_safe_generator(f): #3
-    def g(*a, **kw):
-        return thread_safe_iter(f(*a, **kw))
-    return g
-
-@thread_safe_generator #4
-def gen():
-  ...
+solution = np.array([0.5, 0.1, -0.3])
+def f(w):
+  reward = -np.sum(np.square(solution - w))
+  return reward
 ```
 
-\#1 The `thread_safe_iter` class makes any iterator thread safe by locking threads when the iterator has to produce the next yield.
-
-\#2 When `next()` is called on the iterator, the iterators thread is locked. Locking means that no other function, say another variable, can access variables from the thread while it is locked. Once the thread is locked, it yields the next element.
-
-\#3 The `thread_safe_generator` is a Python decorator that turns any iterator it decorates into a thread safe iterator. It takes the function, passes it to the thread safe iterator and then returns the thread safe version of the function.
-
-You can also use the `tf.data` API together with an estimator which does most of the work for you. 
-
-**Combine files into large files**. Reading a file takes time. If you have to read thousands of small files, this can significantly slow you down. TensorFlow offers its own data format called TF Record. You can also just fuse an entire batch into a single numpy array and save that array instead of every example.
-
-**Train with the tf.data.Dataset API**. If you are using the TensorFlow version of Keras, you can use the `Dataset` API, which optimizes data loading and processing for you. The `Dataset` API is the recommended way to load data into TensorFlow. It offers a wide range of ways to load data, for instance from a CSV file with `tf.data.TextLineDataset` or from TFRecord files with `tf.data.TFRecordDataset`. For a more comprehensive guide to the `Dataset` API, see https://www.tensorflow.org/get_started/datasets_quickstart
-
-In this example, we will use the dataset API with numpy arrays which we already loaded into RAM, such as the MNIST database.
-
-First, we create two plain datasets for data and targets:
+A key advantage of evolutionary strategies is that they have fewer hyper parameters. In this case, we need just three:
 ```Python 
-dxtrain = tf.data.Dataset.from_tensor_slices(x_test)
-dytrain = tf.data.Dataset.from_tensor_slices(y_train)
+npop = 50 #1 
+sigma = 0.1 #2 
+alpha = 0.1 #3 
 ```
+\#1 Population size, we will create 50 versions of the model at each iteration.
 
-The `map` function allows us to perform operations on data before passing it to the model. In this case we apply one-hot encoding to our targets. But this could be any function. By setting the `num_parallel_calls` argument, we can specify how many processes we want to run in parallel:
+\#2 Noise standard deviation, the noise we add will have mean zero and a standard deviation of 0.1
+
+\#3 Learning rate, weights don't just simply get set to the new average, but are slowly moved in the direction to avoid overshooting.
+
+The optimization algorithm looks as follows:
 ```Python 
-def apply_one_hot(z):
-    return tf.one_hot(z,10)
+w = np.random.randn(3) #1
+for i in range(300): #2
+  N = np.random.randn(npop, 3) * sigma #3 
+  R = np.zeros(npop)
+  for j in range(npop): #4
+    w_try = w + N[j]
+    R[j] = f(w_try)
 
-dytrain = dytrain.map(apply_one_hot,num_parallel_calls=4)
+  A = (R - np.mean(R)) / np.std(R) #5
+  w = w + alpha * np.dot(N.T, A)/npop #6
 ```
+\#1 We start off with a random solution.
 
-We zip the data and targets into one dataset. We instruct TensorFlow to shuffle the data when loading, keeping 200 instances in memory from which to draw samples. Finally, we make the dataset yield batches of batch size 32.
-```Python 
-train_data = tf.data.Dataset.zip((dxtrain,dytrain)).shuffle(200).batch(32)
-```
+\#2 Just like with the other RL algorithm, we train for a number of epochs, here 300.
 
-We can now fit a Keras model on this dataset just as we would fit it to a generator.
-```Python 
-model.fit(dataset, epochs=10, steps_per_epoch=60000 // 32)
-```
+\#3 We create a noise matrix of 50 noise vectors with mean zero and standard deviation of `sigma`. 
 
-In case you have truly large datasets, the more you can parallelize, the better. Parallelization comes with overhead costs however, and not every problem actually features huge datasets. In these cases, refrain from trying to do too much in parallel and focus on slimming down your network, using CPUs and keeping all your data in RAM if possible.
+\#4 We now create and immediately evaluate our population by adding noise to the original weights and running the resulting vector through the evaluation function.
 
-## Speed up your code with Cython 
+\#5 We standardize the rewards by subtracting the mean and dividing by the standard deviation. The result can be interpreted as an advantage, that a particular member of the population has over the rest.
 
-Python is a popular language because developing code in Python is easy and fast. However, Python can be slow, which is why many production applications are written in C or C++. Cython is Python with C datatypes, which significantly speeds up execution. You can write pretty much normal Python code, and Cython converts it to fast running C code. You can read the full Cython documentation here: http://cython.readthedocs.io/
-This section is a short introduction to Cython, if performance is important to your application you should consider diving deeper.
+\#6 Finally, we add the weighted average noise vector to the weight solution. We use a learning rate to slow down the process and avoid overshooting. 
 
-Say you have a Python function which prints out the Fibonacci series up to a specified point. This code snippet is taken straight from the Python documentation:
-```Python 
-from __future__ import print_function
-def fib(n):
-    a, b = 0, 1
-    while b < n:
-        print(b, end=' ')
-        a, b = b, a + b
-    print()
+Similar to neural networks themselves, evolutionary strategies are loosely inspired by nature. In nature, species optimize themselves for survival using natural selection. Researchers have come up with many algorithms to imitate this process. The neural evolution strategy algorithm presented above works not only for single vectors, but for large neural networks as well. Evolutionary strategies are still a field of active research, and at the time of writing, no best practice has been settled on.
 
-```
-Note that we have to import the `print_function` to make sure that `print()` works in the Python 3 style. To use this snippet with Cython, save it as `cython_fib_8_7.pyx`.
+Reinforcement learning and evolutionary strategies are the go to techniques if no supervised learning is possible but a reward signal is available. There are many applications in the financial industry where this is the case. From simple 'multi armed bandit' problems, such as the AHL order routing system, to complex trading systems. The next sections will introduce some practical tips for building RL systems and highlight some current research frontiers which are highly relevant to financial practitioners.
 
-Now create a new file called `8_7_cython_setup.py`:
-```Python 
-from distutils.core import setup #1
-from Cython.Build import cythonize #2
+# Practical tips for RL engineering
+## Designing good reward functions
+Reinforcement learning is the field of designing algorithms that maximize a reward function. But creating good reward functions is surprisingly hard, as everyone who has ever managed people knows. People game the system and machines do, too. The literature on RL is full of examples of researchers finding bugs in Atari games that had been hidden for years by an agent exploiting it. In the game 'Fishing' for example, OpenAI has reported a reinforcement learning agent achieving a higher score than is possible according to the game makers - without catching a single fish. 
 
-setup( #3
-    ext_modules=cythonize("cython_fib_8_7.pyx"),
-)
-```
+While it is fun for games, such behavior can be dangerous when happening in financial markets. An agent trained on maximizing returns from trading for example could resort to illegal trading activities like spoofing trades, without its owners knowing about it. There are three methods to create better reward functions:
 
-\#1 The `setup` function is a Python function to create modules, such as the ones you install with `pip`.
+### Careful, manual reward shaping 
+ 
+By manually creating rewards, practitioners can aid the system learn. This works especially well if the natural rewards of the environment are sparse. If, say a reward is usually only given if a trade is successful, and this is a rare event, it helps to manually add a function that gives a reward if the trade was nearly successful. Equally, if an agent is engaging in illegal trading, a hard coded 'robot policy' can be set up that gives a huge negative reward to the agent if it breaks the law. Reward shaping works if the rewards and the environment are relatively simple. In complex environments, it can defeat the purpose of using machine learning in the first place. Creating a complex reward function in a very complex environment can be just as big as a task as writing a rule based system acting in the environment.
 
-\#2 `cythonize` is a function to turn a `pyx` python file into Cython C code.
+Yet, especially in finance, and especially in trading, hand crafted reward shaping is useful. Risk averse trading is an example of creating a clever objective function. Instead of maximizing the expected reward, risk adverse reinforcement learning maximizes an evaluation function $\mathcal{U}$ which is an extension of utility based shortfall to a multistage setting.
 
-\#3 We create a new model by calling setup and passing on our cythonized code.
+$$
+\mathcal{U}_{s,a}(X) = 
+\sup\{ m \in \mathbb{R} |
+\mathbb{E}_{s\sim p^\pi, a\sim \pi(s)}[u(X-m) \geq 0]\}
+$$
 
-To run this, we now run the following command in terminal:
-```
-python 8_7_cython_setup.py build_ext --inplace
-```
+Where $u$ is a concave, continuous and strictly increasing function which can be freely chosen according to how much risk the trader is willing to take. The RL algorithm now maximizes:
 
-This will create a C file as well as a build file and a compiled module. We can import this module now:
+$$J(\pi) = \mathcal{U}[V(s_0)]$$
 
-```Python 
-import cython_fib_8_7
-cython_fib_8_7.fib(1000)
-```
+### Inverse reinforcement learning
+In inverse reinforcement learning (IRL), a model is trained to predict the reward function of a human expert. A human expert is performing a task and the model observes states and actions. It then tries to find a value function that explains the human experts behavior. More specifically, by observing the expert, a policy trace of states and actions is created. One example is the the maximum likelihood inverse reinforcement learning algorithm which works as follows:
 
-This will print out the Fibonacci numbers up to 1000. Cython also comes with a handy debugger that shows where Cython has to fall back on Python code which slows things down. Type the following command in your terminal:
-```
-cython -a cython_fib_8_7.pyx
-```
-This will create an HTML file which looks something like this when opened in a browser:
+- Guess a reward function $R$.
+- Compute the policy $\pi$ that follows from R, by training an RL agent.
+- Compute the probability that the actions observed $D$ were a result of $\pi$, $p(D|\pi)$. 
+- Compute the gradient with respect to $R$ and update it.
+- Repeat this process until $p(D|\pi)$ is very high. 
 
-![Cython Profile](./assets/cython_profile.png)
 
-As you can see, Cython has to fall back on Python all the time in our script because we did not specify the types of variables. By letting Cython know what data type a variable has we can speed up code significantly. To define a variable with a type we use `cdef`: 
+### Learning from human preferences
+Similar IRL that produces a reward function from human examples, there are also algorithms that learn from human preferences. A reward predictor produces a reward function under which a policy is trained. The goal of the reward predictor is to produce a reward function which results in a policy which has a large human preference. Human preference is measured by showing the human the results of two policies and letting the human indicate which one is more preferable.
 
-```Python 
-from __future__ import print_function
-def fib(int n):
-    cdef int a = 0
-    cdef int b = 1
-    while b < n:
-        print(b, end=' ')
-        a, b = b, a + b
-    print()
-```
+![Learning from preferences](./assets/inverse_rl.png)
 
-This snippet is already better. Further optimization is certainly possible, by e.g. first calculating the numbers before printing them, to reduce the reliance on Python print statements. Overall, Cython is a great way to keep the development speed and ease of Python and gain execution speed.
+## Robust RL
+Much like for GANs, RL can be fragile and not train to good results. RL algorithms are quite sensitive to hyperparmeter choices. But there are a few ways to make RL more robust:
 
-## Cache frequent requests
-An under-appreciated way to make models run faster is to cache frequent requests in a database. You can go so far to cache millions of predictions in a database and then look them up. This has the advantage that you can make your model as large as you like and expand a lot of compute power to make predictions. By using a map-reduce database, looking up requests in a very large pool of possible requests and predictions is entirely possible. Of course this requires requests to be somewhat discrete. If you have continuous features you can round them if precision is not as important.
+1. Using a larger experience replay buffer: The goal of using experience replay buffers is to collect uncorrelated experiences. This can be achieved by just creating a larger buffer, or a whole buffer database which can store millions of examples, possibly from different agents.
 
-# Exercises
-- Try to build any model that features exploding gradients in training. Hint: Do not normalize inputs and play with the initialization of layers.
-- Go to any example in this book, try to optimize performance by improving the data pipeline.
+2. Target networks: RL is unstable in part because the neural network relies on its own output for training. By using a frozen target network for generating training data, we can mitigate problems. The frozen target network should be updated only slowly by e.g. moving the weights of the target network only a few percent every few epochs in the direction of the trained network.
+
+3. Noisy inputs: Adding noise to the state representation helps the model generalize to other situations and avoids overfitting. It has been proven especially useful if the agent is trained in a simulation but needs to generalize to the real, more complex world.
+
+4. Adversarial examples: In a GAN like setup, an adversarial network can be trained to fool the model by changing the state representations. The model can in turn learn to ignore the adversarial attacks. This makes learning more robust.
+
+5. Separating policy learning from feature extraction. The most well known results in reinforcement learning have learned a game from raw inputs. However, this requires the neural network to interpret e.g. an image by learning how that image leads to rewards. It is easier, to separate the steps by e.g. first train an autoencoder that compresses state representations, then train a dynamics model that can predict the next compressed state and then training a relatively small policy network from the two inputs. 
+
+# Frontiers of RL 
+
+You have now seen the theory behind and application of the most useful RL techniques. Yet, RL is a moving field. This book can not cover all current trends that might be interesting to practitioners, but it can highlight some that are particularly useful for practitioners in the financial industry.
+
+## Multi & Many agent RL 
+Markets, by definition, include many agents. Lowe et al. 2017 'Multi-Agent Actor-Critic for Mixed Cooperative-Competitive Environments', see https://arxiv.org/abs/1706.02275, shows that reinforcement learning can be used to train agents that cooperate, compete and communicate depending on the situation. In an experiment, they let agents communicate, by including a communication vector into the action space. The communication vector one agent outputted was then made available to other agents. They showed that the agents learned to communicate to solve a task. Similar research showed that agents adopted collaborating or competing strategies based on the environment. In a task where agent had to collect reward tokens, agents collaborated as long as plenty of tokens were availeble and showed competitive behavior as tokens got sparse. Zheng et al. 2017 'MAgent: A Many-Agent Reinforcement Learning Platform for Artificial Collective Intelligence', see https://arxiv.org/abs/1712.00600, scaled the environment to include hundreds of agents. They showed that agents developed more complex strategies such as an encirclement attack on other agents through a combination of RL algorithms and clever reward shaping. Foerster et al. 2017 'Learning with Opponent-Learning Awareness', see https://arxiv.org/abs/1709.04326, developed a new kind of RL algorithm which allows agent to learn how another agent will behave and develop actions to influence the other agent.
+
+## Learning how to learn
+A shortcoming of deep learning is that skilled humans have to develop neural networks. A longstanding dream of researchers, and companies having to pay PhDs, is to automate the process of designing neural networks. One example of 'Auto-ML' is the neural evolution of augmenting topologies, NEAT, algorithm. NEAT uses an evolutionary strategy to design a neural network which is then trained by standard back-propagation.
+
+![A network developed by the NEAT algorithm](./assets/neat_net.png)
+
+As you can see in the image above, the network developed by NEAT are often smaller than traditional, layer based neural nets. They are hard to intuitively come up with. This is the strength of Auto-ML, it can find efficient strategies that humans would not have discovered. An alternative to using evolutionary algorithms for network design is to use reinforcement learning, which yields similar results. There are a couple 'off the shelf' Auto-ML solutions:
+- tpot (https://github.com/EpistasisLab/tpot), is a data science assistant that optimizes machine learning pipelines using genetic algorithms. It is built on top of scikit learn so it does not create deep learning models but models useful for strucutred data, such as random forests.
+
+- auto-sklearn (https://github.com/automl/auto-sklearn) is also based on scikit learn but focuses more on creating models rather than feature extraction.
+
+- AutoWEKA (https://github.com/automl/autoweka) is similar to auto-sklearn, except that it is built on the WEKA package which runs on Java. 
+
+- H2O AutoML (http://docs.h2o.ai/h2o/latest-stable/h2o-docs/automl.html) is an auto ML tool that is part of the H2O software package, which provides model selection and ensembling.
+
+- Google cloud Auto-ML (https://cloud.google.com/automl/) so far is focused on pipelines for computer vision.
+
+For the subfield of hyperparmeter search, there are a few packages availeble as well:
+
+- Hyperopt (https://github.com/hyperopt/hyperopt) allows for distributed, asynchronous hyperparameter search in python. 
+
+- Spearmint (https://github.com/HIPS/Spearmint), similar to Hyperopt, optimizes hyperparmeters, but using a more advances Bayesian optimization process.
+
+Auto-ML is still an active field of research, but it holds great promise. Many firms struggle to use machine learning due to a lack of skilled employees. If ML could optimize itself, more firms could start using ML.
+
+## Understanding the brain through RL
+The other emerging field in finance and economics is behavioral economics. But recently, reinforcement learning has been used to understand how the human brain works. Wang et al. 2018 'Prefrontal cortex as a meta-reinforcement learning system', see http://dx.doi.org/10.1038/s41593-018-0147-8, for example derive new insights into the frontal cortex and the function of dopamine. Similary, Banino et al. 2018 'Vector-based navigation using grid-like representations in artificial agents', see https://doi.org/10.1038/s41586-018-0102-6, replicate so called 'grid cells' that allow mammals to navigate using reinforcement learning. The method is similar: Both papers train RL algorithms on tasks related to the area of research, e.g. navigation. They then examine the learned weights of the model for emergent properties. Such insight can be used to create more capable RL agents but also to further the field of neuroscience. As economics comes to grip with the idea that humans are not rational, but irrational in predictable ways, understanding the brain becomes more important to understand economics. Results of neuroeconomics are particularly relevant to finance as they deal with how humans act under uncertainty, deal with risk why humans are loss averse. Using RL is a promising avenue to yield further insight into human behavior.
+
+# Exercises 
+- A simple RL task: Go to https://github.com/openai/gym, install the gym environment and train an agent to solve the 'Cartpole' problem.
+
+- A multi agent RL task: Go to https://github.com/crazymuse/snakegame-numpy, it is a gym like environment that lets you play multiple agents in a 'Snake' game. Experiment with different strategies. Can you create an agent that fools the other agent? What is the emergent behavior of the snakes? 
 
 # Summary 
-In this chapter, you have learned a number of practical tips to debug and improve your model. From testing your data with marbles, to inspecting the computational graph in TensorBoard to speeding up Python with Cython, you now have a number of tools in your toolbox that help you with model development.
-
-In the next and final chapter, we will look at a special, persistent and dangerous problem with machine learning models: Bias. Statistical models tend to fit to and amplify human biases. Financial institutions have to follow strict regulations to prevent them from being racially or gender biased. In the next chapter we will see how we can detect and remove biases from our models, to make them fair and compliant.
+In this chapter, you learned about the main algorithms in RL, Q-Learning, policy gradients and evolutionary strategies. You saw how these algorithms can be applied to trading and learned about some of the pitfalls of applying RL. You also saw the direction of current research and how you can benefit from this research today. At this point in the book you are now equipped with a number of advanced machine learning algorithms, which are hopefully useful to you. In the next section we will discuss the practicalities of developing, debugging and deploying ML systems. We will break out of the data-science sandbox and get our models into the real world.
