@@ -1,3 +1,6 @@
+# Chapter 4 - Practical Computer Vision 
+Chapter 3 was all about learning the building blocks on a simple, MNIST dataset. In this chapter, we will tackle a more complex, real, computer vision problem. We will learn about loading large datasets, using pre-trained models and using rule based augmentations with OpenCV. 
+
 # Loading larger image datasets into Keras
 In the case of MNIST, we loaded all 60,000 images of the training set and all 10,000 images of the validation set into memory. Having all data in memory is certainly fast, but not feasible once datasets get very big. We need a way to load data as it is needed, and not all in advance. 
 
@@ -1103,10 +1106,24 @@ ax.grid(False)
 
 This image represents the prototypical terrier in the eyes of VGG16. If you squint you can recognize some elements of a terrier. There is an eye, a nose, fluffy ears, etc. But it becomes clear that the model does not really know what a terrier _is_. It only has a statistical representation of what terriers look like. These statistical representations are why neural networks are a form of 'representation learning'. They learn the statistical representation of lines, curves, up to ears and finally the whole dog. This can also be used against them. Since this image is the ultimate representation of a terrier for the network, it could be overlaid on another image and the network would classify that image as a terrier. It has been shown that these attacks can be done with just faint overlays or a few pixels. It has also been shown that representations should be semantically interpretable for good network performance. The network should learn something that makes sense to humans.
 
+# The modularity tradeoff
+This chapter showed that it is possible and often useful to aid a ML model with some rule based system. You might also have noticed that the images were all cropped to show only one plant. In Chapter 3 we saw that we could have built a model to locate and classify the plants for us. Theoretically, we could have also built a system that would output the treatment a plant should receive directly, rather than classifying the plant first. This begs the question of how modular we should make our systems. 
+
+'End to end' deep learning was all the rage for several years. If given a huge amount of data, a deep learning model can learn what would otherwise have taken a system with many components. But end to end has drawbacks:
+1. End to end needs huge amounts of data. Because models have so many parameters, much data is needed to avoid overfitting.
+
+2. End to end is hard to debug. If you replace your entire system with one black box model, you have little hope of finding out why certain things happened.
+
+3. Some things are hard to learn, but easy to write down as code. Especially sanity check rules.
+
+Recently, researchers began to make their models more modular. A great example is Ha and Schmidthuber's 'World Models', https://worldmodels.github.io/, in which they encoded visual information, made predictions about the future and chose actions with three different models. On the practical side, Airbnb combines structural modeling with machine learning for its pricing engine: https://medium.com/airbnb-engineering/learning-market-dynamics-for-optimal-pricing-97cffbcc53e3. Modelers knew that bookings roughly follow a poisson distribution and that there are seasonalities. So they built a model to predict the parameters of the distribution and seasonality directly, rather than letting the model predict bookings directly. 
+
+If you have little or sparse data, your algorithm's performance needs to come from human insight. If some subtasks can be easily expressed in code, it is usually better to express them in code. If you need explainability and want to see why certain choices were made, a modular setup with clearly interpretable intermediate outputs is a good choice. However, if a task is hard, you do not know exactly what sub tasks it entails and you have lots of data, it is often better to use an end to end approach. It is very rare to use a 'pure' end to end approach. Image for example are always pre-processed from the camera chip and you never really work with 'raw data'. Being smart about dividing a task can boost performance and reduce risk.
+
 # Exercises
-1. Visit the State Farm Distracted Driver Challenge on Kaggle. Build a model that can classify distracted drivers. Can you use some rulebased preprocessing? Which augmenters aid robustness the most?
+1. Visit the State Farm Distracted Driver Challenge on Kaggle, https://www.kaggle.com/c/state-farm-distracted-driver-detection. Build a model that can classify distracted drivers. Can you use some rule based preprocessing? Which augmenters aid robustness the most?
 2. Use the stacked VGG model from earlier and train it on the seedlings dataset. Then visualize the outputs by backpropagating to the input. What is the ultimate representation of Maize?
-3. Visit the 'Planet: Understanding the Amazon from Space' competition on Kaggle. Can you use pretrained models for statelites? Try using `model.pop()` to remove some convolutional layers from VGG16 and replace them with your own.
+3. Visit the 'Planet: Understanding the Amazon from Space' competition on Kaggle, https://www.kaggle.com/c/planet-understanding-the-amazon-from-space. Can you use pretrained models for statelites? Try using `model.pop()` to remove some convolutional layers from VGG16 and replace them with your own.
 
 # Summary 
-In this chapter you have learned about computer vision. From simple ConvNets on MNIST to visualizing through backprop to the input. An impressive feat! Images are still quite rarely used in finance. But an increasing number of firms incorporates image based datasources in their decision making. In the next chapter we will take a look at the most common kind of data in finance: Time series.
+In this chapter you have learned about the practicalities of a computer vision project. You have learned about the practical considerations that go into making a successful computer vision project. An increasing number of firms incorporate image based datasources in their decision making, you are now prepared to tackle such problems head on. In the next chapter we will take a look at the most common kind of data in finance: Time series.

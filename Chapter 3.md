@@ -7,6 +7,8 @@ Computer vision allows us to perceive and interpret the real world at scale. No 
 
 A slightly less fancy but never the less important application of computer vision in finance is insurance. Insurers might use drones to fly over roofs to spot issues before they become an expensive problem. Or they might inspect factories and equipment they insured. The applications are near endless.
 
+This chapter will look at the building blocks of computer vision models. Many of these building blocks will be used in later chapters, for different models.
+
 # A note on libraries
 This chapter makes use of the following libraries:
 - Keras 
@@ -422,7 +424,7 @@ model.compile(optimizer=momentum_optimizer,
               metrics=['acc'])
 ```
 
-## The adam optimizer
+## The Adam optimizer
 Kingma, D. P., & Ba, J. L. (2015)'s adam (adaptive momentum estimation) optimizer is another way to make gradient descent work better that has shown very good results and has therefore become a standard choice for many practitioners. We used it for MNIST for example. First it computes the exponentially weighted average of the gradients, just like a momentum optimizer does: 
 
 $$ V_{dW} = \beta_1 * V_{dW} + (1 - \beta_1) * dW $$
@@ -682,3 +684,57 @@ Batchnorm often accelerates training by making it easier. You can see how accura
 
 Batchnorm also has a mildly regularizing effect. Extreme values are often overfit to and batchnorm reduces extreme values, similar to activity regularization. All this makes batchnorm an extremely popular tool in computer vision.
 
+# Computer Vision Beyond Classification
+Above, you have seen many techniques to make our image classifier work better. You will find them used throughout this book, not only for computer vision applications. In this final section, we will discuss some approaches that go beyond classifying images. These tasks often require a more creative use of neural networks than discussed above. To get the most out of this section, don't worry too much about the details of the techniques presented, but about how researchers were creative about using neural networks. You will often find, that the tasks you are looking to solve require a similar creativity.
+
+## Facial recognition
+Facial recognition has many applications for retail institutions. In the front office you might want to automatically recognize your customer at an ATM or you might want to offer face based security features like the iPhone does. In the back office you need to comply with Know Your Customer regulations that require you to identify which customer you are working with. 
+
+On the surface, facial recognition looks like a classification task: Given an image of a face, predict which person it is. The trouble is that you might have millions of customers, but only one or two pictures per customer. On top of that, you might be getting new customers. You can't change your model every time you are getting a new customer and a simple classification approach will fail if it has to choose between millions of classes with only one example for each class. 
+
+The creative insight is that instead of classifying the customers face, you can classify if two images show the same face. 
+
+![Facial Recognition](./assets/facial_recognition.png)
+
+To this end, you run the two images through two siamese networks first. The networks are identical and contain the same weights. In Keras you can achieve such a setup by defining the layers first and then using them in both networks. The two networks then feed into a single classification layer, which classifies if the two images show the same face. 
+
+To avoid running all customer images in our database through the entire siamese network every time we want to recognize a face, it is common to save the final output of the siamese network. The final output of the siamese network for an image is called the face embedding. When we want to recognize a customer, we compare the embedding of the image of the customers face with the embeddings stored in our database. We can do this with the single classification layer. Storing facial embedding helps save significantly in computational cost. It also allows for the clustering of faces. Faces will cluster together by traits like sex, age and race. By only comparing an image to the images in the same cluster, we can save even more computation and get faster recognition.
+
+There are two ways to train the siamese networks. We can train it together with the classifier, by creating pairs of matching and not matching images and then using the binary crossentropy classification loss to train the entire model. 
+
+Another, better, option is to train the model to generate face embeddings directly. This approach is described in Schroff, Kalenichenko and Philbin's 2015 'FaceNet: A Unified Embedding for Face Recognition and Clustering', https://arxiv.org/abs/1503.03832. The idea is to create triplets of images. One anchor image, one 'positive' image showing the same face as the anchor image and one 'negative' image showing a different face than the anchor image. A triplet loss is used to make the distance between the anchor's embedding and the positive's embedding smaller and the distance between the anchor and the negative larger. The loss function looks as follows:
+
+$$ 
+L=
+\sum^N_i 
+\big[||f(x^a_i) - f(x^p_i)||^2_2 - ||f(x^a_i) - f(x^n_i)||^2_2 + \alpha \big]
+$$ 
+
+Where $x^a_i$ is an anchor image, and $f(x^a_i)$ is the output of the siamese network, the anchor image's embedding. The triplet loss is the euclidean distance between the anchor and the positive minus the euclidean distance between the anchor and the negative. A small constant $\alpha$ the margin enforced between positive and negative pairs. To reach zero loss the difference between distances needs to be $\alpha$.
+
+Understand that you can use a neural network to predict if two items are semantically the same to get around large classification problems. You can train the siamese model through some binary classification tasks but also by treating the outputs as embeddings and using a triplet loss. This insight extends to more than faces. Say you want to compare time series to classify events. You could use the exact same approach.
+
+## Bounding Box Prediction 
+Many times, you will be interested in locating objects in images. Say you are an insurance company that needs to inspect the roofs it insures. Getting people to climb on roofs to check them is expensive, so you want to use satellite imagery. Having acquired the images, you now need to find the roofs in them. You can then crop out the roofs and send the roof images to your experts, who will check them. 
+
+![Roof Locations](./assets/roof_locations.png)
+
+What you need are bounding box predictions. A bounding box predictor outputs the coordinates of several bounding boxes together with predictions for which object is shown in the box. 
+
+There are two approaches to obtaining such bounding boxes. 
+
+**R-CNN**, Region based Convolutional Neural Network, basically reuses a classification model. It takes an image, and slides the classification model over the image. The result are many classifications for different parts of the image. Using this 'feature map', a region proposal network performs a regression task to come up with bounding boxes and a classification network creates classifications for each bounding box. The approach has been refined, culminating in Ren et al.'s 2016 'Faster R-CNN: Towards Real-Time Object Detection with Region Proposal Networks', https://arxiv.org/abs/1506.01497, but the basic concept of sliding a classifier over an image has remained the same. 
+
+**YOLO**, You Only Look Once, on the other hand uses a single model consisting of only convolutional layers. It divides an image into a grid and predicts an object class for each grid cell. Equally, it predicts several possible bounding boxes containing objects for each grid cell. For each bounding box it regresses coordinates and width, height values, as well as a confidence score that this bounding box actually contains an object. It then eliminates all bounding boxes with a too low confidence score or with a too large overlap with another, more confident bounding box.  For a more detailed description read Redmon and Farhadi's 2016 'YOLO9000: Better, Faster, Stronger', https://arxiv.org/abs/1612.08242 as well as their 2018 'YOLOv3: An Incremental Improvement', https://arxiv.org/abs/1804.02767. Both are well written, tongue in cheek papers.
+
+The main advantage of YOLO over R-CNN is that it is much faster. Not having to slide a large classification model is much more efficient. R-CNN's advantage is that it is somewhat more accurate. If your task requires real time analysis, you should use YOLO. If you do not need real time speed but just want the best accuracy, R-CNN is the way to go. 
+
+Bounding box detection is often used a one of many processing steps. In the insurance case above, the bounding box detector would crop out all roofs. The roof images can then be judged by a human expert, or by a separate deep learning model which classifies damaged roofs. Of course, you could train an object locator to distinguish between damaged and intact roofs directly, but in practice this is usually not a good idea. See Chapter 4 for a discussion on modularity. 
+
+# Exercises
+- Fashion MNIST is a drop in replacement of MNIST, but instead of hand written digits, it is about classifying clothes. Try out the techniques we have used in this chapter on Fashion MNIST. How do they work together? What gives good results? You can find the dataset on Kaggle: https://www.kaggle.com/zalando-research/fashionmnist
+
+- Visit the Whale recognition challenge, and read the top Kernels and discussion posts: https://www.kaggle.com/c/whale-categorization-playground. The task of recognizing whales by their fin is similar to recognizing humans by their face. There are good Kernels showing off bounding boxes as well as siamese networks. We have not covered all technical tools to solve the task yet, so do not worry about the code in detail but about the concepts shown.
+
+# Summary 
+In this Chapter you have seen the building blocks of computer vision models. Many of these building blocks, such as batchnorm and dropout, are used in other areas as well. In the next chapter we will tackle a practical problem and discuss details of implementation.
